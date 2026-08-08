@@ -146,7 +146,7 @@ import {
   BEAM_SEGMENT_SPACING,
 } from '../constants.js';
 import { applyBurn, applySlow, applyStasis, COLD_DURATION, FIRE_DURATION } from '../status.js';
-import { sin, cos, wrapAngle, PI } from '../math.js';
+import { sin, cos, wrapAngle } from '../math.js';
 import { skillLv } from '../../items/skills.js';
 
 // ---------------------------------------------------------------------------
@@ -157,6 +157,49 @@ import { skillLv } from '../../items/skills.js';
 // F1..F10 = 0..9 · S1..S10 = 10..19 · M1..M10 = 20..29 다.
 // `tests/skillIcons.test.ts` 가 `nodes[0]=offense · nodes[10]=defense · nodes[20]=utility` 로
 // 이 배치를 이미 잠그고 있다 — **설계서가 F→M→S 순으로 서술하는 것은 편집 순서일 뿐이다.**
+
+import {
+  killMomentumCharge,
+  recoilWindowTicks,
+  recoilDamageBp,
+  recoilSpeedMultBp,
+  ventBurstBp,
+  shatterRadius,
+  shatterDamageBp,
+  sightlineDamageBp,
+  SIGHTLINE_CONE_HALF_RAD,
+  incendiaryBurnPerTick,
+  incendiaryBurstMultBp,
+  targetLockPerStackBp,
+  TARGET_LOCK_STACK_CAP,
+  overheatExtendTicks,
+  OVERHEAT_EXTEND_CAP,
+  suppressPush,
+  extendedMagBp,
+  reactivePlatingRadius,
+  fieldTriageHeal,
+  coverDoctrineCutBp,
+  hazardCutBp,
+  hazardSpeedMultBp,
+  lastRitesThresholdBp,
+  comboAbsorbPerStack,
+  expiryStasisTicks,
+  expiryStasisRadius,
+  hullGrantHp,
+  HULL_XP_THRESHOLD,
+  inertiaBurstRadius,
+  inertiaBurstDamage,
+  thrustWakeCount,
+  thrustWakeDamage,
+  thrustWakeLife,
+  gemRouteCut,
+  slipstreamExtMultBp,
+  wallKickIframes,
+  dashPurgeRadius,
+  vaultShotBp,
+  ramManeuverDamage,
+  twinRechargeTicks,
+} from './strikerScaling.js';
 
 const enum Sk {
   /** F1 전과 확장 */ killMomentum = 0,
@@ -206,77 +249,17 @@ function lv(state: WorldState, flat: Sk): number {
 }
 
 // ---------------------------------------------------------------------------
-// 레벨 스케일 — 설계서 ② 의 공식 그대로
+// 레벨 스케일 — 정본은 `strikerScaling.ts` 다
 // ---------------------------------------------------------------------------
+//
+// 공식이 이 파일에 인라인으로 흩어져 있던 시절에는 **연구소 화면이 그 수치를 보여 줄 방법이
+// 없었다** — 화면이 자기 사본을 적으면 밸런스 한 줄에 조용히 갈리고, 설계서를 베끼면 이미
+// 갈려 있는 것을 베낀다(F6 이 그 증거다). 그래서 레벨 스케일 전부를 `strikerScaling.ts` 의
+// 순수 함수로 뽑았고, sim(여기)과 화면이 **같은 함수**를 부른다. 산술은 바이트 동일하게
+// 옮겼다 — 결정론 게이트가 그것을 지킨다.
+//
+// ⚠️ 새 수치를 여기 인라인으로 적지 마라. 적는 순간 화면이 그것을 모른다.
 
-/**
- * ⚠️ **나눗셈이 낀 두 공식(S8·S10)은 `createWorld` 가 아니라 여기서 계산한다.**
- *
- * 설계서 공통 고지 ③ 은 "체감 곡선의 나눗셈은 `createWorld` 가 투자 레벨당 1회 정수 확정해
- * `skillDerived` 로 싣는다"고 적었다. 이 레인은 그 자리를 **비워 뒀다** — 채우려면 둘 중
- * 하나여야 하는데 둘 다 지금 더 나쁘다:
- *  ① `world.ts` 가 이 모듈을 런타임 import → `skillHooks.ts` 헤더 ① 이 금지한 순환의 씨앗
- *  ② 공식을 `world.ts` 에 다시 적음 → 소비처(여기)와 산출처가 갈리는 이중 정본
- * 대신 **호출 빈도가 낮은 이벤트 경로에서만** 계산한다: S8 은 선체 hp 가 깎인 피격 틱,
- * S10 은 400XP 임계를 실제로 넘긴 틱뿐이다(매 틱 나눗셈이 아니다 — 고지 ③ 이 막으려던 것은
- * sim 루프의 상시 나눗셈이다). **리드 판단으로 `skillDerived` 에 옮기기로 하면 이 주석과
- * 아래 두 함수를 통째로 그리로 옮겨라 — 호출부는 상수 읽기로 바뀌기만 하면 된다.**
- */
-function comboAbsorbPerStack(level: number): number {
-  // S8: round(3 + 40×Lv/(Lv+20)) — Lv20 = 23, 점근 43.
-  return Math.round(3 + (40 * level) / (level + 20));
-}
-
-/** S10: round(2 + 24×Lv/(Lv+28)) HP — Lv20 = 12, 점근 26. */
-function hullGrantHp(level: number): number {
-  return Math.round(2 + (24 * level) / (level + 28));
-}
-
-/** S10 지급 임계(런 누적 획득 XP). 설계서 고정값. */
-const HULL_XP_THRESHOLD = 400;
-
-/**
- * F8 이 늘릴 수 있는 **과열 창 잔여 틱의 천장**.
- *
- * ## 왜 상한이 **필수**인가 — 없으면 창이 영영 안 닫힌다
- * 과열 창은 틱당 정확히 1 씩 닳는다(`boss.ts:116` · `coreRoom.ts:630`). 스트라이커는 다탄
- * 볼리라 보스 한 마리에 **매 틱 1발 이상 명중**이 정상 상태이고, 연장이 명중당 1 이상이면
- * 그 감소분을 상시 상쇄한다. 결과는 "가끔 창이 길어진다"가 아니라 **피해 2배 창의 영구화** —
- * 보스의 취약 창 설계(닫힌 구간이 있는 리듬) 자체를 무력화한다. 그래서 이것은 밸런스 손잡이가
- * 아니라 **거동 상한**이고, 상한을 넘겨 이미 서 있는 창을 **깎지도 않는다**(아래 `<` 가드).
- *
- * ## ⚠️ 값이 300 인 것은 우연이 아니지만 **의미는 다르다**
- * `boss.ts` 의 `BOSS_OVERHEAT_TICKS`(300) · `data/invasion/defenseBosses.ts` 의
- * `DEFENSE_BOSS_OVERHEAT_TICKS`(300)와 같은 수지만, 저쪽은 **창을 여는 길이의 정의**이고
- * 이쪽은 **연장이 도달할 수 있는 천장**이다. 즉 "F8 은 창을 처음 열렸을 때보다 길게 만들지
- * 못한다" 가 이 상수의 뜻이다.
- *  · **런타임 import 로 잇지 않는다.** `boss.ts` 는 `waves.ts`·`data/planets` 까지 끌고 오는
- *    무거운 모듈이라 leaf 계약(헤더 ①)을 깬다. 그래서 버블 `PO2_SPEED_BASE`·해츨링
- *    `NU2_SHELL_GEM_XP` 와 같은 **leaf-local 상수** 관용구를 쓴다.
- *  · ⚠️ 저쪽 값이 바뀌면 이 값은 **따라가지 않는다** — 그것이 독립 상수의 대가이자 목적이다
- *    (의미가 갈린 두 수가 우연히 같이 움직이는 것을 막는다).
- *  · 침공 어픽스 `defOverheatResistPct` 가 창을 300 밑으로 줄인 판에서는 이 천장이 그 축소를
- *    **되돌릴 수 있다**(줄어든 창을 최대 300 까지 도로 늘린다). 그건 F8 이 사는 자리 그대로다 —
- *    어픽스는 창을 짧게 열 뿐이고, 늘리는 축을 금지하지는 않는다.
- */
-const F8_OVERHEAT_CAP = 300;
-
-/**
- * F5 조준선 콘의 **반각 20°**(설계서 고정값 — 레벨로 안 변한다).
- *
- * `PI / 9` 로 적는 것은 도수 리터럴을 라디안으로 바꾸는 사본을 만들지 않으려는 것이다.
- */
-const SIGHTLINE_CONE_HALF = PI / 9;
-
-/**
- * `weaponReach`(`world.ts`, 사설)의 **복제**. F10·M8 이 `emitVolley` 를 직접 부를 때 빔
- * 세그먼트 수가 정상 발사와 갈리지 않으려면 같은 사거리 규칙을 따라야 하는데, 그 함수는
- * `world.ts` 비공개이고 leaf 는 그 파일을 런타임 import 할 수 없다(헤더 규율 ①).
- *
- * ⚠️ **독립 상수다**(F8_OVERHEAT_CAP 관용구와 같은 사유). `BEAM_MAX_SEGMENTS`(16, world.ts
- * 정본)가 바뀌면 이 값은 **따라가지 않는다** — `BEAM_SEGMENT_SPACING` 은 leaf 인 `constants.ts`
- * 에서 값으로 가져오지만, 세그먼트 상한(16)은 world.ts 전용이라 리터럴로 둔다.
- */
 const BEAM_MAX_SEGMENTS_LOCAL = 16;
 
 /** `weaponReach` 복제(위 상수 doc 참조). 레일건/미사일/발칸/스프레드는 `range` 그대로. */
@@ -294,14 +277,7 @@ function strikerWeaponReach(state: WorldState): number {
  * F10 후속 볼리 피해 bp = 10000 − 120000/(Lv+19) (Lv1 = 40% · Lv20 ≈ 69% · 점근 100%,
  * clamp 없는 연속 체감 — 설계서 그대로).
  */
-function extendedMagBp(level: number): number {
-  return 10000 - Math.round(120000 / (level + 19));
-}
 
-/** M8 자동 볼리 피해 bp = 6000 + 300×Lv (Lv1 = 63% · Lv20 = 120%). */
-function vaultShotBp(level: number): number {
-  return 6000 + 300 * level;
-}
 
 // ---------------------------------------------------------------------------
 // 앵커별 진입점 — `skillHooks.ts` 의 `case SIG_STRIKER_MARKSMAN:` 이 부른다
@@ -341,12 +317,12 @@ export function strikerDashFired(
 ): void {
   const m5 = lv(state, Sk.wallKick);
   if (m5 >= 1 && state.wallContactTicks > 0) {
-    player.iframes += 2 + Math.floor(m5 / 4);
+    player.iframes += wallKickIframes(m5);
   }
   // ── M6 활공 정화 — 반경 150 + 10×Lv.
   const m6 = lv(state, Sk.dashPurge);
   if (m6 >= 1) {
-    const radius = 150 + 10 * m6;
+    const radius = dashPurgeRadius(m6);
     clearEnemyBullets(state, player, radius);
     const r2 = radius * radius;
     for (const e of state.entities) {
@@ -411,9 +387,9 @@ function layThrustWake(
   dirY: number,
 ): void {
   // 개수 2 + floor(Lv/4) (Lv1 = 2 · Lv20 = 7) · 간격 56 · 수명 60 + 4×Lv 틱.
-  const count = 2 + Math.floor(level / 4);
-  const damage = 10 + 3 * level;
-  const life = 60 + 4 * level;
+  const count = thrustWakeCount(level);
+  const damage = thrustWakeDamage(level);
+  const life = thrustWakeLife(level);
   // 탄 상한 — 살아 있는 아군탄을 세고 그 자리에서 멈춘다(초과분은 버린다 · BL7 선례).
   let live = 0;
   for (const e of state.entities) {
@@ -502,7 +478,7 @@ export function strikerGemPull(
   if (dot <= 0) return;
   const base = state.magnetBuffTicks > 0 ? state.magnetRadius * MAGNET_BUFF_MULT : state.magnetRadius;
   // 전방 확장 = 실효 반경 × (130% + 2%p/Lv) (Lv1 = 1.32배 · Lv20 = 1.70배).
-  const ext = (base * (13000 + 200 * m4)) / 10000;
+  const ext = (base * slipstreamExtMultBp(m4)) / 10000;
   if (params.d2 <= ext * ext) params.pull = true;
 }
 
@@ -515,7 +491,7 @@ export function strikerGemPull(
 export function strikerGemCollected(state: WorldState, player: Entity): void {
   const m3 = lv(state, Sk.gemRoute);
   if (m3 < 1) return;
-  const cut = 2 + Math.floor(m3 / 2);
+  const cut = gemRouteCut(m3);
   player.dashCooldown = Math.max(0, player.dashCooldown - cut);
 }
 
@@ -536,7 +512,7 @@ export function strikerPlayerDamaged(state: WorldState, player: Entity): void {
   // S2 — 주변 적탄 소거. 반경 90 + 8×Lv.
   const s2 = lv(state, Sk.reactivePlating);
   if (s2 >= 1) {
-    clearEnemyBullets(state, player, 90 + 8 * s2);
+    clearEnemyBullets(state, player, reactivePlatingRadius(s2));
   }
 }
 
@@ -551,7 +527,7 @@ export function strikerKillsDelta(state: WorldState, player: Entity, delta: numb
   const f1 = lv(state, Sk.killMomentum);
   if (f1 < 1) return;
   // 처치당 충전 = 1 + ceil(Lv/4) (Lv20 = 6). 정수 계단이고 양적 반올림이다.
-  player.aux0 += delta * (1 + Math.ceil(f1 / 4));
+  player.aux0 += delta * killMomentumCharge(f1);
 }
 
 /**
@@ -564,9 +540,9 @@ export function strikerKillsDelta(state: WorldState, player: Entity, delta: numb
 export function strikerBulletExpired(state: WorldState, bullet: Entity): void {
   const f4 = lv(state, Sk.shatterRound);
   if (f4 < 1) return;
-  const radius = 60 + 6 * f4;
+  const radius = shatterRadius(f4);
   // 폭발 피해 = 탄 피해의 30% + 2%p/Lv. 반올림은 이 게이트 **안**이다(규율 ③).
-  const dmg = Math.round((bullet.damage * (3000 + 200 * f4)) / 10000);
+  const dmg = Math.round((bullet.damage * shatterDamageBp(f4)) / 10000);
   if (dmg <= 0) return;
   blastDamage(state, bullet, radius, dmg);
 }
@@ -594,7 +570,7 @@ export function strikerDamageChain(
   //    소수 피해가 들어와도 같은 방식으로 접힌다.
   const s4 = lv(state, Sk.coverDoctrine);
   if (s4 >= 1 && state.wallContactTicks > 0) {
-    out -= Math.round((out * (1000 + 100 * s4)) / 10000);
+    out -= Math.round((out * coverDoctrineCutBp(s4)) / 10000);
   }
   // ①-b 감소 — **S5 극지 적응(뒤 절반)**: 용암 피해 경감.
   //
@@ -608,7 +584,7 @@ export function strikerDamageChain(
   const s5 = lv(state, Sk.hazardAdapt);
   if (s5 >= 1 && hasDamageSource(sources, DamageSource.hazard)) {
     // 경감 15% + 1.5%p/Lv (Lv1 = 16.5% · Lv20 = 45%). S4 와 동형 산술이다.
-    out -= Math.round((out * (1500 + 150 * s5)) / 10000);
+    out -= Math.round((out * hazardCutBp(s5)) / 10000);
   }
   // ② 흡수 — S8. **콤보 스택을 실제로 소모한다**(XP 배율과의 트레이드가 이 스킬의 본체다).
   const s8 = lv(state, Sk.comboShield);
@@ -656,9 +632,6 @@ export function strikerSignatureStep(state: WorldState, player: Entity): void {
 }
 
 /** M10 2번째 충전의 재충전 = `240 + floor(4000/(Lv+5))` 틱 (Lv1 = 906 · Lv20 = 400 · 점근 240). */
-function twinRechargeTicks(level: number): number {
-  return 240 + Math.floor(4000 / (level + 5));
-}
 
 /**
  * 앵커 ㉙ **이동 배율 산출 직전 · 대시 쿨다운 감산보다도 앞** — M10 이중 추진 **1종**.
@@ -719,7 +692,7 @@ export function strikerPlayerMoveParams(
     params.slowTicks = 0;
     // 가속 +15% + 1.5%p/Lv (Lv1 = 16.5% · Lv20 = 45%). 감쇠 사슬의 경감과 같은 계수를 쓰는
     // 것은 의도다 — 손잡이를 둘로 늘리지 않는다(설계가 한 문장으로 두 효과를 묶었다).
-    params.speedMult = (params.speedMult * (11500 + 150 * s5)) / 10000;
+    params.speedMult = (params.speedMult * hazardSpeedMultBp(s5)) / 10000;
   }
 
   // ── M10 이중 추진 — 이동 배율이 아니라 대시 충전을 만진다(`params` 를 읽지도 쓰지도 않는다).
@@ -800,18 +773,18 @@ export function strikerVolleyParams(
     // 쿨다운이 줄면 창도 함께 줄어, 초판의 `min(12+2×Lv, floor(쿨다운/2))` 가 갖고 있던
     // "대시를 강화할수록 F2 가 죽는" 역결합이 생기지 않는다(설계서 F2 의 ⚠️).
     const full = state.config.dashCooldownTicks;
-    const window = Math.round((full * (3000 + (2500 * f2) / (f2 + 10))) / 10000);
+    const window = recoilWindowTicks(f2, full);
     // 대시 직후 = 쿨다운이 아직 만충 근처. `>=` 인 것은 위상장갑 배율로 시작값이 만충보다
     // 작을 수 있어서다(그때도 "발동 직후" 는 참이어야 한다).
     if (player.dashCooldown > 0 && player.dashCooldown >= full - window) {
       // 집속 — 부채꼴이 한 줄기가 된다. 레일건·빔은 `spread` 를 안 읽어 무연산이다.
       params.spread = 0;
       // 피해 +10% + 1%p/Lv. 산술은 world 의 정조준 배율과 동형(정수 bp · 나눗셈 1회 · 반올림 1회).
-      params.damage += Math.round((params.damage * (1000 + 100 * f2)) / 10000);
+      params.damage += Math.round((params.damage * recoilDamageBp(f2)) / 10000);
       // 탄속도 같은 bp 로 올린다(설계서는 "탄속·피해가 강화된다" 만 적고 탄속 수치를 주지
       // 않았다 — 손잡이를 둘로 늘리지 않으려고 피해와 같은 계수를 쓴다). 소수 탄속에
       // 반올림을 새로 만들지 않는 것은 팬텀 AS2 와 같은 규율이다.
-      params.speed = (params.speed * (11000 + 100 * f2)) / 10000;
+      params.speed = (params.speed * recoilSpeedMultBp(f2)) / 10000;
     }
   }
 
@@ -825,14 +798,14 @@ export function strikerVolleyParams(
     const d = wrapAngle(params.aimAngle - player.angle);
     // 경계는 **포함**(`<=`)이다 — 설계서가 "반각 20° 콘 안" 이라 적었고, 배타로 두면 정확히
     // 20° 인 볼리 하나가 부동소수 잡음에 따라 깜빡인다.
-    if ((d < 0 ? -d : d) <= SIGHTLINE_CONE_HALF) {
+    if ((d < 0 ? -d : d) <= SIGHTLINE_CONE_HALF_RAD) {
       // 관통 +1 — **발사 시점 1회**다. 명중마다 더하면 소비 −1 과 상쇄돼 콘 안 무한 관통이
       // 되고 F4(관통 소멸 폭발)와도 충돌한다(설계서 F5 「구현」의 ⚠️).
       params.pierce += 1;
       // 피해 +6% + 1.5%p/Lv. 산술 형태는 F2 와 동형(정수 bp · 나눗셈 1회 · 반올림 1회).
       // F2 가 먼저 실린 볼리면 그 결과 위에 곱해진다 — 둘 다 볼리 단위 배율이라 곱연산이 맞고,
       // 순서를 바꿔도 상한이 생기지 않으므로 flat 인덱스 오름차순(F2 → F5)으로 둔다.
-      params.damage += Math.round((params.damage * (600 + 150 * f5)) / 10000);
+      params.damage += Math.round((params.damage * sightlineDamageBp(f5)) / 10000);
     }
     // ⚠️ **읽기 전용 사실(`countUsed`·`ballisticsUsed`)로 게이트하지 않는 것은 의도다.**
     // F5 는 설계서상 페널티가 한 칸도 없다(콘 밖 발사는 「무보정일 뿐」). 그래서 빔이
@@ -878,8 +851,6 @@ export function strikerVolleyParams(
   }
 }
 
-/** F7 락온 스택 상한. 문면에 상한이 없어 여기서 정한다 — 없으면 한 표적에 무한 증폭이 된다. */
-const F7_STACK_CAP = 10;
 
 /**
  * 앵커 ⑱ **아군탄 명중의 피해가 확정되기 직전** — **F7 표적 고정** · **S7 최후 처형**.
@@ -895,7 +866,7 @@ const F7_STACK_CAP = 10;
  * 되찾으면 같은 자리에 겹친 두 적이 조용히 하나로 접히므로 **`Entity.id`** 를 쓴다(+1 인코딩은
  * 슬롯 doc 이 근거).
  *  · **첫 명중은 증폭 0** 이다 — 쌓인 결과가 증폭이라는 문면 그대로. 표적이 바뀌면 0 리셋.
- *  · ⚠️ **상한 {@link F7_STACK_CAP} 이 필수**다. 보스처럼 오래 사는 표적에 다탄 볼리를 붓는
+ *  · ⚠️ **상한 {@link TARGET_LOCK_STACK_CAP} 이 필수**다. 보스처럼 오래 사는 표적에 다탄 볼리를 붓는
  *    것이 스트라이커의 정상 상태라, 상한이 없으면 「연속 명중 보너스」가 아니라 **초 단위로
  *    발산하는 배율**이 된다.
  *
@@ -927,13 +898,13 @@ export function strikerBulletHitParams(
     const prev = readSlot(stage, StrikerStage.lockTarget);
     const cur = target.id + 1;
     let stack = prev === cur ? readSlot(stage, StrikerStage.lockStack) + 1 : 0;
-    if (stack > F7_STACK_CAP) stack = F7_STACK_CAP;
+    if (stack > TARGET_LOCK_STACK_CAP) stack = TARGET_LOCK_STACK_CAP;
     writeSlot(stage, StrikerStage.lockTarget, cur);
     writeSlot(stage, StrikerStage.lockStack, stack);
     if (stack > 0) {
       // 스택당 피해 +3% + 0.5%p/Lv (Lv1 = 3.5%/스택 · Lv20 = 13%/스택 · 상한 10스택).
       // 산술 형태는 F2·F5 와 동형(정수 bp · 나눗셈 1회 · 반올림 1회).
-      params.damage += Math.round((params.damage * stack * (300 + 50 * f7)) / 10000);
+      params.damage += Math.round((params.damage * stack * targetLockPerStackBp(f7)) / 10000);
     }
   }
 
@@ -948,7 +919,7 @@ export function strikerBulletHitParams(
   // 「HP 30% 이하」 — 비율 비교를 나눗셈 없이 쓴다(`hp * 10 <= maxHp * 3`).
   if (player.hp * 10 > player.maxHp * 3) return;
   // 처형 임계 = 표적 최대 HP 의 5% + 0.5%p/Lv (Lv1 = 5.5% · Lv20 = 15%).
-  const cut = (target.maxHp * (500 + 50 * s7)) / 10000;
+  const cut = (target.maxHp * lastRitesThresholdBp(s7)) / 10000;
   if (target.hp > cut) return;
   // 이번 명중을 **정확히 잔여 hp 만큼**으로 끌어올린다. 이미 그만큼 아프면 손대지 않는다
   // (내리면 F7·정조준 증폭을 스킬이 되돌리는 부호 반전이 된다).
@@ -1008,20 +979,20 @@ export function strikerEnemyDamaged(
   //    싣고(`coreRoom.ts:19,658`) 앵커 ⑩ doc 가 그 kind 도 여기 온다고 못 박았다.
   //  · ⚠️ **창이 이미 열려 있을 때만** 연장한다(`iframes > 0`). 닫힌 창을 여는 것은 "연장" 이
   //    아니라 개창이고, 그러면 재장전 타이머(`dashCooldown`)가 지키는 주기가 통째로 무의미해진다.
-  //  · ⚠️ **천장은 {@link F8_OVERHEAT_CAP} 이다.** 없으면 다탄 볼리가 틱당 감소 1 을 상시
+  //  · ⚠️ **천장은 {@link OVERHEAT_EXTEND_CAP} 이다.** 없으면 다탄 볼리가 틱당 감소 1 을 상시
   //    상쇄해 창이 영영 안 닫힌다 — 그 상수 doc 가 근거다.
   const f8 = lv(state, Sk.overheatShatter);
   if (
     f8 >= 1 &&
     target.iframes > 0 &&
-    target.iframes < F8_OVERHEAT_CAP &&
+    target.iframes < OVERHEAT_EXTEND_CAP &&
     (target.kind === 'boss' || target.kind === 'defenseBoss')
   ) {
     // 명중당 1 + floor(Lv/8) 틱(Lv1 = 1 · Lv20 = 3). 정수 계단이라 F1·F6 과 같은 문법이다.
-    // ⚠️ `< F8_OVERHEAT_CAP` 게이트가 `Math.min` 과 **한 쌍**이다. 게이트 없이 `min` 만 쓰면
+    // ⚠️ `< OVERHEAT_EXTEND_CAP` 게이트가 `Math.min` 과 **한 쌍**이다. 게이트 없이 `min` 만 쓰면
     // 이미 천장 위에 서 있는 창(어픽스·미래 콘텐츠가 더 길게 열었을 때)을 F8 이 **깎는다** —
     // 강화 스킬이 약화가 되는 부호 반전이다.
-    target.iframes = Math.min(target.iframes + 1 + Math.floor(f8 / 8), F8_OVERHEAT_CAP);
+    target.iframes = Math.min(target.iframes + overheatExtendTicks(f8), OVERHEAT_EXTEND_CAP);
   }
 
   // 정조준탄 표식(앵커 ⑯ 의 `mark: 1`). 표식 없는 평상시 볼리는 아래로 한 줄도 안 내려간다.
@@ -1034,7 +1005,7 @@ export function strikerEnemyDamaged(
     if (target.iframes > 0) {
       // 이미 화상 중 → **잔여를 즉시 일괄 정산하고 화상을 끝낸다**(스스로 장전하고 스스로 터뜨린다).
       // 잔여 = 남은 틱 × 틱당 피해(`status.ts` 의 인코딩: iframes=틱 · dashCooldown=틱당 피해).
-      const burst = Math.round((target.iframes * target.dashCooldown * (10000 + 500 * f6)) / 10000);
+      const burst = Math.round((target.iframes * target.dashCooldown * incendiaryBurstMultBp(f6)) / 10000);
       target.iframes = 0;
       target.dashCooldown = 0;
       if (burst > 0) {
@@ -1049,7 +1020,7 @@ export function strikerEnemyDamaged(
       // Lv1 에 탄 피해의 5% × 120틱 = **600%** 가 되어 F4 파편(30% + 2%p/Lv)과 자릿수가 두 개
       // 어긋난다. 그래서 이 레인은 F1·F8 과 같은 **정수 계단**으로 배선했다(Lv1 = 1 · Lv20 = 6).
       // 밸런스 확정 레인이 기준량을 정하면 이 한 줄만 갈아 끼우면 된다.
-      applyBurn(target, 1 + Math.floor(f6 / 4), FIRE_DURATION);
+      applyBurn(target, incendiaryBurnPerTick(f6), FIRE_DURATION);
     }
   }
 
@@ -1059,7 +1030,7 @@ export function strikerEnemyDamaged(
   if (f9 >= 1 && (target.kind === 'enemy' || target.kind === 'boss')) {
     // 엘리트 판정은 `compact` 의 전리품 게이트와 같은 술어(`kind === 'enemy' && pierce > 0`).
     const halved = target.kind === 'boss' || target.pierce > 0;
-    const base = 24 + 4 * f9;
+    const base = suppressPush(f9);
     const push = halved ? Math.round(base / 2) : base;
     // 방향은 **가해 탄의 진행 방향**이다. 플레이어→적 벡터를 다시 구하면 관통탄이 두 번째
     // 표적을 뒤로 미는 순간 부호가 갈린다.
@@ -1081,7 +1052,7 @@ export function strikerEnemyDeath(state: WorldState, player: Entity, elite: bool
   if (!elite) return;
   const s3 = lv(state, Sk.fieldTriage);
   if (s3 < 1) return;
-  const healed = player.hp + 4 + s3;
+  const healed = player.hp + fieldTriageHeal(s3);
   player.hp = healed > player.maxHp ? player.maxHp : healed;
 }
 
@@ -1102,7 +1073,7 @@ export function strikerFirepowerActive(state: WorldState, player: Entity): numbe
   if (f3 < 1) return 0;
   if (player.cooldown > 0) player.cooldown = 0;
   // fanStrike 탄 추가 배율 +10% + 2%p/Lv.
-  return 1000 + 200 * f3;
+  return ventBurstBp(f3);
 }
 
 /**
@@ -1152,8 +1123,8 @@ export function strikerBlinkOrigin(state: WorldState, player: Entity): void {
   if (!state.skillsOn) return;
   const m1 = lv(state, Sk.inertiaBurst);
   if (m1 < 1) return;
-  const radius = 120 + 10 * m1;
-  blastDamage(state, player, radius, 20 + 4 * m1);
+  const radius = inertiaBurstRadius(m1);
+  blastDamage(state, player, radius, inertiaBurstDamage(m1));
   clearEnemyBullets(state, player, radius);
 }
 
@@ -1250,7 +1221,7 @@ export function strikerContactInvuln(state: WorldState, player: Entity, target: 
   if (m9 < 1) return;
   if (target.kind !== 'enemy' || target.dead) return;
   if (target.timer > state.tick) return; // 재충돌 쿨 중.
-  const dmg = 10 + 3 * m9;
+  const dmg = ramManeuverDamage(m9);
   target.hp -= dmg;
   if (target.hp <= 0) target.dead = true;
   target.timer = state.tick + 30;
@@ -1285,8 +1256,8 @@ export function strikerActiveExpired(
   const s9 = lv(state, Sk.expiryStasis);
   if (s9 < 1) return;
   if (def.id !== 'as_striker_survival_lo' && def.id !== 'as_striker_survival_hi') return;
-  const ticks = 45 + 5 * s9;
-  const radius = 160 + 12 * s9;
+  const ticks = expiryStasisTicks(s9);
+  const radius = expiryStasisRadius(s9);
   const r2 = radius * radius;
   for (const e of state.entities) {
     if (e.kind !== 'enemy' || e.dead) continue;

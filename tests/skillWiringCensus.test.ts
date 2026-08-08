@@ -114,6 +114,11 @@ const FILE_SHIP: Readonly<Record<string, string>> = {
   'phantom.ts': 'phantom',
   'phantomEntry.ts': 'phantom',
   'striker.ts': 'striker',
+  // 앵커가 **한 칸도 없는** 파일이다 — 레벨 스케일 공식만 담은 순수 모듈이라
+  // (`const enum Sk` 도 없다) 이 인구조사에는 0건으로 잡힌다. 그래도 표에 적는 이유는
+  // 이 단언의 목적이 "새 파일을 **의도적으로** 분류하게 만드는 것"이기 때문이다.
+  // 연구소 화면이 이 파일을 불러 수치를 보여 준다(사용자 요청 2026-08-09).
+  'strikerScaling.ts': 'striker',
 };
 
 const SHIPS = ['arccaster', 'bruiser', 'bubble', 'hatchling', 'mallow', 'phantom', 'striker'];
