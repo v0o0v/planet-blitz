@@ -38,6 +38,7 @@ import { BRUISER_SKILL_DETAIL } from './skillDetail/bruiser.js';
 import { BUBBLE_SKILL_DETAIL } from './skillDetail/bubble.js';
 import { HATCHLING_SKILL_DETAIL } from './skillDetail/hatchling.js';
 import { MALLOW_SKILL_DETAIL } from './skillDetail/mallow.js';
+import { PHANTOM_SKILL_DETAIL } from './skillDetail/phantom.js';
 
 export type { SkillDetail };
 
@@ -58,6 +59,7 @@ export const SKILL_DETAIL_BY_SHIP: Readonly<
   bubble: BUBBLE_SKILL_DETAIL,
   hatchling: HATCHLING_SKILL_DETAIL,
   mallow: MALLOW_SKILL_DETAIL,
+  phantom: PHANTOM_SKILL_DETAIL,
 };
 
 /**

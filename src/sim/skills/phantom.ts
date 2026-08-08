@@ -148,6 +148,41 @@ import { skillLv } from '../../items/skills.js';
 // 아크캐스터 [offense, utility, defense] · 팬텀 [offense, utility, defense]. 설계서의 서술
 // 순서와 우연히 맞아도 정본은 언제나 `trees` 배열이다.
 
+import {
+  CLOAK_PIERCE_ADD,
+  LAST_PHASE_HP_PCT,
+  MENDING_PERIOD,
+  PHASE_LIQUIDATION_STREAK_DIV,
+  REPULSE_RADIUS,
+  TALLY_STACK_CAP,
+  VOID_COVENANT_HP_CUT_BP,
+  afterimageExitAdvance,
+  annihilationBlastBp,
+  annihilationRadius,
+  attenuationBp,
+  backstabBp,
+  blownCoverIframeAdd,
+  cloakPierceSpeedBp,
+  cloakedMendingHeal,
+  coverStalkAdvance,
+  echoStalkCooldownCut,
+  executionReloadPierce,
+  extendedHoldBudget,
+  frozenClockBudget,
+  grudgeAmplifyBp,
+  lastPhaseCooldownTicks,
+  phaseLandingRadius,
+  phaseLiquidationRadius,
+  repulsePush,
+  shadowLedgerComboAdd,
+  tallyBpPerStack,
+  traceSiphonAdvance,
+  tracelessStrideSpeedBp,
+  twinMarkBp,
+  vitalDissectionBp,
+  voidCovenantAddBp,
+} from './phantomScaling.js';
+
 const enum Sk {
   /** AS1 이중 각인 */ twinMark = 0,
   /** AS2 은막 침투 */ cloakPierce = 1,
@@ -225,119 +260,16 @@ const MARK_GHOST_SHOT = 4;
  */
 const PHASE_TREE_INDEX = 1;
 
-/**
- * DI2 회복 주기. 설계서 고정값(창 안 60틱마다) — 진입 틱 공짜 회복을 없애려고 `aux0 > 240` 을
- * 함께 본다(설계서 DI2 의 MINOR 정정).
- */
-const MENDING_PERIOD = 60;
 
-/**
- * DI4 밀어내기 반경. **밸런스 각주**다 — 설계서 DI4 는 변위량(60 + 8×Lv)만 정하고 반경을
- * 비워 뒀다(헌장 두 게이트 기준 어느 쪽도 아님 → 출시 전 일괄 패스 대상). 여기 상수 하나로
- * 모아 둔 것은 그때 고칠 자리를 하나로 만들기 위해서다.
- */
-const REPULSE_RADIUS = 220;
 
-/**
- * PH6 창당 정지 예산 = `min(12 + floor(2.4×Lv), CLOAK_HOLD_TICKS/2)` 틱 (설계서 PH6, 2판 유계화).
- *
- * `2.4 × Lv` 를 f64 로 곱하지 않고 `floor(24×Lv/10)` 으로 적는 것은 규율 ③ 이 아니라 **결정론**
- * 때문이다 — `2.4` 는 이진 부동소수로 정확히 표현되지 않아 Lv 에 따라 `floor` 가 갈릴 수 있다.
- *
- * 상한이 `HOLD/2` 인 것이 유계의 전부다: 창 하나가 스스로를 1.5배 이상 늘릴 수 없고,
- * PH5 가 HOLD 를 늘리면 상한도 절반씩 따라 늘어 비율이 보존된다(`shipSignature.ts` 가 폐기한
- * 영구 은신이 재현되지 않는 근거).
- */
-function frozenClockBudget(level: number): number {
-  const raw = 12 + Math.floor((24 * level) / 10);
-  const cap = Math.floor(CLOAK_HOLD_TICKS / 2);
-  return raw < cap ? raw : cap;
-}
 
-/**
- * PH5 창당 연장 예산 = `floor(CLOAK_HOLD_TICKS × Lv / 20)` 틱 (Lv1 = 6 · Lv10 = 60 · Lv20 = 120).
- *
- * ⚠️ **밸런스 각주다** — 설계 문면(`data/ships/phantom.ts` PH5)은 *"은신 유지 시간이 길어진다"*
- * 까지만 말하고 계단을 비워 뒀다(DI4 의 {@link REPULSE_RADIUS} 와 같은 자리 — 출시 전 일괄
- * 패스 대상). 여기 함수 하나로 모아 둔 것은 그때 고칠 자리를 하나로 만들기 위해서다.
- *
- * 기준을 `CLOAK_HOLD_TICKS` 파생으로 적은 것은 유계 때문이다: Lv20 에서 정확히 창 1개분(+100%)
- * 이고 그 이상 자라지 않는다. 상수 리터럴로 적으면 HOLD 가 바뀌는 날 비율이 조용히 갈린다.
- */
-function extendedHoldBudget(level: number): number {
-  return Math.floor((CLOAK_HOLD_TICKS * level) / 20);
-}
 
-/**
- * AS1 후속 배율 bp = `CLOAK_BREAK_BP × (0.3 + 0.6×Lv/(Lv+15))` — **총 배율**이다(가산이 아니다).
- *
- * 이 파일 헤더가 못 박은 값 그대로다: *"설계서 AS1 의 후속 배율은
- * `25000 × (0.3 + 0.6×Lv/(Lv+15))` bp(Lv1 ≈ 0.85배 · Lv20 ≈ 1.6배)로 **원배율보다 작다**"*.
- * 「배」로 적힌 그 수치가 총 배율이라는 뜻이고, 그래서 AS3(재장전 = 원배율 2.5배)과 값이
- * 갈린다 — 가산으로 읽으면 Lv15 부터 2.5배를 넘어 그 구분이 무너진다.
- *
- * ⚠️ **Lv1·Lv2 에서는 1.0 미만이다**(Lv1 = 0.84배 · Lv2 = 0.93배 · Lv3 = 정확히 1.00배).
- * 즉 저레벨 후속타는 평타보다 약하다. 설계 문면대로 적은 값이고 여기서 하한을 발명하지
- * 않는다 — 임의의 `max(10000, ·)` 는 설계에 없는 계단을 하나 더 만든다. 레인 보고서에 그대로
- * 올린다.
- *
- * 나눗셈을 정수 bp 로 두 번에 나눠 적는 것은 결정론 때문이다(f64 상수 `0.3`·`0.6` 을 곱하면
- * Lv 에 따라 `floor` 가 갈릴 수 있다 — {@link frozenClockBudget} 과 같은 사유).
- */
-function twinMarkBp(level: number): number {
-  const f = 3000 + Math.floor((6000 * level) / (level + 15));
-  return Math.floor((CLOAK_BREAK_BP * f) / 10000);
-}
 
-/**
- * AS8 스택 상한 · 스택당 가산 bp.
- *
- * ⚠️ **둘 다 밸런스 각주다** — 설계 문면(`data/ships/phantom.ts` AS8)은 *"처치가 스택으로
- * 쌓여 다음 은신 해제 첫 타 배율에 가산된다"* 로 **기구만** 정하고 수치를 비웠다.
- * Lv20·만스택에서 `20 × (100 + 25×20) = 12000`bp = **+1.2배**라, 원배율 2.5배와 합쳐 3.7배로
- * 유계다(무한 성장이 아니다). 상한이 없으면 장기 런에서 한 발이 임의로 커진다.
- */
-const TALLY_STACK_CAP = 20;
-function tallyBpPerStack(level: number): number {
-  return 100 + 25 * level;
-}
 
-/** DI5 내부 쿨다운 = 3600 − 3600×Lv/(Lv+30) 틱 (Lv1 ≈ 3484, Lv20 = 2160, 점근 0·도달 없음). */
-function lastPhaseCooldownTicks(level: number): number {
-  return 3600 - Math.floor((3600 * level) / (level + 30));
-}
 
-/**
- * AS7 증폭 bp = 2000 + 6000×Lv/(Lv+12) (Lv1 ≈ 2462bp·24.6% · Lv20 ≈ 4727bp·47.3%,
- * 점근 8000bp·80% — 연속 체감, 설계서 원문 그대로).
- */
-function grudgeAmplifyBp(level: number): number {
-  return 2000 + Math.floor((6000 * level) / (level + 12));
-}
 
-/**
- * DI10 해제 첫 타 배율 **영구 가산** bp = 500 + 250×Lv (Lv1 = 750 · Lv20 = 5500 →
- * 원배율 25000 + 5500 = 30500bp = 3.05배). 선형 — 20 초과 자연 연장.
- */
-function voidCovenantAddBp(level: number): number {
-  return 500 + 250 * level;
-}
 
-/** DI10 대가 — 최대 HP 고정 −8%(레벨 무관, bp). */
-const VOID_COVENANT_HP_CUT_BP = 800;
 
-/**
- * DI3 감소 bp = 6000×s/(s+2000), s = aux0×(4+Lv).
- *
- * ⚠️ 나눗셈이 `skillDerived` 가 아니라 여기 있는 사유는 `skills/striker.ts` 의 같은 주석이
- * 정본이다(`world.ts` 런타임 import 또는 이중 정본 둘 중 하나가 되기 때문). 이 함수는 **선체
- * hp 가 실제로 깎이는 피격 틱**에만 불린다 — sim 루프의 상시 나눗셈이 아니다.
- */
-function attenuationBp(streak: number, level: number): number {
-  const s = streak * (4 + level);
-  if (s <= 0) return 0;
-  return Math.floor((6000 * s) / (s + 2000));
-}
 
 // ---------------------------------------------------------------------------
 // 앵커별 진입점 — `skillHooks.ts` 의 `case SIG_PHANTOM_CLOAK:` 이 부른다
@@ -368,7 +300,7 @@ function attenuationBp(streak: number, level: number): number {
 export function phantomDashFired(state: WorldState, player: Entity): void {
   // ① PH1 잔상 이탈
   const ph1 = lv(state, Sk.afterimageExit);
-  if (ph1 >= 1) advanceCloak(state, player, 20 + 4 * ph1);
+  if (ph1 >= 1) advanceCloak(state, player, afterimageExitAdvance(ph1));
 
   // ② PH6 정지된 시계 — 예약. 예산이 남아 있고 **지금 창 안일 때만** 산다.
   const ph6 = lv(state, Sk.frozenClock);
@@ -406,7 +338,7 @@ export function phantomActiveFired(state: WorldState, player: Entity, def: Activ
   if (def.treeIndex !== PHASE_TREE_INDEX) return;
   const ph2 = lv(state, Sk.phaseLanding);
   if (ph2 < 1) return;
-  const radius = 140 + 10 * ph2;
+  const radius = phaseLandingRadius(ph2);
   clearEnemyBullets(state, player, radius);
   const r2 = radius * radius;
   for (const e of state.entities) {
@@ -439,13 +371,13 @@ export function phantomActiveFired(state: WorldState, player: Entity, def: Activ
 export function phantomGemCollected(state: WorldState, player: Entity): void {
   // ① PH8 흔적 흡수
   const ph8 = lv(state, Sk.traceSiphon);
-  if (ph8 >= 1) advanceCloak(state, player, 1 + Math.ceil(ph8 / 5));
+  if (ph8 >= 1) advanceCloak(state, player, traceSiphonAdvance(ph8));
 
   // ② PH3 그림자 장부 — 창 중 수거의 콤보 창 회복량 가산(+2 + 1×Lv 틱).
   const ph3 = lv(state, Sk.shadowLedger);
   if (ph3 < 1) return;
   if (!playerCloaked(state, player)) return;
-  state.comboTimer += 2 + ph3;
+  state.comboTimer += shadowLedgerComboAdd(ph3);
 }
 
 /**
@@ -462,7 +394,7 @@ export function phantomGemCollected(state: WorldState, player: Entity): void {
 export function phantomWallContact(state: WorldState, player: Entity): void {
   const di6 = lv(state, Sk.coverStalk);
   if (di6 < 1) return;
-  advanceCloak(state, player, 1 + Math.floor(di6 / 10));
+  advanceCloak(state, player, coverStalkAdvance(di6));
 }
 
 /**
@@ -513,7 +445,7 @@ export function phantomPlayerDamaged(
   // ① DI4 반발 위상 — 주변 적을 좌표 직접 변위로 밀어낸다(`resolveFilmBurst` 동형).
   const di4 = lv(state, Sk.repulsePhase);
   if (di4 >= 1) {
-    const push = 60 + 8 * di4;
+    const push = repulsePush(di4);
     const r2 = REPULSE_RADIUS * REPULSE_RADIUS;
     for (const e of state.entities) {
       if (e.dead) continue;
@@ -575,7 +507,7 @@ export function phantomPlayerDamaged(
   if (readSlot(state.skillCarry, PhantomCarry.lastPhaseCooldown) > 0) return;
   // 임계 통과 판정 — 정수 비교로 한다(`hp × 10000` vs `maxHp × 3000`). 부동소수 임계값을
   // 만들면 hp 가 정수인데 판정만 소수가 되어 경계 틱이 기체마다 갈린다.
-  const thr = player.maxHp * 3000;
+  const thr = player.maxHp * (LAST_PHASE_HP_PCT * 100);
   const before = player.hp + dmg;
   if (!(player.hp * 10000 < thr && before * 10000 >= thr)) return;
   if (player.hp <= 0) return;
@@ -600,7 +532,7 @@ export function phantomSignatureStep(state: WorldState, player: Entity): void {
   if (di2 >= 1) {
     const a = Math.trunc(player.aux0);
     if (a > CLOAK_UNHIT_TICKS && (a - CLOAK_UNHIT_TICKS) % MENDING_PERIOD === 0) {
-      const heal = 2 + di2;
+      const heal = cloakedMendingHeal(di2);
       const next = player.hp + heal;
       player.hp = next > player.maxHp ? player.maxHp : next;
     }
@@ -704,7 +636,7 @@ export function phantomSignatureStep(state: WorldState, player: Entity): void {
   //    걸지 않는 이유이고, 겹쳐 걸면 술어가 둘이 된다.
   const ph9 = lv(state, Sk.echoStalk);
   if (ph9 >= 1 && player.dashCooldown > 0 && objectiveActiveOf(state)) {
-    const next = player.dashCooldown - (1 + Math.floor(ph9 / 10));
+    const next = player.dashCooldown - echoStalkCooldownCut(ph9);
     player.dashCooldown = next > 0 ? next : 0;
   }
 
@@ -926,7 +858,7 @@ export function phantomEnemyDamaged(
   // 그래서 판정을 `hp + 실드` 로 확장하거나 대상을 제외할 필요가 없다.
   const as4 = lv(state, Sk.vitalDissection);
   if (as4 >= 1 && target.hp + dmg === target.maxHp) {
-    const extra = Math.round((dmg * (1200 + 180 * as4)) / 10000);
+    const extra = Math.round((dmg * vitalDissectionBp(as4)) / 10000);
     if (extra > 0) {
       target.hp -= extra;
       // 좀비 방지 — 대상 범위(enemy+boss)는 `blastDamageAt`·BL3 과 같게 맞춘다. guardian·core 는
@@ -944,7 +876,7 @@ export function phantomEnemyDamaged(
   if (as5 >= 1) {
     const dot = (player.x - target.x) * target.vx + (player.y - target.y) * target.vy;
     if (dot < 0) {
-      const extra = Math.round((dmg * (1000 + 150 * as5)) / 10000);
+      const extra = Math.round((dmg * backstabBp(as5)) / 10000);
       if (extra > 0) {
         target.hp -= extra;
         // 좀비 방지 — 위 AS4 와 같은 두 줄·같은 대상 범위다(사실이 두 벌이 되지 않게).
@@ -1009,9 +941,9 @@ export function phantomEnemyDamaged(
     // 반올림은 게이트 **안**이다(규율 ③). 기준은 `source.damage` 가 아니라 **실피해** `dmg` 다 —
     // 설계서가 "첫 타 실피해의 25%" 로 적었고, 그래야 방어 배율·엘리트 감소를 통과한 뒤의 값이
     // 기준이 된다(BL3 은 설계서가 "탄 피해" 라 `source.damage` 를 쓴다 — 문면이 다르다).
-    const blast = Math.round((dmg * (2500 + 150 * as9)) / 10000);
+    const blast = Math.round((dmg * annihilationBlastBp(as9)) / 10000);
     if (blast > 0) {
-      const radius = 100 + 10 * as9;
+      const radius = annihilationRadius(as9);
       const r2 = radius * radius;
       for (const e of state.entities) {
         if (e.dead || e === target) continue;
@@ -1064,7 +996,11 @@ export function phantomCloakBreakReset(
   if (di1 >= 1) {
     // 반올림은 게이트 **안**이다(규율 ③). `streak / 2` 의 홀수 나머지를 버리는 것은 반경이
     // 정수여야 해서다 — 소거 판정은 `r * r` 이라 소수가 끼면 경계 탄이 틱마다 갈린다.
-    clearEnemyBullets(state, player, 40 + 4 * di1 + Math.floor(s / 2));
+    clearEnemyBullets(
+      state,
+      player,
+      phaseLiquidationRadius(di1) + Math.floor(s / PHASE_LIQUIDATION_STREAK_DIV),
+    );
   }
 
   // ② PH10 발각 즉응 — **은신 창 중에** 깨졌을 때만 대시 쿨다운 전액 환급 + 무적 가산.
@@ -1088,7 +1024,7 @@ export function phantomCloakBreakReset(
     // 밀어내고 후자는 `sweptCircleOverlapsWall` 로 탄을 죽인다. 따라서 AS10 이 기다리는
     // 탄↔벽 앵커가 서더라도 DI9 는 거기서 돌지 않는다. DI9 의 자리는 `slideCircleWalls`
     // 호출을 **건너뛰는** 분기이고 그건 이 레인의 편집 범위 밖(`world.ts`)이다.
-    player.iframes += 1 + Math.floor(ph10 / 4);
+    player.iframes += blownCoverIframeAdd(ph10);
   }
 }
 
@@ -1141,7 +1077,7 @@ export function phantomVolleyParams(
     // ⚠️ 설계 3판이 **첫 타와 재장전 타를 구분하지 않는 것을 확정**했다(`aux1` 은 0/1 이진이라
     //    구분할 상태가 없고, 레벨 스케일 항이 "신규 상태 0" 으로 못 박혀 있다). 그래서 이
     //    보너스는 강화탄 **전부**에 실린다 — 구분하려고 새 슬롯을 잡으면 설계와 갈린다.
-    params.pierce += Math.floor(as3 / 5);
+    params.pierce += executionReloadPierce(as3);
   }
 
   // --- AS8 처형인의 적공(소비 절반) -----------------------------------------
@@ -1228,10 +1164,10 @@ export function phantomVolleyParams(
   if (as2 < 1) return;
   // 창 술어는 정본 하나(`playerCloaked`)를 쓴다 — 침공 차단과 기체 게이트가 그 안에 있다.
   if (!playerCloaked(state, player)) return;
-  params.pierce += 1;
+  params.pierce += CLOAK_PIERCE_ADD;
   // 탄속은 정수 bp · 나눗셈 1회. `speed` 는 소수일 수 있어 `Math.round` 를 걸지 않는다 —
   // 반올림하면 스킬 없는 런과 같은 값이어야 할 이유가 없는 자리에서 정수화가 새로 생긴다.
-  params.speed = (params.speed * (10600 + 150 * as2)) / 10000;
+  params.speed = (params.speed * cloakPierceSpeedBp(as2)) / 10000;
 }
 
 /**
@@ -1264,7 +1200,7 @@ export function phantomPlayerMoveParams(
   // 면역이 먼저다 — 호출부는 되쓴 값으로 `PLAYER_SLOW_MULT` 적용 여부를 정한다.
   params.slowTicks = 0;
   // 이속 bp = 800 + 100×Lv (Lv1 = +9% · Lv20 = +28%). 정수 bp 라 나눗셈 1회다.
-  params.speedMult *= (10800 + 100 * ph4) / 10000;
+  params.speedMult *= tracelessStrideSpeedBp(ph4) / 10000;
 }
 
 /**

@@ -43,6 +43,13 @@ import { skillLv } from '../../items/skills.js';
 // 설계서 서술 순서(암살→위상→교란)와 우연히 일치하지만, **정본은 언제나 `trees` 배열**이다
 // (스트라이커는 [offense, defense, utility], 아크캐스터는 [offense, utility, defense] 로 셋이 다 달랐다).
 
+import {
+  entryFlashDamage,
+  entryFlashRadius,
+  phaseSedimentHp,
+  vanishingChillRadius,
+} from './phantomScaling.js';
+
 const enum Sk {
   /** PH5 연장 위상 */ extendedPhase = 14,
   /** PH6 정지된 시계 */ frozenClock = 15,
@@ -72,8 +79,8 @@ export function phantomCloakEntry(state: WorldState, player: Entity): void {
   // ① PH7 진입 섬광 — 반경 150 + 12×Lv, 피해 15 + 3×Lv. 폭발과 적탄 소거가 같은 반경이다.
   const ph7 = lv(state, Sk.entryFlash);
   if (ph7 >= 1) {
-    const radius = 150 + 12 * ph7;
-    blastDamage(state, player, radius, 15 + 3 * ph7);
+    const radius = entryFlashRadius(ph7);
+    blastDamage(state, player, radius, entryFlashDamage(ph7));
     clearEnemyBullets(state, player, radius);
   }
 
@@ -86,7 +93,7 @@ export function phantomCloakEntry(state: WorldState, player: Entity): void {
   //    같은 사유로 같은 게이트를 쓴다.
   const di7 = lv(state, Sk.vanishingChill);
   if (di7 >= 1) {
-    const r = 200 + 15 * di7;
+    const r = vanishingChillRadius(di7);
     const r2 = r * r;
     for (const e of state.entities) {
       if (e.dead || e.kind !== 'enemy') continue;
@@ -109,7 +116,7 @@ export function phantomCloakEntry(state: WorldState, player: Entity): void {
   //    곧 진입 횟수다(설계서 DI8 "신규 상태 0").
   const di8 = lv(state, Sk.phaseSediment);
   if (di8 >= 1) {
-    player.maxHp += Math.round(2 + (16 * di8) / (di8 + 24));
+    player.maxHp += phaseSedimentHp(di8);
   }
 
   // ④ PH6 정지된 시계 — **창당 정지 예산 리셋**(효과 본체는 `skills/phantom.ts`).
