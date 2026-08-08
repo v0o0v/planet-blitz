@@ -185,11 +185,14 @@ import {
   cushionDeferredDamage,
   cushionRecovered,
   cushionSettled,
-  FILM_ABSORB_FLAT,
+  filmCapacityFor,
+  broodBulletDamage,
   filmReady,
   filmAbsorbed,
   filmRemainingDamage,
 } from './shipSignature.js';
+// 밀도 패스 계수(2026-08-08 사용자 결정) — 사유는 그 모듈 헤더가 정본이다.
+import { BOSS_HP_MULT, ENEMY_XP_MULT } from './enemyScale.js';
 // 파열 후처리(E3) — world 와 액티브 핸들러가 **같은 함수**를 부르도록 leaf 로 내렸다.
 import {
   FILM_BURST_REQ_NONE,
@@ -767,12 +770,29 @@ export interface WeaponStats {
  */
 export const BASE_WEAPON_RANGE = 1650;
 
+/**
+ * ## 출시 전 밸런스 — 기체 기본 스탯 상향 (2026-08-08, 사용자 결정)
+ *
+ * 적 밀도 패스(`src/sim/enemyScale.ts`)로 화면 적·탄이 늘어난 뒤 사용자가 직접 플레이해
+ * *"화면에 나오는 적과 탄수는 좋아. 대신 좀 어려우니까 내 기체의 공격력을 15% 방어력을 20%
+ * 올려줘"* 라고 판정했다. **이 상향의 근거는 계측이 아니라 사람 체감이다** — ADR-0051 이
+ * 절대 난이도를 사람에게 맡긴 그 자리이고, 봇 계측은 밀도 패스를 "난이도 불변" 으로 읽었다
+ * (봇은 카이팅해 탄에 잘 안 맞는다 — `ENEMY_DAMAGE_MULT` 주석의 그 한계).
+ *
+ * 기체 **기본값**을 올리므로 7기체의 `baseBp` 상대비는 불변이다 — 명목표(`bench/nominalPower.ts`)
+ * 의 RATIO 열이 안 움직인다. 즉 이 상향은 절대 원점만 옮기고 기체 균형 축과 직교한다.
+ */
 export const DEFAULT_WEAPON: WeaponStats = {
   fireCooldownQ: 6 * FIRE_CD_Q,
   // Bullet speed doubled for the 2x-scale world so shots feel as fast relative to
   // the larger entities and distances.
   bulletSpeed: 1800,
-  damage: 8,
+  // 8 -> 9.2(+15%) -> 10.12(+10%) -> 12.14(+20%) -> 12.75(+5%) -> 16.58(+30%) -> 18.24(+10%)
+  // — **누적 +128%** (확정값). 전부 위 §기체 기본 스탯 상향의 같은 플레이테스트 루프에서
+  // 사용자가 한 판씩 돌려 보고 판정한 값이고, 마지막 +10% 는 **보스를 25% 남기고 죽은 런**
+  // (tick 6472 · Lv1 시작 · 처치 288 · 보스 1805/7200)을 보고 그 격차를 메우려 정했다.
+  // 소수 2자리는 `weapon.damage` 의 정본 눈금이다(`Math.round(x * 100) / 100`).
+  damage: 18.24,
   bulletCount: 1,
   spread: 0.18,
   pierce: 0,
@@ -984,7 +1004,12 @@ export const DEFAULT_CONFIG: WorldConfig = {
   dashCooldownTicks: 42,
   dashIframes: 10,
   hitIframes: 40,
-  playerHp: 100,
+  // 100 -> 120(+20%) -> 126(+5%) -> 151(+20%) — **누적 +51%**, 위 §기체 기본 스탯 상향.
+  // 151.2 를 정수로 접었다(−0.13%) — 기본 HP 는 HUD·해시 모두에서 정수인 편이 깔끔하다.
+  // ⚠️ 이 값은 **혼자 움직이면 안 된다** — `src/items/loadout.ts` 의 `BASE_HP_REF`(maxHpPct
+  // 어픽스의 기준 HP)와 `data/guardian.ts` 의 `PLAYER_BASE_HP`(침공 수호 파생의 기준 HP)가
+  // 자기 주석에 "이 값과 같다" 를 계약으로 적어 두었다. 셋을 함께 올렸다.
+  playerHp: 151,
 };
 
 /** A single collected loot drop (drop seed + rarity code + provenance). */
@@ -1326,6 +1351,29 @@ export interface WorldState {
    * 만들지 마라 — 감소 상한과 스택 상한이 조용히 갈리는 것이 E4 가 막으려던 결함이다.
    */
   armorMaxStacks: number;
+  // --- 버블 막 내구 상한(2026-08-08 밸런스 패스 · 플랫 시그니처 비율화) --------------------
+  /**
+   * 이 런의 **막 1장 내구**(= `player.aux0` 의 상한). `createWorld` 가 `config.playerHp` 에서
+   * **한 번 정수로 확정**하고 런 중에는 절대 바뀌지 않는다 — {@link WorldState.armorMaxStacks}
+   * 와 **정확히 같은 패턴**이고, 그 필드 주석이 사유(구현 고지 ③ · 폴드 판단)의 정본이다.
+   *
+   * ## 왜 상수가 아니라 필드가 됐는가
+   * 예전에는 `FILM_ABSORB_FLAT = 60` 이라는 고정 흡수량이었다. 고정값은 재생 주기(7초)와 짝을
+   * 이뤄 **런과 무관한 절대 상쇄 DPS**(8.57)를 만들고, 받는 피해가 그 미만이면 버블이 문자
+   * 그대로 죽지 않는다. 사유와 실측은 `shipSignature.ts` 의 {@link FILM_ABSORB_HP_BP} 주석이
+   * 정본이다.
+   *
+   * ## 해시 폴드 — 하지 않는다 (의도적)
+   * `config.playerHp` 는 이미 해시에 접히는 입력이고(그 값으로 `player.maxHp` 가 서고 엔티티
+   * 해시에 들어간다) 이 필드는 그 순수 파생이다. `armorMaxStacks` 와 같은 근거이며, 파생원이
+   * config 밖으로 나가면 그 근거가 깨진다.
+   *
+   * ⚠️ 소비 지점은 **막을 세우는 자리 전부**다: 이 파일의 시그니처 스텝(재생) · 액티브 핸들러
+   * (`activeHandlers/bubble.ts` 의 즉시 만재·불멸 막) · 스킬(`skills/bubble.ts` 의 PO10 보강 ·
+   * FI9 비상막 · PO5 만재 술어). **상한을 그 자리에서 상수로 다시 적지 마라** — 만재 술어와
+   * 실제 상한이 조용히 갈리는 것이 `armorMaxStacks` 가 막으려던 결함과 같은 형태다.
+   */
+  filmCapacity: number;
   // --- 버블 파열 요청 슬롯 2칸(E3 · ADR-0049 선결) ----------------------------------------
   /**
    * 이번 틱의 막 파열 요청 — **종류 코드 2칸 + 좌표 2쌍**(`src/sim/filmBurst.ts` 가 정본).
@@ -1729,6 +1777,9 @@ export function createWorld(
     // `config`(→ `skillInvest`)에서 계산한 정수를 **여기서** 확정한다. 지금은 확장 스킬이
     // 아직 없어 항상 기본값 → 기존 런의 감소·적립 산술이 비트 동일이다.
     armorMaxStacks: ARMOR_MAX_STACKS,
+    // 버블 막 내구 상한. **이 한 줄이 파생의 유일한 지점**이다(위 `armorMaxStacks` 와 같은 규율).
+    // `cfg.playerHp` 는 이 시점에 이미 loadout 의 `maxHpAdd` 가 더해진 최종값이다(위 1568행).
+    filmCapacity: filmCapacityFor(cfg.playerHp),
     // 버블 파열 요청 슬롯(E3). 세운 틱 안에서 소비·초기화되므로 hashWorld 시점엔 항상 0 이고,
     // 그래서 폴드하지 않는다(필드 주석의 근거).
     filmBurstReq0: FILM_BURST_REQ_NONE,
@@ -2606,7 +2657,7 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
 //   팬텀      aux0 = 연속 무피격 틱(0..CLOAK_TICK_CAP) · aux1 = 은신 해제 첫 타 대기 플래그(0/1)
 //   해츨링    aux0 = 마지막 출격 시점의 state.kills 스냅샷 · aux1 = 미사용(0)
 //   말로우    aux0 = 적립된 지연 피해(비음 정수) · aux1 = 연속 무피격 틱
-//   버블      aux0 = 남은 막 내구(0..FILM_ABSORB_FLAT) · aux1 = 마지막 파열 이후 경과 틱
+//   버블      aux0 = 남은 막 내구(0..state.filmCapacity) · aux1 = 마지막 파열 이후 경과 틱
 //
 // ## 활성 판정을 두 축으로 OR 하는 이유
 // 정본은 `LoadoutConfig.uniqueMask` 의 시그니처 비트(M8-L4 가 loadout.ts 에서 OR-in)다. 다만
@@ -2868,12 +2919,12 @@ function stepShipSignature(state: WorldState, player: Entity, input: InputFrame)
     // 규칙으로 FILM_PERIOD_TICKS 뒤에 선다(시작 즉시 무료 흡수막을 주지 않는다).
     //
     // 카운터 상한은 별도로 두지 않는다 — aux1 은 임계(FILM_PERIOD_TICKS)에서 반드시 0 으로
-    // 리셋되므로 구조적으로 유계이고, aux0 은 FILM_ABSORB_FLAT 을 넘지 않는다. 둘 다 비음
+    // 리셋되므로 구조적으로 유계이고, aux0 은 state.filmCapacity 를 넘지 않는다. 둘 다 비음
     // 정수라 u32 폴드(replay.ts hashEntity)에 안전하다.
     if (player.aux0 === 0) {
       player.aux1++;
       if (filmReady(player.aux1)) {
-        player.aux0 = FILM_ABSORB_FLAT;
+        player.aux0 = state.filmCapacity;
         player.aux1 = 0;
       }
     }
@@ -3104,7 +3155,8 @@ function stepBoss(state: WorldState, player: Entity): void {
       bossX += VIEW_WIDTH * 0.55; // 코스 끝(+X)
     else bossY -= VIEW_HEIGHT * 0.55; // 블록격파 top(−Y)·뱀서류 기존
     // 촉매 적 HP·접촉 피해 페널티는 보스에도 적용한다(잡몹과 같은 규율). 무촉매면 ×1(불변).
-    const bossHp = Math.round(bossDef.hp * state.catalystMods.enemyHp);
+    // BOSS_HP_MULT: 보스 HP 상향(2026-08-08 사용자 결정 — `enemyScale.ts` 의 그 상수 주석이 정본).
+    const bossHp = Math.round(bossDef.hp * state.catalystMods.enemyHp * BOSS_HP_MULT);
     const boss = spawnBoss(state, bossX, bossY, bossHp, bossDef.radius);
     boss.damage = bossDef.contactDamage * state.catalystMods.enemyDamage;
     // `enemyType` 은 렌더의 보스 모델·스프라이트 선택자다. 의뢰 보스는 행성 인덱스 공간
@@ -3895,7 +3947,16 @@ function fireTurretShot(state: WorldState, t: Entity): boolean {
   // 앵커 ㉖ — **표적이 확정된 뒤**다(그 자리인 사유는 훅 doc). 초기값이 현행 상수와 정확히
   // 같으므로 미투자 런·타 기체 런의 거동·해시는 비트 동일이다. 포탑 개체(`t`)를 넘기므로
   // 훅이 병아리(BROOD_MARK)와 센트리·드론 베이(DRONE_MARK)를 **스스로** 구분한다.
-  const shotParams: TurretShotParams = { damage: TURRET_BULLET_DAMAGE };
+  // 병아리(해츨링 시그니처)만 **플레이어 주무기 피해에 비례**한다 — 나머지 포탑(유니크 ④ 자율
+  // 드론 베이 · 보조무기 ③ 센트리)은 공유 상수 `TURRET_BULLET_DAMAGE` 그대로다. 출처별 분리의
+  // 사유·크기는 `shipSignature.ts` 의 {@link BROOD_DAMAGE_BP} 주석이 정본이고, 마커로 가르는
+  // 방식은 `BROOD_MARK`(↔ `DRONE_MARK`) 분리의 선례를 그대로 따른다.
+  // ⚠️ 앵커 ㉖ **앞**이어야 한다 — BD10「탄 피해 배율」은 이 기준값 *위에* 곱해야 배율의
+  //    뜻이 유지된다. 뒤에 두면 훅이 올린 값을 여기서 덮어써 그 스킬이 조용히 무연산이 된다.
+  const shotParams: TurretShotParams = {
+    damage:
+      t.ownerId === BROOD_MARK ? broodBulletDamage(state.weapon.damage) : TURRET_BULLET_DAMAGE,
+  };
   onTurretShotParams(state, t, shotParams);
   const shot = spawnBullet(
     state,
@@ -4886,7 +4947,7 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 앵커 ⑮ 가 밀어내기 앞/뒤로 갈리며 실증한 것과 같은 형태다.
       onFilmAbsorbed(state, player, absorbed, rest);
       // 막이 이번 피격으로 **소진된 순간**이 파열이다. "피격 시 항상 터진다" 를 택하지 않은
-      // 이유: 그러면 내구(FILM_ABSORB_FLAT)가 사실상 무의미해지고 막이 한 대만 막는 유틸이
+      // 이유: 그러면 내구(state.filmCapacity)가 사실상 무의미해지고 막이 한 대만 막는 유틸이
       // 된다. 소진 조건이라야 "흡수량을 다 쓰면 터진다" 는 축이 성립한다. 재생 타이머(aux1)는
       // 이 틱부터 0 에서 다시 돈다(stepShipSignature 의 aux0 === 0 게이트).
       if (player.aux0 === 0) {
@@ -5174,7 +5235,10 @@ function compact(state: WorldState): void {
       state.kills++;
       if (ocKill) state.overchargeKills++; // 사연 관측(비-해시): 과충전 활성 중 처치.
       const def = enemyDefFor(e);
-      drops.push({ x: e.x, y: e.y, xp: def?.xpValue ?? 1 });
+      // ENEMY_XP_MULT: 밀도 패스의 경제 짝 축 — 처치가 30% 늘어도 런당 XP 는 그대로다
+      // (`enemyScale.ts` §부작용 하나). 젬 XP 는 정수 슬롯이라 반올림하고 하한 1 을 건다.
+      const xpRaw = (def?.xpValue ?? 1) * ENEMY_XP_MULT;
+      drops.push({ x: e.x, y: e.y, xp: Math.max(1, Math.round(xpRaw)) });
       // 앵커 ⑪ 캡처 — 게이트가 `state.kills++` 와 **같은 술어**라 호출 수 합 = 처치 델타 합이다.
       // `isElite` 는 순수 술어(`kind==='enemy' && pierce>0`)이므로 아래 전리품 게이트와 같은 값을
       // 보고, 두 번 부르지 않도록 한 번만 평가한다(거동 동일).

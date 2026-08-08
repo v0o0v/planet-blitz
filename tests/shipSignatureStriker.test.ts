@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from '../src/sim/world.js';
+import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG, DEFAULT_WEAPON } from '../src/sim/world.js';
 import type { WorldConfig, WorldState } from '../src/sim/world.js';
 import { blankEntity, type Entity } from '../src/sim/entities.js';
 import { neutralLoadout } from '../src/items/loadout.js';
@@ -28,9 +28,23 @@ import {
 } from '../src/sim/shipSignature.js';
 
 const WEAPON_RAILGUN = 2; // world.ts 의 WEAPON_TYPE_RAILGUN — 비export 라 리터럴로 고정한다(weapons.test.ts 선례).
-const BASE_DAMAGE = 8; // DEFAULT_WEAPON.damage
+// ⚠️ 리터럴이 아니라 **정본에서 파생**한다. 기본 무기 피해는 밸런스 튜닝 대상이고
+// (2026-08-08 에 8 → 18.24) 리터럴로 두면 튜닝할 때마다 이 스위트가 빨개진다. 이 파일이
+// 재는 것은 *정조준 사이클의 주기·배율·마커*이지 *기본 피해값*이 아니다.
+const BASE_DAMAGE = DEFAULT_WEAPON.damage;
 const BASE_PIERCE = 0; // DEFAULT_WEAPON.pierce
-const MARKSMAN_DAMAGE = marksmanDamage(BASE_DAMAGE); // = 12 (8 + 50%)
+/**
+ * 정조준 볼리의 **sim 실측 피해**.
+ *
+ * ⚠️ `marksmanDamage(BASE_DAMAGE)` 를 쓰면 안 된다 — 그 순수 함수는 입력을 `Math.trunc` 하는데
+ * (모듈 규약: 정수 in/정수 out) `weapon.damage` 는 **소수 2자리 실수**다. 기본 피해가 정수
+ * 8 이던 시절에는 두 경로가 우연히 같은 값(12)이었지만, 2026-08-08 밸런스 패스로 18.24 가
+ * 되면서 갈라진다: 순수 함수는 `trunc(18.24)=18 → 27`, world.ts 인라인은 `18.24 → 27.24`.
+ *
+ * world.ts 가 순수 함수를 안 부르고 동형 산술을 인라인한 이유가 정확히 그것이고(그 자리
+ * 주석이 정본), 이 스위트는 **sim 경로**를 재므로 인라인 형태를 그대로 미러한다.
+ */
+const MARKSMAN_DAMAGE = BASE_DAMAGE + Math.round((BASE_DAMAGE * MARKSMAN_BONUS_BP) / 10000);
 
 /** 단발 레일건 + 무보정 로드아웃 config. `shipType` 을 넘기면 그 축의 typeBit 이 시그니처를 정한다. */
 function railgunConfig(overrides?: Partial<WorldConfig>): WorldConfig {
@@ -95,8 +109,15 @@ describe('스트라이커 정조준 사이클 — 순수 산술 골든', () => {
     for (const d of [0, 1, 2, 3, 7, 8, 13, 25, 99, 100, 12345]) {
       expect(Math.round((d * MARKSMAN_BONUS_BP) / 10000) + d).toBe(marksmanDamage(d));
     }
-    expect(marksmanDamage(BASE_DAMAGE)).toBe(MARKSMAN_DAMAGE);
-    expect(MARKSMAN_DAMAGE).toBe(12);
+    // ⚠️ 동형성은 **정수 피해에서만** 성립한다(위 스윕이 그것을 잰다). 현행 기본 피해는
+    // 소수라 두 경로가 갈리고, 그 갈림 자체를 여기서 못 박는다 — 다음 사람이 "순수 함수를
+    // 쓰면 되지 않나" 로 되돌리지 않도록.
+    expect(Number.isInteger(BASE_DAMAGE)).toBe(false);
+    expect(marksmanDamage(BASE_DAMAGE)).not.toBe(MARKSMAN_DAMAGE);
+    expect(marksmanDamage(BASE_DAMAGE)).toBe(
+      Math.trunc(BASE_DAMAGE) + Math.round((Math.trunc(BASE_DAMAGE) * MARKSMAN_BONUS_BP) / 10000),
+    );
+    expect(MARKSMAN_DAMAGE).toBeGreaterThan(BASE_DAMAGE);
   });
 });
 

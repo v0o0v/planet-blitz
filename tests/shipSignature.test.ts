@@ -66,7 +66,8 @@ import {
   cushionRecovered,
   cushionSettled,
   FILM_PERIOD_TICKS,
-  FILM_ABSORB_FLAT,
+  FILM_ABSORB_HP_BP,
+  filmCapacityFor,
   filmReady,
   FILM_EFFICIENCY_BASE_BP,
   filmAbsorbed,
@@ -128,6 +129,12 @@ const CAPSTONE_BITS: number[] = [];
 // ---------------------------------------------------------------------------
 // ④ 비트 대조
 // ---------------------------------------------------------------------------
+
+/**
+ * 기본 플레이어 HP(100)에서의 막 만재 내구 = 25. 순수 함수 스윕의 대표값으로만 쓴다 —
+ * 런 중 실제 상한의 정본은 파생 필드 `WorldState.filmCapacity` 다.
+ */
+const FILM_FULL_AT_BASE_HP = filmCapacityFor(100);
 
 describe('시그니처 비트 배정', () => {
   it('설계 §4 배정값 그대로다 (재번호 금지 — uniqueMask 는 해시에 접힌다)', () => {
@@ -271,7 +278,7 @@ describe('결정론 산술 게이트 (소스 grep)', () => {
     // f64 누적 방지인데 `eff` 는 `Math.trunc` 로 정수화된 뒤 `filmCapacity` 가 `<= 0` 을 걸러
     // **양의 정수**임이 보장되고, 피제수도 정수이며 단일 나눗셈 + 반올림 1회 형태를 지킨다.
     // 리터럴 제수 금지는 그대로다.
-    const allowed = new Set(['10000', 'HATCH_SCALE_KILLS', 'FILM_PUSH_SCALE', 'eff']);
+    const allowed = new Set(['10000', 'DAMAGE_CENTI_SCALE', 'HATCH_SCALE_KILLS', 'FILM_PUSH_SCALE', 'eff']);
     for (const d of divisors) expect(allowed.has(d), `허용되지 않은 제수: ${d}`).toBe(true);
   });
 
@@ -510,7 +517,7 @@ describe('경계 골든 — 버블 방막 (주기 흡수 + 파열)', () => {
 
   it('흡수량 + 통과 피해 = 원래 피해이고 둘 다 정수·비음수다', () => {
     for (const d of DAMAGE_SWEEP) {
-      for (const shield of [-5, 0, 1, FILM_ABSORB_FLAT, FILM_ABSORB_FLAT + 1, 100_000]) {
+      for (const shield of [-5, 0, 1, FILM_FULL_AT_BASE_HP, FILM_FULL_AT_BASE_HP + 1, 100_000]) {
         const a = filmAbsorbed(d, shield, FILM_EFFICIENCY_BASE_BP);
         const r = filmRemainingDamage(d, shield, FILM_EFFICIENCY_BASE_BP);
         expect(Number.isInteger(a), `d=${d} s=${shield}`).toBe(true);
@@ -524,11 +531,14 @@ describe('경계 골든 — 버블 방막 (주기 흡수 + 파열)', () => {
   });
 
   it('막 내구가 남아 있는 만큼만 먹고 나머지는 선체로 간다', () => {
-    expect(FILM_ABSORB_FLAT).toBe(60);
-    expect(filmAbsorbed(100, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP)).toBe(60);
-    expect(filmRemainingDamage(100, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP)).toBe(40);
-    expect(filmAbsorbed(30, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP)).toBe(30);
-    expect(filmRemainingDamage(30, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP)).toBe(0);
+    // 내구는 **최대 HP 비율**이다(2026-08-08 — `FILM_ABSORB_HP_BP` 주석이 사유의 정본).
+    // 기본 HP 100 기준 만재 = 25.
+    expect(FILM_ABSORB_HP_BP).toBe(2500);
+    expect(FILM_FULL_AT_BASE_HP).toBe(25);
+    expect(filmAbsorbed(100, FILM_FULL_AT_BASE_HP, FILM_EFFICIENCY_BASE_BP)).toBe(25);
+    expect(filmRemainingDamage(100, FILM_FULL_AT_BASE_HP, FILM_EFFICIENCY_BASE_BP)).toBe(75);
+    expect(filmAbsorbed(20, FILM_FULL_AT_BASE_HP, FILM_EFFICIENCY_BASE_BP)).toBe(20);
+    expect(filmRemainingDamage(20, FILM_FULL_AT_BASE_HP, FILM_EFFICIENCY_BASE_BP)).toBe(0);
     // 막이 없으면 무연산 — 피해가 그대로 들어간다.
     expect(filmAbsorbed(100, 0, FILM_EFFICIENCY_BASE_BP)).toBe(0);
     expect(filmRemainingDamage(100, 0, FILM_EFFICIENCY_BASE_BP)).toBe(100);
@@ -619,8 +629,8 @@ describe('재현성 — 같은 입력 2회', () => {
         sink.push(cushionDeferredDamage(d));
         sink.push(cushionImmediateDamage(d));
         sink.push(cushionRecovered(d, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP));
-        sink.push(filmAbsorbed(d, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP));
-        sink.push(filmRemainingDamage(d, FILM_ABSORB_FLAT, FILM_EFFICIENCY_BASE_BP));
+        sink.push(filmAbsorbed(d, FILM_FULL_AT_BASE_HP, FILM_EFFICIENCY_BASE_BP));
+        sink.push(filmRemainingDamage(d, FILM_FULL_AT_BASE_HP, FILM_EFFICIENCY_BASE_BP));
         sink.push(filmReady(d) ? 1 : 0);
       }
     }

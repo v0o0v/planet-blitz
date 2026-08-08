@@ -25,6 +25,7 @@ import {
   stepWorld,
   emptyInput,
   DEFAULT_CONFIG,
+  DEFAULT_WEAPON,
   SPECIAL_ACTIVE_SLOT1,
   type InputFrame,
   type WorldConfig,
@@ -2264,10 +2265,15 @@ describe('㉘ AS7 원한 청산 (앵커 ④ + 앵커 ⑩)', () => {
   it('접촉 피해도 접촉 적 자신의 id 가 원한 표적으로 잡힌다 (stepWorld)', () => {
     const w = mk([[AS7, 10]]);
     const p = player(w);
-    const e = addEnemy(w, p.x, p.y, 10);
+    // ⚠️ 적 HP 는 **한 틱 자동 볼리를 버틸 만큼**이어야 한다 — 안 그러면 접촉 판정 전에 죽어
+    //    원한 표적이 영영 안 잡힌다(리터럴 10 이 그랬다: 기본 피해가 8 → 18.24 가 되자 같은 틱에
+    //    격추돼 슬롯이 0 으로 떴다). 재는 것은 «접촉 피해가 발사자 id 를 싣는가» 이지 적의
+    //    내구도가 아니므로, 기본 피해 정본에서 넉넉히 파생한다.
+    const e = addEnemy(w, p.x, p.y, Math.ceil(DEFAULT_WEAPON.damage) * 10);
     e.id = 654;
     e.damage = 5;
     stepWorld(w, emptyInput());
+    expect(e.dead, '적이 접촉 판정 전에 격추됐다 — HP 하한이 낮다').toBe(false);
     expect(readSlot(w.skillStage, PhantomStage.grudgeTargetId)).toBe(654);
   });
 });

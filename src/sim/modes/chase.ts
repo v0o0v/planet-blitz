@@ -30,6 +30,7 @@ import type { Entity } from '../entities.js';
 import { spawnBoss, spawnShelter } from '../entities.js';
 import type { WorldState } from '../world.js';
 import { PLANET_MODE, type PlanetMode } from '../planetMode.js';
+import { BOSS_HP_MULT } from '../enemyScale.js';
 import { planetContent } from '../../../data/planets/index.js';
 import { SEGMENTS, stageHpMult, objectiveLowStageRelief } from '../../../data/waves.js';
 import { cos, sin, atan2, clamp, TWO_PI } from '../math.js';
@@ -344,7 +345,16 @@ export function placeChaseCourse(state: WorldState): void {
   const bossDef = planetContent(planet).boss;
   // ① 포식자 = boss kind. 행성 보스 정의로 hp/radius, enemyType=planet(렌더 스프라이트 분화),
   //    aux0=0(무적). moveBoss(boss.ts)가 매 틱 플레이어를 향해 추격한다.
-  const predator = spawnBoss(state, 0, -CHASE_PREDATOR_SPAWN_OFFSET, bossDef.hp, bossDef.radius);
+  // BOSS_HP_MULT: 포식자는 **이 무대의 보스 그 자체**다(취약화 뒤가 곧 보스전이라 `stepBoss` 가
+  // 두 번째 보스를 안 세운다). `world.ts` 의 보스 스폰과 **같은 배수**를 쓴다 — 한쪽만 걸면
+  // 같은 보스가 무대에 따라 HP 가 달라진다.
+  const predator = spawnBoss(
+    state,
+    0,
+    -CHASE_PREDATOR_SPAWN_OFFSET,
+    Math.round(bossDef.hp * BOSS_HP_MULT),
+    bossDef.radius,
+  );
   predator.damage = bossDef.contactDamage;
   predator.enemyType = planet;
   predator.aux0 = 0; // 무적(취약화 전) — blankEntity 기본 0 이지만 계약을 명시.

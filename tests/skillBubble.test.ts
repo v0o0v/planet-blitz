@@ -67,7 +67,7 @@ import { BUBBLE_EXPIRE } from '../src/sim/activeHandlers/bubble.js';
 import { DT } from '../src/sim/constants.js';
 import {
   SIG_BUBBLE_FILM,
-  FILM_ABSORB_FLAT,
+  filmCapacityFor,
   FILM_BURST_RADIUS,
   filmBurstPush,
   FILM_PERIOD_TICKS,
@@ -133,8 +133,22 @@ function bubbleConfig(): WorldConfig {
   };
 }
 
+/**
+ * 관측 런의 **막 만재 내구** = 기본 플레이어 HP(100) 기준값.
+ *
+ * 내구는 2026-08-08 개정으로 최대 HP 비율이 됐다(`FILM_ABSORB_HP_BP`). `bubbleConfig()` 는
+ * 스킬 관측을 위해 죽지 않는 HP(1e8)를 쓰므로, 그대로 두면 막 1장이 2천5백만이 되어 **한 번도
+ * 소진되지 않는다** — 소진·파열·만재 술어를 재는 이 스위트 전체가 관측 불가가 된다. 이 파일이
+ * 재는 것은 *스킬 배선*이지 *내구 크기*가 아니므로 둘을 분리한다(크기 축은
+ * `bench/nominalPower.ts` 소관).
+ */
+const FILM_FULL = filmCapacityFor(100);
+
 function mk(points: ReadonlyArray<readonly [number, number]> = []): WorldState {
-  return createWorld(1234, { ...bubbleConfig(), skillInvest: invest(points) });
+  const state = createWorld(1234, { ...bubbleConfig(), skillInvest: invest(points) });
+  // 생존용 HP 와 관측용 내구를 분리한다 — 사유는 `FILM_FULL` 주석이 정본이다.
+  state.filmCapacity = FILM_FULL;
+  return state;
 }
 
 function player(state: WorldState): Entity {
@@ -290,12 +304,12 @@ describe('② FI2 내구 재응결 (앵커 ⑨)', () => {
     expect(p.aux0).toBe(12);
   });
 
-  it('**만재는 넘기지 않는다** — `aux0 ≤ FILM_ABSORB_FLAT` 엔진 불변식을 지킨다', () => {
+  it('**만재는 넘기지 않는다** — `aux0 ≤ FILM_FULL` 엔진 불변식을 지킨다', () => {
     const w = mk([[FI2, 20]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     for (let t = 0; t < 200; t++) stepAt(w, t);
-    expect(p.aux0).toBe(FILM_ABSORB_FLAT);
+    expect(p.aux0).toBe(FILM_FULL);
   });
 
   it('막이 없으면(터진 뒤) 되살리지 않는다 — 소진=파열 규칙 불변', () => {
@@ -335,7 +349,7 @@ describe('③ PO6 격발 재응결 (앵커 ⑩)', () => {
   it('**막이 서 있으면 한 칸도 안 넣는다** (계약 2 무막 게이트 — 파열 직전 선지불 차단)', () => {
     const w = mk([[PO6, 20]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     p.aux1 = 0;
     const foe = addEnemy(w, p.x + 50, p.y, 500);
     for (let i = 0; i < 50; i++) onEnemyDamaged(w, foe, 10, undefined);
@@ -607,7 +621,7 @@ describe('⑥ 볼리 파라미터 (앵커 ⑯)', () => {
     onVolleyParams(w, p, off);
     expect(off.damage).toBe(100);
 
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     const slow = volley({ speed: 1500 }); // 초과분이 음수 → 피해를 **깎지 않는다**
     onVolleyParams(w, p, slow);
     expect(slow.damage).toBe(100);
@@ -616,7 +630,7 @@ describe('⑥ 볼리 파라미터 (앵커 ⑯)', () => {
   it('PO2 — 빔(`ballisticsUsed: false`)에서는 통째로 꺼진다 (대가 없는 순이득 차단)', () => {
     const w = mk([[PO2, 20]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     const beam = volley({ speed: 5400, ballisticsUsed: false, countUsed: false });
     onVolleyParams(w, p, beam);
     expect(beam.damage).toBe(100);
@@ -625,7 +639,7 @@ describe('⑥ 볼리 파라미터 (앵커 ⑯)', () => {
   it('PO5 — **만재**인 동안 관통 +1 · 피해 +6% + 1.5%p/Lv', () => {
     const w = mk([[PO5, 4]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     const v = volley();
     onVolleyParams(w, p, v);
     expect(v.pierce).toBe(2);
@@ -635,7 +649,7 @@ describe('⑥ 볼리 파라미터 (앵커 ⑯)', () => {
   it('PO5 — 만재가 아니면(첫 피격이 깬 뒤) 꺼진다 — 내장 억제', () => {
     const w = mk([[PO5, 20]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT - 1;
+    p.aux0 = FILM_FULL - 1;
     const v = volley();
     onVolleyParams(w, p, v);
     expect(v.pierce).toBe(1);
@@ -645,7 +659,7 @@ describe('⑥ 볼리 파라미터 (앵커 ⑯)', () => {
   it('PO5 — 빔에서는 관통 가산만 빠지고 피해 보정은 남는다 (부호 반전 없음)', () => {
     const w = mk([[PO5, 4]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     const beam = volley({ ballisticsUsed: false, countUsed: false });
     onVolleyParams(w, p, beam);
     expect(beam.pierce).toBe(1);
@@ -655,7 +669,7 @@ describe('⑥ 볼리 파라미터 (앵커 ⑯)', () => {
   it('**다른 스킬만 찍은 런**에서는 ⑯ 이 한 필드도 안 건드린다', () => {
     const w = mk([[FI2, 20]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     const v = volley({ speed: 5400 });
     onVolleyParams(w, p, v);
     expect(v).toEqual(volley({ speed: 5400 }));
@@ -723,7 +737,7 @@ describe('⑦ 막 흡수 직후 (앵커 ⑱)', () => {
     p.aux0 = 0; // 이번 흡수로 막이 소진됐다 = 곧 `resolveFilmBurst` 가 돈다
     const foe = addEnemy(w, p.x + 50, p.y, 500);
     const x0 = foe.x;
-    onFilmAbsorbed(w, p, FILM_ABSORB_FLAT, 0);
+    onFilmAbsorbed(w, p, FILM_FULL, 0);
     expect(foe.x).toBe(x0);
   });
 
@@ -785,12 +799,15 @@ describe('⑧ FI9 최후의 거품 (앵커 ㉒)', () => {
     onFilmEntry(w, p, 30);
     // ⚠️ 하한 먼저 — 배선이 끊기면 아래 생존 단언이 0 대 0 으로 성립하는 항진이 된다.
     expect(p.aux0).toBeGreaterThan(0);
-    // floor(210×60/420) = 30 → floor(30 × 12000bp) = 36
-    expect(p.aux0).toBe(36);
+    // floor(210×25/420) = 12 → floor(12 × 12000bp) = 14
+    // (내구가 최대 HP 비율이 된 2026-08-08 개정 전에는 60 기준 36 이었다.)
+    expect(p.aux0).toBe(14);
     expect(p.aux1).toBe(0); // 대가 — 재생 진행분 전액 소모
-    // 생존 — 선체로 가는 피해가 0 이라 hp 가 한 점도 안 깎인다.
-    expect(filmAbsorbed(30, p.aux0, FILM_EFFICIENCY_BASE_BP)).toBe(30);
-    expect(filmRemainingDamage(30, p.aux0, FILM_EFFICIENCY_BASE_BP)).toBe(0);
+    // 생존 — 비상막이 피해를 깎아 hp 가 남는다. ⚠️ 막이 피해 전량을 먹지는 **않는다**:
+    // 비상막(14)이 이번 피격(30)보다 작아졌기 때문이다. 계약은 "전량 흡수" 가 아니라
+    // "치명이 치명이 아니게 된다" 이므로, 그 계약을 그대로 단언한다(항진 방지 하한 포함).
+    expect(filmAbsorbed(30, p.aux0, FILM_EFFICIENCY_BASE_BP)).toBe(14);
+    expect(filmRemainingDamage(30, p.aux0, FILM_EFFICIENCY_BASE_BP)).toBeLessThan(30);
     expect(p.hp - filmRemainingDamage(30, p.aux0, FILM_EFFICIENCY_BASE_BP)).toBeGreaterThan(0);
   });
 
@@ -815,9 +832,9 @@ describe('⑧ FI9 최후의 거품 (앵커 ㉒)', () => {
     const s20 = shieldAt(20);
     // ⚠️ 하한 — 셋 다 0 이어도 단조는 성립한다(FI4 에서 실제로 밟은 항진).
     expect(s1).toBeGreaterThan(0);
-    expect(s1).toBe(18); // 30 × 6300bp
-    expect(s10).toBe(27); // 30 × 9000bp
-    expect(s20).toBe(36); // 30 × 12000bp
+    expect(s1).toBe(7); // 12 × 6300bp
+    expect(s10).toBe(10); // 12 × 9000bp
+    expect(s20).toBe(14); // 12 × 12000bp
     expect(s10).toBeGreaterThan(s1);
     expect(s20).toBeGreaterThan(s10);
   });
@@ -842,7 +859,7 @@ describe('⑧ FI9 최후의 거품 (앵커 ㉒)', () => {
 
   it('내구가 0 으로 떨어지면 **`aux1` 을 태우지 않는다** (대가만 치르는 손해 방지)', () => {
     const w = mk([[FI9, 20]]);
-    const p = lethal(w, 5); // floor(5×60/420) = 0
+    const p = lethal(w, 5); // floor(5×25/420) = 0
     onFilmEntry(w, p, 30);
     expect(p.aux0).toBe(0);
     expect(p.aux1).toBe(5);
@@ -860,11 +877,11 @@ describe('⑧ FI9 최후의 거품 (앵커 ㉒)', () => {
     expect(p.aux1).toBe(0);
   });
 
-  it('**만재를 넘기지 않는다** — `aux0 ≤ FILM_ABSORB_FLAT` 엔진 불변식이 산식을 이긴다', () => {
+  it('**만재를 넘기지 않는다** — `aux0 ≤ FILM_FULL` 엔진 불변식이 산식을 이긴다', () => {
     const w = mk([[FI9, 20]]);
-    const p = lethal(w, FILM_PERIOD_TICKS - 1); // floor(419×60/420)=59 → ×1.2 = 70
+    const p = lethal(w, FILM_PERIOD_TICKS - 1); // floor(419×25/420)=24 → ×1.2 = 28 > 25
     onFilmEntry(w, p, 30);
-    expect(p.aux0).toBe(FILM_ABSORB_FLAT);
+    expect(p.aux0).toBe(FILM_FULL);
   });
 
   it('**`aux0` 은 언제나 비음 정수**다 — u32 폴드 발산을 원천 차단한다', () => {
@@ -875,7 +892,7 @@ describe('⑧ FI9 최후의 거품 (앵커 ㉒)', () => {
         onFilmEntry(w, p, 30);
         expect(Number.isInteger(p.aux0)).toBe(true);
         expect(p.aux0).toBeGreaterThanOrEqual(0);
-        expect(p.aux0).toBeLessThanOrEqual(FILM_ABSORB_FLAT);
+        expect(p.aux0).toBeLessThanOrEqual(FILM_FULL);
         expect(Number.isInteger(p.aux1)).toBe(true);
         expect(p.aux1).toBeGreaterThanOrEqual(0);
       }
@@ -1130,6 +1147,20 @@ describe('⑩ 액티브 발동 직후 (앵커 ㉗)', () => {
   const DRIFT_LO = BUBBLE_ACTIVES[2];
   const RIGHT = { x: 1, y: 0 };
 
+  /**
+   * PO9 케이스가 쓰는 **소모 내구**(= `preAux0`).
+   *
+   * ⚠️ 관측용 `FILM_FULL`(기본 HP 100 기준 25)을 쓰지 않는다. PO9 는 소모 내구를 탄으로
+   * 환산하는데(내구 ÷ 4), 25 면 6발이라 Lv1 보너스가 `round(6 × 5%) = 0` 으로 **반올림에
+   * 삼켜져** 하한 단언이 항진이 된다. 실제 런에서는 내구가 최대 HP 비율이라(2026-08-08
+   * `FILM_ABSORB_HP_BP`) 밴드 1 표준 빌드(HP 277)만 해도 내구가 69 라 이 문제가 없다 —
+   * 즉 25 는 *스킬의 성질*이 아니라 *관측 무대의 협소함*이다.
+   *
+   * 그래서 이 절만 **현실적인 내구 규모**를 명시적으로 넣는다. `preAux0` 는 스킬 입력일 뿐이고
+   * 이 절이 재는 것은 *환산이 사는가*이므로, 값을 고정해도 계약이 약해지지 않는다.
+   */
+  const PO9_PRE_AUX0 = 60;
+
   /** 핸들러가 이미 돈 뒤의 스냅샷. `preAux0` = 핸들러가 비우기 전의 막 내구. */
   function origin(w: WorldState, preAux0: number, preX: number, preY: number): ActiveFiredOrigin {
     return { preX, preY, preAux0, spawnWatermark: w.entities.length };
@@ -1139,8 +1170,8 @@ describe('⑩ 액티브 발동 직후 (앵커 ㉗)', () => {
     const w = mk([[PO9, 1]]);
     const p = player(w);
     const before = countBullets(w);
-    // 만재(60) ÷ 분모(4) = 15발이 이미 나갔다는 전제. Lv1 = +5% → round(0.75) = 1발.
-    onActiveFired(w, p, POP_HI, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, p.x, p.y));
+    // 소모 내구(60) ÷ 분모(4) = 15발이 이미 나갔다는 전제. Lv1 = +5% → round(0.75) = 1발.
+    onActiveFired(w, p, POP_HI, RIGHT, 0, origin(w, PO9_PRE_AUX0, p.x, p.y));
     expect(countBullets(w) - before).toBe(1);
   });
 
@@ -1148,13 +1179,13 @@ describe('⑩ 액티브 발동 직후 (앵커 ㉗)', () => {
     const lo = mk([[PO9, 1]]);
     const pl = player(lo);
     const b0 = countBullets(lo);
-    onActiveFired(lo, pl, POP_HI, RIGHT, 0, origin(lo, FILM_ABSORB_FLAT, pl.x, pl.y));
+    onActiveFired(lo, pl, POP_HI, RIGHT, 0, origin(lo, PO9_PRE_AUX0, pl.x, pl.y));
     const dLo = countBullets(lo) - b0;
 
     const hi = mk([[PO9, 20]]);
     const ph = player(hi);
     const b1 = countBullets(hi);
-    onActiveFired(hi, ph, POP_HI, RIGHT, 0, origin(hi, FILM_ABSORB_FLAT, ph.x, ph.y));
+    onActiveFired(hi, ph, POP_HI, RIGHT, 0, origin(hi, PO9_PRE_AUX0, ph.x, ph.y));
     const dHi = countBullets(hi) - b1;
 
     // ⚠️ 하한이 없으면 배선이 끊겨 둘 다 0 일 때 단조식이 성립한다(§⑦ FI4 가 실제로 밟았다).
@@ -1175,10 +1206,10 @@ describe('⑩ 액티브 발동 직후 (앵커 ㉗)', () => {
     const w = mk([[PO9, 20]]);
     const p = player(w);
     const b0 = countBullets(w);
-    onActiveFired(w, p, POP_LO, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, p.x, p.y));
-    onActiveFired(w, p, DRIFT_LO, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, p.x, p.y));
+    onActiveFired(w, p, POP_LO, RIGHT, 0, origin(w, PO9_PRE_AUX0, p.x, p.y));
+    onActiveFired(w, p, DRIFT_LO, RIGHT, 0, origin(w, PO9_PRE_AUX0, p.x, p.y));
     expect(countBullets(w)).toBe(b0); // 두 계열 다 무연산
-    onActiveFired(w, p, POP_HI, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, p.x, p.y));
+    onActiveFired(w, p, POP_HI, RIGHT, 0, origin(w, PO9_PRE_AUX0, p.x, p.y));
     expect(countBullets(w)).toBeGreaterThan(b0); // 긍정 짝 — 게이트가 통째로 죽은 게 아니다
   });
 
@@ -1210,7 +1241,7 @@ describe('⑩ 액티브 발동 직후 (앵커 ㉗)', () => {
 
     const filmed = mk([[DR9, 1]]);
     const pf = player(filmed);
-    pf.aux0 = FILM_ABSORB_FLAT;
+    pf.aux0 = FILM_FULL;
     const sxf = pf.x + 400;
     const ff = addEnemy(filmed, sxf + 130, pf.y, 500);
     onActiveFired(filmed, pf, DRIFT_LO, RIGHT, 0, origin(filmed, 0, sxf, pf.y));
@@ -1248,8 +1279,8 @@ describe('⑩ 액티브 발동 직후 (앵커 ㉗)', () => {
     const foe = addEnemy(w, sx + 20, p.y, 500);
     const shot = addEnemyBullet(w, sx + 20, p.y);
     const b0 = countBullets(w);
-    onActiveFired(w, p, POP_HI, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, sx, p.y));
-    onActiveFired(w, p, DRIFT_LO, RIGHT, 0, origin(w, FILM_ABSORB_FLAT, sx, p.y));
+    onActiveFired(w, p, POP_HI, RIGHT, 0, origin(w, PO9_PRE_AUX0, sx, p.y));
+    onActiveFired(w, p, DRIFT_LO, RIGHT, 0, origin(w, PO9_PRE_AUX0, sx, p.y));
     expect(countBullets(w)).toBe(b0);
     expect(foe.x).toBe(sx + 20);
     expect(shot.dead).toBe(false);
@@ -1319,7 +1350,7 @@ describe('⑪ 젬 자석 파라미터 (앵커 ㉘)', () => {
     const pf = player(filmed);
     const gf = addGem(filmed, pf.x + 200, pf.y);
     gf.vx = -1000;
-    pf.aux0 = FILM_ABSORB_FLAT;
+    pf.aux0 = FILM_FULL;
     onGemMagnetParams(filmed, pf, magnet(400));
     expect(gf.x).toBe(pf.x + 200);
   });
@@ -1424,7 +1455,7 @@ describe('⑫ DR10 견인 펄스 (앵커 ⑨)', () => {
   it('막이 서 있는 동안(재생이 안 도는 동안)에는 안 걸린다', () => {
     const w = mk([[DR10, 20]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     p.aux1 = FILM_PERIOD_TICKS - 1;
     const g = addGem(w, p.x + 300, p.y);
     onSignatureStep(w, p, emptyInput());
@@ -1491,7 +1522,7 @@ describe('⑬ DR4 공막 경량화 (앵커 ㉙)', () => {
   it('막이 서 있으면 둘 다 그대로다 (무막 긍정 짝과 같은 런)', () => {
     const w = mk([[DR4, 20]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     const m = move(30);
     onPlayerMoveParams(w, p, m);
     expect(m.slowTicks).toBe(30);
@@ -1779,7 +1810,7 @@ describe('⑮ DR8 원격 채집기 (앵커 onPickupRadius)', () => {
 //
 // ## 뮤테이션 실측
 // `signalDriftTick` 의 `player.aux1 += 1` 을 지우면 **양성 2항목**(에코 2배 · 조우 2배)이,
-// `bubbleObjectiveResolved` 의 `player.aux0 = FILM_ABSORB_FLAT` 를 지우면 **양성 1항목**
+// `bubbleObjectiveResolved` 의 `player.aux0 = FILM_FULL` 를 지우면 **양성 1항목**
 // (완수 만재)이 실패한다. 부정 항목(완료는 활성이 아니다 · 막이 서 있으면 안 얹는다)은
 // 원리적으로 안 걸리므로 긍정 짝을 같은 절에 뒀다.
 
@@ -1845,7 +1876,7 @@ describe('⑯ DR7 신호 표류 (앵커 ⑨ · ㉙)', () => {
       p.aux0 = 0;
       p.aux1 = 300;
       onObjectiveResolved(w, p, kind);
-      expect(p.aux0).toBe(FILM_ABSORB_FLAT);
+      expect(p.aux0).toBe(FILM_FULL);
       expect(p.aux1).toBe(0);
     }
   });
@@ -1910,7 +1941,7 @@ describe('⑰ DR3 도약 자기장 (앵커 ㉗ · ⑨ · ㉘)', () => {
   it('앵커 ⑨ 가 창을 **매 틱 정확히 1** 깎는다', () => {
     const w = mk([[DR3, 1]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT; // 다른 축(DR10·DR7)이 안 끼도록 막을 세워 둔다
+    p.aux0 = FILM_FULL; // 다른 축(DR10·DR7)이 안 끼도록 막을 세워 둔다
     onActiveFired(w, p, DR3_DRIFT_LO, DR3_RIGHT, 0, fired(w));
     onSignatureStep(w, p, emptyInput());
     expect(readSlot(w.skillStage, BubbleStage.blinkMagnet)).toBe(95);
@@ -1934,7 +1965,7 @@ describe('⑰ DR3 도약 자기장 (앵커 ㉗ · ⑨ · ㉘)', () => {
   it('창이 0 으로 닳으면 반경이 원래대로 돌아온다', () => {
     const w = mk([[DR3, 1]]);
     const p = player(w);
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     onActiveFired(w, p, DR3_DRIFT_LO, DR3_RIGHT, 0, fired(w));
     for (let i = 0; i < 96; i++) onSignatureStep(w, p, emptyInput());
     expect(readSlot(w.skillStage, BubbleStage.blinkMagnet)).toBe(0);
@@ -2247,17 +2278,17 @@ describe('⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost · state.kills 차분 �
     for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
     expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(6);
     // 재생이 실제로 일어나는 그 틱을 흉내낸다(world.ts 의 SIG_BUBBLE_FILM 분기와 같은 대입).
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     p.aux1 = 0;
     // ⚠️ 이 틱에는 아직 안 얹힌다 — world.ts 의 대입이 앵커 ⑨ **뒤**라, 실제 엔진이라면
     //    이 시점의 aux0 을 곧이어 FLAT 으로 덮어쓴다. 여기서는 이미 FLAT 인 채로 두고
     //    "다음 틱" 만 관측한다(그 대입 자체는 world.ts 소유라 이 테스트가 재현할 필요가 없다).
     onSignatureStep(w, p, emptyInput());
-    expect(p.aux0).toBe(FILM_ABSORB_FLAT + 6);
+    expect(p.aux0).toBe(FILM_FULL + 6);
     expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(0); // 소비 후 0
   });
 
-  it('상한은 FILM_ABSORB_FLAT × 2 — 두 창의 보강을 합쳐도 그 값을 넘지 않는다', () => {
+  it('상한은 FILM_FULL × 2 — 두 창의 보강을 합쳐도 그 값을 넘지 않는다', () => {
     const w = mk([[PO10, 20]]);
     const p = player(w);
     // 창 하나당 상한 20+60=80 — 두 번 채워 160 을 만들어 FLAT(60)+160=220 이 120 으로
@@ -2270,10 +2301,10 @@ describe('⑲ PO10 연쇄 압력 (앵커 onFilmBurstPost · state.kills 차분 �
     w.kills += 10;
     for (let i = 0; i < 90; i++) onSignatureStep(w, p, emptyInput());
     expect(readSlot(w.skillStage, BubbleStage.chainPendingBoost)).toBe(160);
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     p.aux1 = 0;
     onSignatureStep(w, p, emptyInput());
-    expect(p.aux0).toBe(FILM_ABSORB_FLAT * 2);
+    expect(p.aux0).toBe(FILM_FULL * 2);
   });
 
   it('미투자 런은 슬롯을 안 건드린다', () => {

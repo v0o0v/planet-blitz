@@ -41,8 +41,14 @@ export const SUB_FLARE = 4; // 유도 미사일
 /** Number of sub-weapon variants (0..N-1) — mirrors roll.ts SUB_WEAPON_VARIANTS. */
 export const SUB_WEAPON_VARIANTS = 5;
 
-/** Reference base HP the maxHpPct affix scales against (matches DEFAULT_CONFIG). */
-const BASE_HP_REF = 100;
+/**
+ * Reference base HP the maxHpPct affix scales against (matches DEFAULT_CONFIG).
+ *
+ * ⚠️ 100 → 120 → 126 → 151 (2026-08-08 기체 기본 스탯 상향 — `world.ts` `DEFAULT_WEAPON` 위 주석이 정본).
+ * `DEFAULT_CONFIG.playerHp` 와 **같아야 한다**는 것이 이 상수의 계약이고, 어긋나면 maxHpPct
+ * 어픽스가 낡은 기준으로 계산되며 그 어긋남은 화면에 아무 흔적을 남기지 않는다.
+ */
+const BASE_HP_REF = 151;
 
 /** Meta-only modifiers — consumed at settlement (Lane 2), never by the sim. */
 export interface WorldMods {

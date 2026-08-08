@@ -67,9 +67,18 @@ describe('① 과열 드럼 (AC7)', () => {
   it('연속 명중으로 스택이 쌓이고 피격 시 리셋된다', () => {
     const state = createWorld(1, uniqueCfg(UQ_OVERHEAT_DRUM));
     addTarget(state, 200);
+    // ⚠️ **표적의 반격을 재운다.** 이 절이 재는 것은 «연속 명중으로 스택이 쌓이고, 피격이
+    //    그것을 리셋한다» 이고, 리셋을 일으키는 피격은 아래에서 **의도적으로** 만든다. 표적이
+    //    스스로 쏘면 그 반격이 빌드업 구간 한가운데서 스택을 리셋해 관측이 무작위가 된다.
+    //    실측(2026-08-08): 적 발사 빈도가 ×1.3 이 되자 반격이 t=93 에 들어와 t=120 표본이 8 이
+    //    아니라 7 로 떴다 — 스택 자체는 그 전에 상한 8 에 **도달했었다**(400틱 peak=8). 즉
+    //    깨진 것은 배선이 아니라 관측 창이었다. 창을 늘리는 것은 답이 아니다(반격 주기가
+    //    창보다 짧아 몇 번을 늘려도 같은 자리에서 리셋된다).
+    state.entities[1]!.cooldown = Number.MAX_SAFE_INTEGER;
     for (let t = 0; t < 120; t++) stepWorld(state, emptyInput());
     const player = state.entities[0]!;
     expect(player.phase).toBe(OVERHEAT_MAX_STACK); // 스택 상한 도달
+    expect(player.hp, '빌드업 구간에서 피격이 있었다 — 반격 재우기가 안 먹었다').toBe(player.maxHp);
     // 무적 프레임을 비우고 적탄을 플레이어에 겹쳐 피격 유도 → 스택 리셋.
     player.iframes = 0;
     spawnEnemyBullet(state, player.x, player.y, 0, 0, 0, 5, 6, 30);

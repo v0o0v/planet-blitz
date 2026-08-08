@@ -78,7 +78,7 @@ function resolveAssumptions(): NominalAssumptions {
     cloakCycleRate: argNum('cloak', DEFAULT_ASSUMPTIONS.cloakCycleRate),
     killsPerSec: argNum('kps', DEFAULT_ASSUMPTIONS.killsPerSec),
     cushionRecoverRate: argNum('cushion', DEFAULT_ASSUMPTIONS.cushionRecoverRate),
-    runSeconds: argNum('run-seconds', DEFAULT_ASSUMPTIONS.runSeconds),
+    incomingDps: argNum('incoming-dps', DEFAULT_ASSUMPTIONS.incomingDps),
   };
 }
 
@@ -198,10 +198,12 @@ function printSensitivity(level: number, base: NominalAssumptions): void {
       ],
     ],
     [
-      'runSeconds',
+      // 실측 분산(무장비 33 ~ 52)보다 넉넉히 넓게 흔든다 — 순위가 이 폭 안에서 뒤집히면
+      // 버블의 자리는 모델 해상도 밖이라는 뜻이다.
+      'incomingDps',
       [
-        { ...base, runSeconds: 40 },
-        { ...base, runSeconds: 180 },
+        { ...base, incomingDps: 25 },
+        { ...base, incomingDps: 60 },
       ],
     ],
   ];
@@ -224,7 +226,7 @@ function main(): void {
     `assumptions: armor=${a.armorAvgStacks} overchargeUptime=${a.overchargeUptime} ` +
       `overchargeStillTicks=${a.overchargeAvgStillTicks} cloakCycleRate=${a.cloakCycleRate} ` +
       `killsPerSec=${a.killsPerSec} cumulativeKills=${a.cumulativeKills} ` +
-      `cushionRecoverRate=${a.cushionRecoverRate} runSeconds=${a.runSeconds}`,
+      `cushionRecoverRate=${a.cushionRecoverRate} incomingDps=${a.incomingDps}(measured)`,
   );
 
   const mode = resolveGear();

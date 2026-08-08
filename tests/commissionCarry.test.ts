@@ -154,7 +154,7 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     expect(unclassified, `미분류 엔티티 키: ${unclassified.join(', ')}`).toEqual([]);
   });
 
-  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 80 · Entity 25)', () => {
+  it('배열 길이 합이 실제 필드 수와 같다 (WorldState 81 · Entity 25)', () => {
     // 숫자를 박아 두는 이유: 필드가 늘었는데 분류도 같이 늘면 위 대조는 통과하지만, 그때
     // **분류 판단이 실제로 있었는지**는 이 숫자가 바뀌는 것으로만 드러난다.
     // 61 → 62: `commissionRuntime` 신설(의뢰 구간 전환 코어 2단계). 62 → 64: `activeTune0/1`
@@ -182,7 +182,11 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     // ⚠️ 둘은 **`hashWorld` 에 접히지 않는 유일한 부류**다(순수 연출·정산 명세라 어느 sim
     // 산술에도 안 들어간다). 그 불변식은 `tests/catalystFx.test.ts` §해시 불변이 잠근다 —
     // 여기 분류는 "구간 전환에서 어떻게 다루나"만 정한다.
-    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(80);
+    // 80 → 81: `filmCapacity`(2026-08-08 밸런스 패스 — 버블 막 내구가 최대 HP 비율이 되며
+    // 런 단위 파생 필드로 승격). **FRESH** 다 — `armorMaxStacks` 와 정확히 같은 부류로,
+    // 승계된 `config.playerHp` 에서 `createWorld` 가 재도출하므로 승계 목록에 넣으면 정본이
+    // 둘이 된다.
+    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(81);
     expect(ENTITY_CARRY.length + ENTITY_RESET_ZERO.length + ENTITY_FRESH.length).toBe(25);
   });
 });

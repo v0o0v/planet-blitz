@@ -19,7 +19,14 @@ import {
   mercantileDebtOffer,
 } from '../src/ui/buildStatus.js';
 import { mercantileDebtOf } from '../src/sim/catalyst/resource.js';
-import { createWorld, stepWorld, emptyInput, packPowerupPick, DEFAULT_CONFIG } from '../src/sim/world.js';
+import {
+  createWorld,
+  stepWorld,
+  emptyInput,
+  packPowerupPick,
+  DEFAULT_CONFIG,
+  DEFAULT_WEAPON,
+} from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
 
 describe('levelUpOverlayAction — 표시/숨김 결정(레이스 회귀 가드)', () => {
@@ -82,7 +89,10 @@ describe('readBuildStatus — 현재 빌드 표시 스냅샷', () => {
     expect(s.weaponType).toBe(0);
     expect(s.weaponName).toBe('발칸');
     expect(s.level).toBe(1);
-    expect(s.damage).toBe(8);
+    // ⚠️ 리터럴을 쓰지 않는다 — 기본 무기 피해는 밸런스 튜닝 대상이고(2026-08-08 에 8 → 18.24),
+    // 리터럴로 두면 튜닝할 때마다 이 케이스가 빨개진다. 이 케이스가 재는 것은 *표시 경로가
+    // 정본을 읽는가*이지 *그 값이 얼마인가*가 아니다.
+    expect(s.damage).toBe(DEFAULT_WEAPON.damage);
     expect(s.bulletCount).toBe(1);
     expect(s.shotsPerSec).toBeGreaterThan(0); // 60 / fireCooldown
     expect(s.maxHp).toBeGreaterThan(0);

@@ -29,6 +29,7 @@ import {
   zeroStatSums,
 } from '../src/items/skills.js';
 import { computeLoadoutStats, neutralLoadout } from '../src/items/loadout.js';
+import { DEFAULT_CONFIG } from '../src/sim/world.js';
 import {
   defaultProfile,
   investSkill,
@@ -210,7 +211,10 @@ describe('기체 타입 baseBp — 정수 bp, 단일 나눗셈 (설계서 §4)',
     // fireRateMult 는 발사 간격 배율 — 음수 bp(연사 ↓) 는 간격을 늘린다.
     expect(lo.fireRateMult).toBe(10000 / (10000 + bp.fireRateBp));
     expect(lo.fireRateMult).toBeGreaterThan(1);
-    expect(lo.maxHpAdd).toBe(Math.round((100 * bp.maxHpBp) / 10000));
+    // 기준 HP 는 **리터럴이 아니라 정본 파생**이다 — `loadout.ts` 의 `BASE_HP_REF` 가 자기 주석에
+    // "matches DEFAULT_CONFIG" 를 계약으로 적어 두었고, 그 값은 밸런스 튜닝 대상이다
+    // (2026-08-08 에 100 → 151). 리터럴로 두면 튜닝할 때마다 이 케이스가 빨개진다.
+    expect(lo.maxHpAdd).toBe(Math.round((DEFAULT_CONFIG.playerHp * bp.maxHpBp) / 10000));
     expect(lo.moveSpeedMult).toBe((10000 + bp.moveSpeedBp) / 10000);
     expect(lo.moveSpeedMult).toBeLessThan(1);
   });
@@ -219,7 +223,7 @@ describe('기체 타입 baseBp — 정수 bp, 단일 나눗셈 (설계서 §4)',
     for (const def of SHIP_TYPES) {
       const lo = computeLoadoutStats([], undefined, def.id).loadout;
       expect(Number.isInteger(lo.maxHpAdd)).toBe(true);
-      expect(lo.maxHpAdd).toBe(Math.round((100 * def.baseBp.maxHpBp) / 10000));
+      expect(lo.maxHpAdd).toBe(Math.round((DEFAULT_CONFIG.playerHp * def.baseBp.maxHpBp) / 10000));
       for (const mult of [lo.damageMult, lo.fireRateMult, lo.moveSpeedMult]) {
         expect(Number.isFinite(mult)).toBe(true);
         expect(mult).toBeGreaterThan(0);

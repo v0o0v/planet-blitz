@@ -93,7 +93,6 @@ import { slideCircleWalls } from '../los.js';
 import { length, cos, sin, TWO_PI } from '../math.js';
 import { DT } from '../constants.js';
 import {
-  FILM_ABSORB_FLAT,
   FILM_BURST_RADIUS,
   FILM_PERIOD_TICKS,
   FILM_EFFICIENCY_BASE_BP,
@@ -303,8 +302,8 @@ function recondensePeriodTicks(level: number): number {
 /**
  * **FI2 내구 재응결** — 막이 서 있고 만재가 아닌 동안 주기마다 내구 +1.
  *
- * ## 왜 상한이 `FILM_ABSORB_FLAT` 이 아니라 `< FILM_ABSORB_FLAT` 술어인가
- * `aux0 ≤ FILM_ABSORB_FLAT` 은 `world.ts:2559-2561` 이 못 박은 **엔진 불변식**이다(u32 폴드
+ * ## 왜 상한이 `state.filmCapacity` 이 아니라 `< state.filmCapacity` 술어인가
+ * `aux0 ≤ state.filmCapacity` 은 `world.ts:2559-2561` 이 못 박은 **엔진 불변식**이다(u32 폴드
  * 안전성의 근거이기도 하다). 설계서 ⑥절 3 은 PO10 만을 그 불변식의 유일한 예외로 지정했고,
  * FI2 는 "상한 FLAT 안" 이라고 명시했다 — 그래서 술어로 상한을 지킨다. `Math.min` 으로 나중에
  * 접는 형태를 쓰면 "상한을 넘겼다가 되돌리는" 한 틱이 생겨 불변식 주석과 코드가 갈린다.
@@ -344,7 +343,7 @@ export function bubbleSignatureStep(state: WorldState, player: Entity): void {
 
   const fi2 = lv(state, Sk.durabilityRecondense);
   if (fi2 < 1) return;
-  if (player.aux0 <= 0 || player.aux0 >= FILM_ABSORB_FLAT) return;
+  if (player.aux0 <= 0 || player.aux0 >= state.filmCapacity) return;
   if (state.tick % recondensePeriodTicks(fi2) === 0) player.aux0 += 1;
 }
 
@@ -472,7 +471,7 @@ function pullGemToward(player: Entity, gem: Entity, step: number): void {
  *
  * ## ⚠️ 술어가 "막이 섰다" 가 아니라 "이 틱에 선다" 인 이유
  * 앵커 ⑨ 는 `stepShipSignature` 의 **기체 분기보다 앞**이라, 이 함수가 도는 시점에는 아직
- * `aux1++` 도 `aux0 = FILM_ABSORB_FLAT` 도 일어나지 않았다. 그래서 엔진이 곧 할 일을 **한 틱
+ * `aux1++` 도 `aux0 = state.filmCapacity` 도 일어나지 않았다. 그래서 엔진이 곧 할 일을 **한 틱
  * 앞서 예측**한다(`aux0 === 0 && filmReady(aux1 + 1)`) — 엔진의 재생 판정과 같은 순수 함수를
  * 같은 인자로 부르므로 두 판정이 갈릴 수 없다. 사후에 재려면 "막이 섰다"를 기억할 상태가
  * 필요한데, 그것이 곧 신규 `WorldState` 필드(= 해시 꼬리 폴드)다.
@@ -550,9 +549,9 @@ function chainWindowTick(state: WorldState): void {
  *
  * ## ⚠️ 왜 "재생 다음 틱" 인가 — `chainPendingBoost` doc 의 실측을 그대로 코드로 옮긴다
  * `world.ts` 의 `SIG_BUBBLE_FILM` 분기는 앵커 ⑨(이 함수가 불리는 자리) **뒤**에 돌고,
- * `player.aux0 === 0` 일 때 `player.aux0 = FILM_ABSORB_FLAT` 을 **대입**(가산이 아니다)한다.
+ * `player.aux0 === 0` 일 때 `player.aux0 = state.filmCapacity` 을 **대입**(가산이 아니다)한다.
  * 그래서 재생이 실제로 일어나는 틱에 여기서 aux0 을 올려도 소용없다 — 뒤이어 곧바로 지워진다.
- * 재생이 일어난 **다음 틱**은 `aux0 === FILM_ABSORB_FLAT` 이 되어 그 대입 분기 자체가 안 돌고
+ * 재생이 일어난 **다음 틱**은 `aux0 === state.filmCapacity` 이 되어 그 대입 분기 자체가 안 돌고
  * (`if (player.aux0 === 0)` 가 거짓), 그래서 이 틱에 더한 값이 지워지지 않는다.
  *
  * ## 술어가 왜 `aux0 === FLAT && aux1 === 0` 인가 — "막 방금 재생됨" 의 유일한 관측 가능 신호
@@ -564,18 +563,19 @@ function chainWindowTick(state: WorldState): void {
  * 그 막에 얹히는데, 그것도 설계 문면의 "다음 막" 범위 안이다 — 자연 재생만으로 한정하지
  * 않았다(가정 — 이 좁은 경로는 실전에서 사실상 발생하지 않는다).
  *
- * ## 상한은 `FILM_ABSORB_FLAT × 2` — PO10 이 그 불변식의 유일한 예외(설계서 ⑥절 3)
- * `aux0 ≤ FILM_ABSORB_FLAT` 은 강제하는 코드가 없는 **산문 주석**이다(`world.ts` 그 분기
+ * ## 상한은 `state.filmCapacity × 2` — PO10 이 그 불변식의 유일한 예외(설계서 ⑥절 3)
+ * `aux0 ≤ state.filmCapacity` 은 강제하는 코드가 없는 **산문 주석**이다(`world.ts` 그 분기
  * 주석 실측) — 그래서 이 스킬만 그 범위를 넘겨도 골든 재동결이 선결이 아니다. 다만 무한정
  * 넘기면 u32 폴드 안전성 논거가 흔들리므로, 설계서가 못 박은 상한을 여기서 직접 건다.
  */
 function chainBoostPulse(state: WorldState, player: Entity): void {
   const pending = readSlot(state.skillStage, BubbleStage.chainPendingBoost);
   if (pending <= 0) return;
-  if (player.aux0 !== FILM_ABSORB_FLAT || player.aux1 !== 0) return;
+  if (player.aux0 !== state.filmCapacity || player.aux1 !== 0) return;
   writeSlot(state.skillStage, BubbleStage.chainPendingBoost, 0);
   const boosted = player.aux0 + pending;
-  player.aux0 = boosted > FILM_ABSORB_FLAT * 2 ? FILM_ABSORB_FLAT * 2 : boosted;
+  const cap2 = state.filmCapacity * 2;
+  player.aux0 = boosted > cap2 ? cap2 : boosted;
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,7 +1000,7 @@ export function bubblePickupRadius(
  * 그래서 `kind` 로 가르지 않는다. (설계 문서는 고치지 않았다 — 규약: 어긋남은 보고한다.)
  *
  * ## ⚠️ `aux1 = 0` 을 함께 한다 — 엔진의 재생 완료와 같은 형태다
- * 엔진은 막이 설 때 `aux0 = FILM_ABSORB_FLAT; aux1 = 0` 을 한 쌍으로 한다(`world.ts` 버블
+ * 엔진은 막이 설 때 `aux0 = state.filmCapacity; aux1 = 0` 을 한 쌍으로 한다(`world.ts` 버블
  * 블록). 여기서 `aux0` 만 세우면 재생 타이머가 막이 서 있는 동안에도 값을 들고 있게 되어,
  * *"막이 서 있는 동안 aux1 은 항상 0"* 이라는 계약(PO6·FI9 가 그 위에 서 있다)이 깨진다.
  * 이미 만재인 막에도 대입은 무해하다(같은 값) — 별도 술어를 두지 않는다.
@@ -1013,7 +1013,7 @@ export function bubbleObjectiveResolved(
   void kind;
   const dr7 = lv(state, Sk.signalDrift);
   if (dr7 < 1) return;
-  player.aux0 = FILM_ABSORB_FLAT;
+  player.aux0 = state.filmCapacity;
   player.aux1 = 0;
 }
 
@@ -1029,7 +1029,7 @@ export function bubbleObjectiveResolved(
  *
  * ## ⚠️ 술어의 기준점이 다르다 — 둘을 한 게이트로 묶지 마라
  * PO2 는 **막이 서 있기만** 하면 되고(`aux0 > 0`), PO5 는 **만재**를 요구한다
- * (`aux0 >= FILM_ABSORB_FLAT`). 설계서가 PO5 에 "첫 피격이 만재를 깨는 내장 억제" 를 명시했고,
+ * (`aux0 >= state.filmCapacity`). 설계서가 PO5 에 "첫 피격이 만재를 깨는 내장 억제" 를 명시했고,
  * PO2 에는 그 억제가 없다(막이 한 점이라도 남으면 켜진다). 합치면 PO2 가 조용히 PO5 의
  * 억제를 물려받는다.
  *
@@ -1063,7 +1063,7 @@ export function bubbleVolleyParams(
 
   // ── PO5 만재 투과 — 막이 **만재**인 동안 관통 +1 · 피해 +6% + 1.5%p/Lv.
   const po5 = lv(state, Sk.fullFilmPierce);
-  if (po5 >= 1 && player.aux0 >= FILM_ABSORB_FLAT) {
+  if (po5 >= 1 && player.aux0 >= state.filmCapacity) {
     if (params.ballisticsUsed) params.pierce += 1;
     params.damage = (params.damage * (10600 + 150 * po5)) / 10000;
   }
@@ -1225,8 +1225,9 @@ export function bubbleFilmOfferingConsume(state: WorldState): number {
  * 0 일 때 `aux1` 만 태우지 않는 것도 같은 반환이 처리한다(대가만 치르는 조용한 손해 방지).
  *
  * ## ⚠️ 만재 상한을 건다 — 설계 문면과 어긋나 보이는 지점이라 근거를 남긴다
- * 설계서 산식은 `floor(aux1 × FILM_ABSORB_FLAT / FILM_PERIOD_TICKS) × (60% + 3%p/Lv)` 인데,
- * 재생 직전(`aux1` = 419)에 Lv20(×1.2)이면 71 이 나와 **`aux0 ≤ FILM_ABSORB_FLAT` 엔진
+ * 설계서 산식은 `floor(aux1 × state.filmCapacity / FILM_PERIOD_TICKS) × (60% + 3%p/Lv)` 인데,
+ * 재생 직전(`aux1` = 419)에 Lv20(×1.2)이면 상한을 넘는다(기본 HP 기준 내구 25 에서 28) —
+ * 즉 **`aux0 ≤ state.filmCapacity` 엔진
  * 불변식**(FI2 「내구 재응결」이 지키는 그 불변식)을 넘는다. 불변식이 이긴다 — 넘으면 만재로
  * 자른다. 설계 문서는 고치지 않았다(규약: 어긋남은 보고한다).
  *
@@ -1243,9 +1244,9 @@ export function bubbleFilmEntry(state: WorldState, player: Entity, dmg: number):
   if (player.hp - dmg > 0) return;
   // 재생 진행분(aux1 = 마지막 파열 이후 경과 틱)을 만재 내구로 환산 → 레벨 배율(정수 bp).
   // 각 단계 나눗셈 1회 · 피제수 정수(ADR-0005).
-  const progress = Math.floor((player.aux1 * FILM_ABSORB_FLAT) / FILM_PERIOD_TICKS);
+  const progress = Math.floor((player.aux1 * state.filmCapacity) / FILM_PERIOD_TICKS);
   const shield = Math.min(
-    FILM_ABSORB_FLAT,
+    state.filmCapacity,
     Math.floor((progress * (6000 + 300 * fi9)) / 10000),
   );
   if (shield <= 0) return;

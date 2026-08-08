@@ -5,10 +5,10 @@
  * 한 파일 한 키로 합치면 배선 전수 테스트가 구조적 항진이 된다(계획 PM-1).
  *
  * ## 시그니처 조작 축 (인코딩 표 정본 = `src/sim/world.ts` 의 `stepShipSignature` 머리 주석)
- * `aux0` = 남은 막 내구(0..`FILM_ABSORB_FLAT`) · `aux1` = 마지막 파열 이후 경과 틱.
+ * `aux0` = 남은 막 내구(0..`state.filmCapacity`) · `aux1` = 마지막 파열 이후 경과 틱.
  * world 배선의 재생 규칙은 **`aux0 === 0` 일 때만 `aux1` 이 돌고, `FILM_PERIOD_TICKS` 에서
  * 막이 다시 선다** 이다. 그래서 이 6종의 조작은 정확히 두 축이다:
- *  · `aux0` — 막을 **터뜨리거나**(0) **세운다**(`FILM_ABSORB_FLAT`), 혹은 탄약으로 환산한다.
+ *  · `aux0` — 막을 **터뜨리거나**(0) **세운다**(`state.filmCapacity`), 혹은 탄약으로 환산한다.
  *  · `aux1` — 7초 재생 주기를 **건너뛴다**(주입).
  *
  * 파열 밀어내기는 **여기서 재현하지 않는다**(E3). 예전에는 world 를 런타임 import 할 수 없어
@@ -19,7 +19,7 @@
  * 쿨다운만 세우고 버프는 감소만 한다 — 공통 코드가 세우면 관측량 단언이 항진이 된다.
  */
 
-import { FILM_ABSORB_FLAT, FILM_BURST_RADIUS, FILM_PERIOD_TICKS } from '../shipSignature.js';
+import { FILM_BURST_RADIUS, FILM_PERIOD_TICKS } from '../shipSignature.js';
 import type { Entity } from '../entities.js';
 import { requestFilmBurst } from '../filmBurst.js';
 import {
@@ -99,11 +99,11 @@ export const BUBBLE_HANDLERS: ActiveHandlerTable = {
   },
   as_bubble_film_lo: (state, player, def, _dir, slot) => {
     setBuffTicks(state, slot, def.coeff.ticks ?? 0);
-    player.aux0 = FILM_ABSORB_FLAT; // 즉시 만재.
+    player.aux0 = state.filmCapacity; // 즉시 만재(상한 정본은 런 단위 파생값이다).
   },
   as_bubble_film_hi: (state, player, def, _dir, slot) => {
     setBuffTicks(state, slot, def.coeff.ticks ?? 0);
-    player.aux0 = FILM_ABSORB_FLAT;
+    player.aux0 = state.filmCapacity;
   },
 };
 
@@ -113,8 +113,8 @@ export const BUBBLE_SUSTAIN: ActiveSustainTable = {
     // 막이 서 있는 동안에는 world 배선이 타이머를 돌리지 않으므로, 가속분을 여기서 얹는다.
     advanceRecharge(player, def.coeff.perTick ?? 0);
   },
-  as_bubble_film_hi: (_state, player) => {
-    player.aux0 = FILM_ABSORB_FLAT; // 매 틱 만재로 되돌린다(불멸 막).
+  as_bubble_film_hi: (state, player) => {
+    player.aux0 = state.filmCapacity; // 매 틱 만재로 되돌린다(불멸 막).
   },
 };
 

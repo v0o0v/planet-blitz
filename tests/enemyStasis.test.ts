@@ -95,6 +95,9 @@ describe('적 정지 축 (S9 선결, status.ts)', () => {
     // 반환해 `sm` 산술이 배선 전과 비트 동일하다는 것이 이 불변의 이유다.
     const state = createWorld(12345);
     for (let t = 0; t < 300; t++) stepWorld(state, emptyInput());
-    expect(hashWorld(state)).toBe(24194643);
+    // 2026-08-08 재동결(출시 전 밸런스 확정). 이 값은 "정지 배선 신설 전후 동일" 을 재는
+    // 것이지 특정 숫자를 재는 것이 아니다 — 밸런스 상수가 움직이면 함께 움직인다.
+    // 교환 대조로 확정했다: 레인의 밸런스 상수 14개를 되돌리면 옛 값(24194643)이 복원된다.
+    expect(hashWorld(state)).toBe(2178646964);
   });
 });

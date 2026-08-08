@@ -295,8 +295,16 @@ export function shieldShareHp(pool: number, bp: number): number {
 // preset/loadout/universal 에서 오는지의 **구조**만 확정한다.
 // ---------------------------------------------------------------------------
 
-/** 플레이어 기준 HP(loadout.maxHpAdd 가 가산되는 기준 — src/items/loadout.ts BASE_HP_REF 와 동일). */
-const PLAYER_BASE_HP = 100;
+/**
+ * 플레이어 기준 HP(loadout.maxHpAdd 가 가산되는 기준 — src/items/loadout.ts BASE_HP_REF 와 동일).
+ *
+ * ⚠️ 100 → 120 → 126 → 151 (2026-08-08 기체 기본 스탯 상향 — `src/sim/world.ts` `DEFAULT_WEAPON` 위 주석이
+ * 정본). **부작용 고지**: 수호 HP = 이 값 × `GUARDIAN_HP_PER_PLAYER_HP` 라 침공 방어측 수호도
+ * 20% 튼튼해진다. 상향 요청은 PvE 체감이었지만 이 상수의 계약이 *"BASE_HP_REF 와 동일"* 이라
+ * 여기만 100 으로 두면 **수호 파생이 실제 플레이어 HP 와 조용히 갈린다.** 계약을 지키는 쪽을
+ * 택했다 — 침공 공격측도 같은 상향을 받은 플레이어이므로 상대 균형은 대체로 보존된다.
+ */
+const PLAYER_BASE_HP = 151;
 /** 수호 HP = 플레이어 실효 HP × 이 계수(수호는 정지 방어체라 플레이어보다 튼튼). placeholder. */
 const GUARDIAN_HP_PER_PLAYER_HP = 3;
 /** 접촉(램) 피해 universal base(× damageMult). placeholder. */

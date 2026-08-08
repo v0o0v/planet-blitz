@@ -187,7 +187,7 @@ const { blankEntity, addEntity, spawnBullet, spawnGem, spawnWall } = await impor
 );
 const { DT } = await import('../src/sim/constants.js');
 const { hashWorld } = await import('../src/sim/replay.js');
-const { FILM_ABSORB_FLAT, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP, BROOD_MARK, cushionSettled } =
+const { filmCapacityFor, broodBulletDamage, CUSHION_RECOVER_TICKS, CUSHION_RECOVER_BP, BROOD_MARK, cushionSettled } =
   await import(
   '../src/sim/shipSignature.js'
 );
@@ -254,6 +254,12 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // 사전 조건 — 계측기 자체가 살아 있는가
 // ---------------------------------------------------------------------------
+
+/**
+ * 이 스위트의 테스트 월드는 전부 기본 플레이어 HP(100)라 막 만재 내구가 이 값이다.
+ * 내구는 2026-08-08 개정으로 **최대 HP 비율**이 됐다(`FILM_ABSORB_HP_BP`) — 상수가 아니다.
+ */
+const FILM_FULL = filmCapacityFor(100);
 
 describe('계측 이음매', () => {
   // ⛔ 이 표가 **앵커의 기계 검사 레지스트리**다 — 동그라미 번호가 아니라 **이름**이 정본이다.
@@ -1154,7 +1160,7 @@ describe('앵커 ⑰⑱ onFilmEfficiency · onFilmAbsorbed — 버블 막 흡수
     const s = skilled(0xc001, 6); // 버블(id=6, SIG_BUBBLE_FILM)
     const p = s.entities[0];
     if (p === undefined) throw new Error('플레이어가 0번에 없다');
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     plantEnemy(s, 0, 0, 10); // 플레이어에 겹친 적 — 접촉 피해
     stepWorld(s, idle);
     expect(count('onFilmEfficiency')).toBe(1);
@@ -1227,7 +1233,7 @@ describe('앵커 ㉒ onFilmEntry — 막 진입 술어 직전(막이 **없는** 
     const s = skilled(0xc001, 6);
     const p = s.entities[0];
     if (p === undefined) throw new Error('플레이어가 0번에 없다');
-    p.aux0 = FILM_ABSORB_FLAT;
+    p.aux0 = FILM_FULL;
     const hpBefore = p.hp;
     plantEnemy(s, 0, 0, 10);
     stepWorld(s, idle);
@@ -1238,15 +1244,15 @@ describe('앵커 ㉒ onFilmEntry — 막 진입 술어 직전(막이 **없는** 
 
     const e = hoisted.filmEntries[0];
     if (e === undefined) throw new Error('㉒ 인자 기록이 비어 있다');
-    expect(e.aux0).toBe(FILM_ABSORB_FLAT); // 막이 서 있는 채로 진입했다
+    expect(e.aux0).toBe(FILM_FULL); // 막이 서 있는 채로 진입했다
     // **하한 짝** — 아래 두 단언은 `dmg = 0` 이면 항진이다.
     expect(e.dmg).toBeGreaterThan(0);
-    expect(e.dmg).toBeLessThan(FILM_ABSORB_FLAT); // 소진 전이라 파열이 없다
+    expect(e.dmg).toBeLessThan(FILM_FULL); // 소진 전이라 파열이 없다
 
     // 결과가 비트 동일하다: 막이 전량 흡수해 선체는 한 점도 안 깎이고 `aux0` 만 그만큼 닳는다.
     // ㉒ 가 본 `dmg` 와 실제 차감량이 같다는 것이 "훅이 아무것도 안 바꿨다" 의 물증이다.
     expect(p.hp).toBe(hpBefore);
-    expect(p.aux0).toBe(FILM_ABSORB_FLAT - e.dmg);
+    expect(p.aux0).toBe(FILM_FULL - e.dmg);
     expect(s.filmPops).toBe(0); // 파열 오발동 없음 — 게이트를 넓혔다면 여기가 갈렸다
   });
 });
@@ -1623,8 +1629,23 @@ describe('앵커 ㉖ onTurretShotParams — 포탑탄 1발의 파라미터', () 
     plantEnemy(s, t.x + 200, t.y);
     stepWorld(s, idle);
     expect(hoisted.turretShots.length).toBeGreaterThanOrEqual(1); // 하한 — 아래 등식의 항진 방지
-    expect(hoisted.turretShots[0]!.damage).toBe(10); // TURRET_BULLET_DAMAGE
+    // 병아리 탄의 기준 피해는 **플레이어 발당 피해의 비율**이다(2026-08-08 · `BROOD_DAMAGE_BP`).
+    // 앵커가 보는 초기값이 그 파생값이어야 BD10「탄 피해 배율」이 올바른 기준 위에 곱해진다.
+    expect(hoisted.turretShots[0]!.damage).toBe(broodBulletDamage(s.weapon.damage));
     expect(hoisted.turretShots[0]!.ownerId).toBe(BROOD_MARK);
+  });
+
+  it('센트리·드론 베이(DRONE_MARK)는 공유 상수 그대로다 — 비율화는 병아리 전용이다', () => {
+    // 회귀 가드: `TURRET_BULLET_DAMAGE` 는 유니크 ④ 자율 드론 베이·보조무기 ③ 센트리도 쓴다.
+    // 병아리만 갈라내는 것이 개정의 계약이고, 그 계약이 깨지면 여기가 먼저 빨개진다.
+    const s = hatchRun(0xb012);
+    const p = s.entities[0]!;
+    const t = plantTurret(s, DRONE_MARK, p.x + 120, p.y);
+    plantEnemy(s, t.x + 200, t.y);
+    stepWorld(s, idle);
+    const mine = hoisted.turretShots.filter((r) => r.ownerId === DRONE_MARK);
+    expect(mine.length).toBeGreaterThanOrEqual(1);
+    expect(mine[0]!.damage).toBe(TURRET_BULLET_DAMAGE);
   });
 
   it('표적이 하나도 없으면 한 번도 안 불린다 (무발사 틱에 상시 비용을 안 만든다)', () => {
@@ -1648,9 +1669,17 @@ describe('앵커 ㉖ onTurretShotParams — 포탑탄 1발의 파라미터', () 
   });
 });
 
-/** **포탑탄만** 센다(원본 판정은 `tests/turretFireExtraction.test.ts` 의 `isTurretBullet`). */
+/**
+ * **포탑탄만** 센다(원본 판정은 `tests/turretFireExtraction.test.ts` 의 `isTurretBullet`).
+ *
+ * ⚠️ **피해로 가르지 않는다.** 2026-08-08 개정으로 병아리(`BROOD_MARK`) 탄은 피해가
+ * `TURRET_BULLET_DAMAGE` 가 아니라 **플레이어 발당 피해의 비율**이다(`BROOD_DAMAGE_BP`).
+ * 피해를 판정에 쓰면 병아리 탄이 통째로 안 세어져 *"포탑이 한 발도 안 쐈다"* 로 오독된다
+ * (실제로 그렇게 깨졌다). 반경은 소환물 종류와 무관하게 `TURRET_BULLET_RADIUS` 로 고정이라
+ * 플레이어 주무기 탄과 갈라 내는 목적에 충분하다.
+ */
 const isTurretBullet = (e: Entity): boolean =>
-  e.kind === 'bullet' && !e.dead && e.damage === TURRET_BULLET_DAMAGE && e.radius === TURRET_BULLET_RADIUS;
+  e.kind === 'bullet' && !e.dead && e.radius === TURRET_BULLET_RADIUS;
 
 describe('배치7 F2b onAutoAimTarget — 자동조준 표적 확정 직후', () => {
   it('사거리 안 표적이 있으면 그 좌표로 불린다', () => {
@@ -1696,7 +1725,11 @@ describe('배치7 F2b onTurretTargetPick — 포탑 표적 지정', () => {
       pick.targetId = far.id;
     };
     stepWorld(s, idle);
-    const shots = s.entities.filter(isTurretBullet);
+    // ⚠️ 심은 포탑이 **막 쏜** 탄만 본다. 반경만으로 거르면 같은 틱에 태어난 다른 포탑탄이
+    // 배열 앞에 설 수 있어(피해로 가르던 종전 판정이 우연히 막고 있었다) 각도 단언이 엉뚱한
+    // 탄을 잰다. 발사 원점이 포탑 좌표라는 사실로 가른다 — 1틱 이동분(속도 1600 × DT)보다
+    // 훨씬 넉넉한 반경이면 충분하다.
+    const shots = s.entities.filter((e) => isTurretBullet(e) && Math.hypot(e.x - t.x, e.y - t.y) < 60);
     expect(shots.length, '강제 지정이 있는데도 포탑이 한 발도 안 쐈다').toBeGreaterThanOrEqual(1);
     const expected = Math.atan2(far.y - t.y, far.x - t.x);
     const actual = Math.atan2(shots[0]!.vy, shots[0]!.vx);
@@ -1712,7 +1745,8 @@ describe('배치7 F2b onTurretTargetPick — 포탑 표적 지정', () => {
       pick.targetId = 999_999; // 존재하지 않는 id
     };
     stepWorld(s, idle);
-    const shots = s.entities.filter(isTurretBullet);
+    // 위 케이스와 같은 사유로 원점 근접으로 가른다.
+    const shots = s.entities.filter((e) => isTurretBullet(e) && Math.hypot(e.x - t.x, e.y - t.y) < 60);
     expect(shots.length, '무효 지정이 격발 자체를 막았다').toBeGreaterThanOrEqual(1);
     const expected = Math.atan2(near.y - t.y, near.x - t.x);
     const actual = Math.atan2(shots[0]!.vy, shots[0]!.vx);

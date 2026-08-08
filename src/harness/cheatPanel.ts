@@ -47,6 +47,8 @@ import {
   standardStage,
   STANDARD_BUILD_SEED,
 } from '../bench/standardBuild.js';
+// Lv1~4 폴백용 스타터 킷 — 사유는 `applyStandardBuild` doc §Lv1 폴백.
+import { starterEquipped } from '../items/starterKit.js';
 import { PLANETS } from '../../data/planets/index.js';
 import { makeElite, ELITE_AFFIX_COUNT, isElite } from '../sim/elite.js';
 import { rollItem } from '../items/roll.js';
@@ -331,8 +333,9 @@ const STYLE = `
 /**
  * 표준 빌드 점프 버튼이 제공하는 레벨 지점(출시 전 밸런스 기준 A·1).
  *
- * **Lv1 과 Lv5 는 둘 다 필요하다.** Lv1 은 장착 칸이 0 인 진짜 맨몸(요구 레벨 게이트가 단계 1
- * 장비를 Lv1 조종사에게 거부한다 — ADR-0030)이고, 설계 밴드 1 의 목표치(8칸 · magic 1 · rare 7)는
+ * **Lv1 과 Lv5 는 둘 다 필요하다.** Lv1 은 **스타터 킷 8칸**(신규 플레이어의 실제 상태 —
+ * 표준 세트는 이 구간에서 비고 `applyStandardBuild` 가 킷으로 폴백한다. 요구 레벨 게이트가
+ * 단계 1 장비를 Lv1 조종사에게 거부하기 때문이다 — ADR-0030)이고, 설계 밴드 1 의 목표치는
  * **Lv5 에서 실현**된다(`BAND_LEVELS` 의 대표 레벨이 `[5,10,…]`). 초반 이탈은 그 둘 사이 구간에서
  * 일어나므로 한쪽만 보면 못 잡는다.
  */
@@ -699,6 +702,21 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
    * 교정한다는 이 레인의 설계 자체가 무너진다.
    *
    * 기존 장착분은 인벤토리로 반환한다({@link grantItem} 과 같은 규칙).
+   *
+   * ## ⚠️ Lv1~4 폴백 — 표준 세트는 이 구간에서 **빈 세트**다
+   *
+   * `standardGearSetForBand` 는 `Lv < LEVEL_PER_STAGE`(=5) 에서 **0칸**을 돌려준다 — 파밍
+   * 드랍의 등급 바닥이 매직이고 드랍처 상한 때문에 단계1 드랍이 등급과 무관하게 요구 레벨 5
+   * 로 수렴해, "입을 수 있는 장비가 존재하지 않기" 때문이다(그 함수 주석이 정본). 계측
+   * 계층에서는 그것이 정답이다.
+   *
+   * 그런데 **실제 신규 플레이어는 맨몸이 아니다** — `newPlayerProfile()` 이 `starterEquipped()`
+   * 로 8칸을 채워 준다(`src/items/starterKit.ts`). 그래서 이 버튼이 표준 세트를 그대로 쓰면
+   * Lv1 조종사가 **게임에 존재하지 않는 상태**(0칸)로 앉게 되고, 초반 이탈 체감 판정이 실제보다
+   * 훨씬 가혹한 무대 위에서 내려진다.
+   *
+   * 그래서 표준 세트가 비면 스타터 킷으로 폴백하고, **어느 쪽이 적용됐는지 힌트에 찍는다** —
+   * 사람이 무엇을 입고 앉았는지 모르는 것 자체가 이 레인이 막아야 하는 오판원이다.
    */
   function applyStandardBuild(level: number): void {
     host.activateHarnessProfile();
@@ -710,14 +728,20 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     }
     ship.level = lv;
     ship.xp = 0;
-    ship.equipped = standardEquipped(lv, STANDARD_BUILD_SEED, planetIdx);
+    // Lv1~4 폴백(위 §Lv1~4 폴백) — 표준 세트가 비면 스타터 킷을 입힌다.
+    const std = standardEquipped(lv, STANDARD_BUILD_SEED, planetIdx);
+    const useStarter = Object.keys(std).length === 0;
+    ship.equipped = useStarter ? starterEquipped() : std;
     ship.skillInvest = standardSkillInvest(ship.typeId, lv);
     host.saveProfile();
     host.refreshScreen();
     harness.cheat(() => {});
     const filled = Object.keys(ship.equipped).length;
     const pts = ship.skillInvest.reduce((a, b) => a + b, 0);
-    setHint(`표준 빌드 Lv${lv} 적용 — 장비 ${filled}칸 · 스킬 ${pts}pt (단계 ${standardStage(lv)} 권장)`);
+    const kit = useStarter ? '스타터 킷' : '표준 장비';
+    setHint(
+      `표준 빌드 Lv${lv} 적용 — ${kit} ${filled}칸 · 스킬 ${pts}pt (단계 ${standardStage(lv)} 권장)`,
+    );
   }
 
   /** 표준 빌드를 세우고 곧바로 그 레벨의 표준 단계로 런을 시작한다(기준 1 의 3지점 점프). */

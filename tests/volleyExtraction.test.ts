@@ -16,6 +16,13 @@
  * 전부 덮는다 — `emitVolley` 의 아키타입 분기 네 갈래 전부를 최소 한 번씩 실행하지 않으면
  * 이 잠금이 항진이 되므로, 각 설정이 어느 분기를 태우는지 주석에 명시한다.
  *
+ * ## 재동결 — 2026-08-08 (출시 전 밸런스 확정)
+ * 6건 전량이 갈렸다. 원인은 이 파일이 아니라 **플레이어·적 기본 스탯 일괄 개정**이고
+ * (공격력 8 → 18.24 · HP 100 → 151 · 적 밀도 +30% · 단계 HP 앵커 · 보스 HP ×2 · 해저드 절반),
+ * 이 픽스처는 `createWorld`+`stepWorld` 로 웨이브가 도는 무대를 쓰므로 그 전부를 통과한다.
+ * **교환 대조를 재생성보다 먼저 했다** — 레인이 바꾼 밸런스 상수 14개를 전부 되돌리자 6건이
+ * 옛 값으로 복원됐다(동일 6 / 발산 0). 아래 ⚠️ 가 요구하는 "회귀 조사 먼저" 를 그렇게 지켰다.
+ *
  * ⚠️ 이 해시들이 갈리면 **골든 재생성이 아니라 회귀 조사가 먼저다** — 이 픽스처는
  * `src/sim/**` 를 하나도 안 만졌다(순수 리팩터), 그런데도 갈렸다면 그 자체가 결함 증거다.
  */
@@ -71,27 +78,27 @@ function runHash(weaponType: number, uniqueMask = 0): string {
 
 describe('W2b emitVolley 추출 — 해시 비트 동일 (배치7 F2b)', () => {
   it('발칸(기본) — 부채꼴 분기', () => {
-    expect(runHash(WEAPON_VULCAN)).toBe('dd4d4f2a');
+    expect(runHash(WEAPON_VULCAN)).toBe('637d07af');
   });
 
   it('스프레드 — 부채꼴 분기(발칸과 같은 갈래, 무기 베이스라인만 다르다)', () => {
-    expect(runHash(WEAPON_SPREAD)).toBe('57c0a346');
+    expect(runHash(WEAPON_SPREAD)).toBe('2fb38b3');
   });
 
   it('스프레드 + 쌍둥이 항성(유니크) — 부채꼴 분기의 배율 갈래', () => {
-    expect(runHash(WEAPON_SPREAD, 1 << UQ_TWIN_STAR_BIT)).toBe('34dd570b');
+    expect(runHash(WEAPON_SPREAD, 1 << UQ_TWIN_STAR_BIT)).toBe('9f294d78');
   });
 
   it('레일건 — 단발 분기', () => {
-    expect(runHash(WEAPON_RAILGUN)).toBe('11f8781a');
+    expect(runHash(WEAPON_RAILGUN)).toBe('fef4e7ff');
   });
 
   it('미사일 — 유도탄 분기(`MISSILE_MARK` 스탬프 포함)', () => {
-    expect(runHash(WEAPON_MISSILE)).toBe('af11ade4');
+    expect(runHash(WEAPON_MISSILE)).toBe('9647e279');
   });
 
   it('빔 — 정지 세그먼트 분기(`reach` 별도 인자 경로)', () => {
-    expect(runHash(WEAPON_BEAM)).toBe('170b053');
+    expect(runHash(WEAPON_BEAM)).toBe('6dca0b60');
   });
 });
 

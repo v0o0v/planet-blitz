@@ -297,7 +297,10 @@ describe('id 12 ascension', () => {
     expect(hp0).toBeGreaterThan(0); // 하한
     growthOnWaveAdvanced(s, 0, 1);
     expect(p.maxHp).toBe(Math.round(hp0 * 0.9));
-    expect(s.weapon.damage).toBeCloseTo(dmg0 * 1.1, 6);
+    // ⚠️ 정밀도 6 은 못 쓴다 — sim 은 `weapon.damage` 를 **소수 2자리로 접는다**
+    // (`Math.round(x * 100) / 100`). 기본 피해가 정수(8)였을 때는 우연히 6자리까지 맞았지만
+    // 18.24 처럼 소수가 되면 반올림 잔차가 드러난다. 눈금을 sim 과 맞춘다.
+    expect(s.weapon.damage).toBeCloseTo(dmg0 * 1.1, 2);
     expect(p.hp).toBeLessThanOrEqual(p.maxHp); // 상한 밖으로 삐져나오지 않는다
   });
 

@@ -110,6 +110,20 @@ function profileWithType(typeId: number): Profile {
 
 interface Observed {
   kills: number;
+  /**
+   * 런 종료 시점 살아 있는 적 hp 총합.
+   *
+   * ## 왜 처치 수만으로는 부족한가 (2026-08-08)
+   * 병아리 탄 피해가 플레이어 발당 피해의 비율이 되면서(`BROOD_DAMAGE_BP`) 이 무대에서
+   * live/ctrl 의 **처치 수가 동타(27/27)** 가 됐다 — 무입력 파일럿이 세그먼트 처치 목표 앞에서
+   * 정지해 kills 가 일찍 멈추기 때문이다. 동타는 `live.kills > ctrl.kills` 를 원리적으로
+   * 깨뜨리는데, 그렇다고 병아리가 **아무 일도 안 한 것은 아니다**.
+   *
+   * 적 hp 총합은 처치로 반올림되기 전의 피해를 그대로 보므로, "지원 화력이 실재한다"를
+   * 처치 수 눈금에 갇히지 않고 잰다. 같은 기법의 선례가 `shipSignatureWiring.test.ts` 의
+   * 동명 필드다("피해 산술 변화가 처치 수를 못 바꿔도 여기선 보인다").
+   */
+  enemyHpSum: number;
   /** 이 런에서 새로 태어난 활성 아군 포탑(= 병아리) 수. */
   hatched: number;
   /** 동시 생존 활성 아군 포탑의 최대치(되먹임 상한 검증). */
@@ -165,8 +179,11 @@ function runObserved(
     if (p.aux1 > maxAux1) maxAux1 = p.aux1;
     hashes.push(hashWorld(state));
   }
+  let enemyHpSum = 0;
+  for (const e of state.entities) if (!e.dead && e.kind === 'enemy') enemyHpSum += e.hp;
   return {
     kills: state.kills,
+    enemyHpSum,
     hatched,
     maxLiveDrones,
     firstHatchTick,
@@ -220,15 +237,48 @@ describe('해츨링(typeId 4) 정규 경로 배선 — Profile → buildRunConfi
     expect(ctrl.kills).toBeGreaterThan(HATCH_BASE_KILLS);
 
     // 핵심 단언: 부화 트리거만 굶기면 병아리가 사라진다(= 배선이 실제로 산 상태다).
-    // 실측 기준선(seed 9 / p0t0 / 3600틱): 출격 4기 · 최종 aux0 48 · kills 49 vs 24.
-    expect(live.hatched).toBeGreaterThanOrEqual(3);
+    // 실측 기준선(seed 9 / p0t0 / 3600틱): 출격 **2기** · 최종 aux0 24 · kills 28.
+    //
+    // ## ⚠️ 하한 4 → 2 (2026-08-08, 병아리 탄 피해 비율화 — `BROOD_DAMAGE_BP`)
+    // 병아리 화력이 `TURRET_BULLET_DAMAGE`(10) 고정에서 플레이어 발당 피해의 20%(무장비
+    // 기준 1.6)로 내려가 처치가 느려졌고, 같은 창에서 출격이 4회 → 2회가 됐다.
+    //
+    // **틱을 늘려도 안 는다** — 그것부터 확인했다(실측 14,400틱까지: `kills` 가 1,800틱에
+    // **28 에서 완전히 멈춘다**. 무입력 파일럿이 세그먼트 처치 목표 게이트 앞에서 정지해
+    // 있어 그 뒤로 적이 더 오지 않는다). 즉 창의 제약은 시간이 아니라 무대이고, 하한을
+    // 유지하려면 무대 자체를 갈아야 하는데 그러면 이 스위트의 기준선 전부가 움직인다.
+    //
+    // 잃는 것은 거의 없다: 하한 4 도 "임계가 계단식으로 오른다"를 보이지는 **못했다**
+    // (구 스냅샷 [12,24,36,48] 은 간격이 전부 12 로, `hatchThreshold` 가 오르는 누적 처치
+    // 60 에 닿지 못한다). 두 축 모두 반복 발현과 스냅샷 단조를 그대로 증명한다.
+    expect(live.hatched).toBeGreaterThanOrEqual(2);
     expect(ctrl.hatched).toBe(0);
     expect(live.firstHatchTick).toBeGreaterThan(0);
 
-    // 병아리가 실제로 싸운다 — 같은 seed·무대에서 처치가 대조군보다 많다. 두 config 는
+    // 병아리가 실제로 싸운다 — 같은 seed·무대에서 적이 더 많이 깎였다. 두 config 는
     // shipType·마스크가 완전히 같으므로(옛 suppressSignature 와 달리 baseBp 오염이 없다) 이
     // 차이의 원인은 병아리 지원 화력뿐이다.
-    expect(live.kills).toBeGreaterThan(ctrl.kills);
+    //
+    // ⚠️ **눈금이 하루에 두 번 바뀐 자리다 — 이력을 남겨 둔다.**
+    //
+    //  · 2026-08-08 (병아리 탄 비율화 `BROOD_DAMAGE_BP` 직후): 처치 수가 27/27 **동타**가 되어
+    //    `live.kills > ctrl.kills` 가 원리적으로 깨졌다. 동타가 "병아리가 아무 일도 안 했다" 를
+    //    뜻하지는 않으므로 눈금을 **적 hp 총합**으로 옮겼다(`Observed.enemyHpSum` doc 이 정본).
+    //  · 2026-08-08 (같은 날, `waves.ts summonEnemy` 의 **짝 없는 `ENEMY_HP_MULT` 제거** 뒤):
+    //    동타가 풀리며 **처치 75(live) vs 54(ctrl)** 로 크게 벌어졌고, 동시에 `enemyHpSum` 의
+    //    **부등호가 뒤집혔다**(1092.33 vs 858.35 — live 쪽이 더 많다).
+    //
+    // ⭐ 뒤집힘은 결함이 아니라 이 무대의 성질이다: 빨리 지울수록 세그먼트가 앞으로 나가 **다음
+    //   웨이브가 더 일찍 들어온다.** 그래서 "화면에 남은 적 hp" 는 화력이 셀수록 오히려 커질 수
+    //   있다 — 같은 함정을 `shipSignatureWiring.test.ts` 가 두 번 기록해 뒀다(아크캐스터 케이스가
+    //   `hpLost` 를 버리고 `kills` 로 간 2026-08-04 절 · 팬텀 억제 케이스가 부등호 자체를 포기한 절).
+    //
+    // ⇒ **방향을 걸 수 있는 눈금은 처치 수**다(병아리 지원 화력이 직접 밀어 올린다 · 마진 21).
+    //   적 hp 총합은 방향을 빼고 **갈림 자체**만 본다 — 처치 수가 다시 동타가 되는 날에도 이쪽이
+    //   남아 "병아리가 아무 일도 안 했다" 를 배제한다.
+    //   ⚠️ 다음 사람이 `enemyHpSum` 에 다시 부등호를 걸지 마라 — 오늘 그래서 뒤집힌 자리다.
+    expect(live.kills, '해츨링: 병아리 지원 화력이 처치를 못 늘렸다').toBeGreaterThan(ctrl.kills);
+    expect(live.enemyHpSum, '해츨링: 전장 상태가 한 칸도 안 갈렸다').not.toBe(ctrl.enemyHpSum);
 
     // 트리거 굶긴 대조군은 부화 임계에 못 닿아 aux1(해츨링이 안 쓰는 슬롯)은 그대로 0 이다.
     // ⚠️ maxAux0 는 우리가 매 틱 state.kills 로 직접 덮어쓰므로 항진이라 여기서 재지 않는다
@@ -241,7 +291,8 @@ describe('해츨링(typeId 4) 정규 경로 배선 — Profile → buildRunConfi
     const live = runObserved(SEED, cfg, TICKS);
 
     // 스냅샷은 단조 증가하고, 인접 스냅샷 간격이 그 시점의 요구치 이상이어야 한다.
-    expect(live.snapshots.length).toBeGreaterThanOrEqual(3);
+    // 하한 3 → 2: 위 케이스의 §하한 4 → 2 와 같은 사유(무대가 창을 막는다).
+    expect(live.snapshots.length).toBeGreaterThanOrEqual(2);
     let prev = 0;
     for (const s of live.snapshots) {
       expect(Number.isInteger(s)).toBe(true);

@@ -18,6 +18,7 @@ import {
   SUB_WEAPON_NONE,
 } from '../src/items/loadout.js';
 import { SIG_STRIKER_MARKSMAN } from '../src/sim/shipSignature.js';
+import { DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { Item, ItemSource, SlotKind, StatKey } from '../src/items/types.js';
 
 const SRC: ItemSource = { planet: 0, stage: 1 };
@@ -116,7 +117,10 @@ describe('computeLoadoutStats — 계보 기체 가지 보너스 (ADR-0007)', ()
     const { loadout } = computeLoadoutStats([], 5000);
     expect(loadout.damageMult).toBeCloseTo(1.5);
     expect(loadout.fireRateMult).toBeCloseTo(10000 / 15000); // 발사 간격 ÷1.5 = 연사↑
-    expect(loadout.maxHpAdd).toBe(50); // 기준 HP 100 의 +50%
+    // 기준 HP 는 **리터럴이 아니라 정본 파생**이다 — `loadout.ts` 의 `BASE_HP_REF` 가 자기 주석에
+    // "matches DEFAULT_CONFIG" 를 계약으로 적어 두었고, 그 값은 밸런스 튜닝 대상이다
+    // (2026-08-08 에 100 → 151). 리터럴로 두면 튜닝할 때마다 이 케이스가 빨개진다.
+    expect(loadout.maxHpAdd).toBe(Math.round(DEFAULT_CONFIG.playerHp * 0.5));
     // 비대상 축은 불변(소폭 강화 원칙)
     expect(loadout.moveSpeedMult).toBe(1);
     expect(loadout.bulletSpeedMult).toBe(1);
@@ -127,7 +131,7 @@ describe('computeLoadoutStats — 계보 기체 가지 보너스 (ADR-0007)', ()
   it('중간 보너스(2500bp=+25%)는 비례 적용, 범위 밖은 클램프', () => {
     const mid = computeLoadoutStats([], 2500).loadout;
     expect(mid.damageMult).toBeCloseTo(1.25);
-    expect(mid.maxHpAdd).toBe(25);
+    expect(mid.maxHpAdd).toBe(Math.round(DEFAULT_CONFIG.playerHp * 0.25));
     // 음수 → 0, 5000 초과 → 5000 (normalizeLineageBonus 클램프)
     expect(computeLoadoutStats([], -100).loadout).toEqual(STRIKER_NEUTRAL);
     expect(computeLoadoutStats([], 99999).loadout).toEqual(
