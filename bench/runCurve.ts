@@ -43,20 +43,24 @@
  * 시드 32 에서 0.79 로 나왔다(정밀 강공명). 시드 5 표만 보고 "헌장 선 위반"으로 판정할
  * 뻔했다. **표본이 작으면 이 표는 정답이 아니라 잡음을 낸다.**
  *
- * ## ⚠️ 3택 픽에 의존하는 카드는 이 계측기로 못 잰다
- * 두 파일럿이 공유하는 `pilotFreezeFrame()`(`src/sim/autopilot.ts`)이 레벨업마다 **언제나
+ * ## `--pick=N` — 3택 픽에 의존하는 카드를 재는 손잡이 (2026-08-08 신설)
+ * 두 파일럿이 공유하는 `pilotFreezeFrame()`(`src/sim/autopilot.ts`)은 레벨업마다 **언제나
  * 오퍼 0번**을 고른다. 그래서 특정 칸에 붙는 카드(`id 18 mercantile` 의 빚 칸 =
- * `MERCANTILE_DEBT_INDEX` 2)는 봇 런에서 **항상 정확히 0** 으로 측정된다 — 60런 실측으로
- * 확인했다. 그 0 은 카드가 죽었다는 뜻이 아니라 **계측기가 그 칸을 안 누른다**는 뜻이다.
- * 재려면 파일럿에 픽 정책을 넣어야 하고, 그것은 `pilotFreezeFrame` 이 정본이라 **두 파일럿
- * 전부와 그 골든**을 함께 건드리는 일이다.
+ * `MERCANTILE_DEBT_INDEX` 2)는 봇 런에서 **항상 정확히 0** 으로 측정됐다 — 60런 실측으로
+ * 확인했다. 그 0 은 카드가 죽었다는 뜻이 아니라 **계측기가 그 칸을 안 누른다**는 뜻이었다.
+ *
+ * `--pick=2` 를 주면 파일럿이 매 레벨업에서 **칸 2** 를 고른다(정책 정본은
+ * `applyPilotPickPolicy`, `src/sim/autopilot.ts`). **미지정이면 종전 경로 비트 동일**이다 —
+ * 게이트가 가장 바깥이고 `pilotFreezeFrame` 자체는 한 글자도 안 바뀌었다.
+ *   SEEDS=32 node .../vite-node.mjs bench/runCurve.ts -- --levels=10,40 --catalysts=18 --durable --pick=2
+ * 오퍼 수보다 큰 인덱스는 **접힌다**(클램프) — 접지 않으면 sim 이 범위 밖 픽을 소비하지 않아
+ * (`world.ts` 픽 처리 블록) 런이 영원히 프리즈에 갇힌다.
  *
  * ⚠️ **조향은 `measurePilotInput` 을 쓴다**(얼어붙은 `autopilotInput` 이 아니다) — 대시 발동
  * 촉매(id 27·29 등)를 재려면 봇이 실제로 대시를 눌러야 하는데 `autopilotInput` 은 전 분기
  * `dash:false` 로 동결돼 있다(`src/sim/autopilot.ts`). `src/sim/measurePilot.ts` 가 이미
  * "쿨다운 0 이면 누른다" 정책의 측정 전용 파일럿을 제공하므로 그것을 그대로 쓴다(정책은
- * `autopilot.ts` 를 고치지 않고도 이 파일 안에서만 바꿀 수 있다). base·cat 두 런이 같은
- * 파일럿을 쓰므로 비교는 여전히 촉매 유무만의 차이다.
+ * `autopilot.ts` 를 고치지 않고도 이 파일 안에서만 바꿀 수 있다).
  *
  * ⚠️ 정확히는 `bench/contactPilot.ts` 의 `contactPilotInput` 을 쓴다 — `measurePilotInput` 을
  * 감싼 얇은 겹이다. `id 1`(plunder — 엘리트/보스를 **몸으로 부딪혀야** 강탈)처럼 접촉 자체가
@@ -64,6 +68,19 @@
  * **`id 1` 이 실린 런에서만** 강탈 대상으로 직진하는 분기가 켜진다. 게이트가 가장 바깥이라
  * 그 카드가 없는 런의 프레임은 종전과 **비트 동일**하다 — `tests/contactPilot.test.ts` ① 이
  * 그것을 잠근다.
+ *
+ * ## `--contact-steer` — `id 1` 의 짝지음을 복원하는 손잡이 (2026-08-08 신설)
+ * ⛔ **"두 런이 같은 파일럿을 쓰므로 비교가 공정하다" 는 `id 1` 에 대해서만 거짓이었다.**
+ * 바로 위 게이트가 `config.catalysts.includes(1)` 이라 `--catalysts=1` 스윕에서는 **base 런이
+ * 카이팅 · cat 런이 돌진**이다 — `clearSecX` 안에 카드의 힘과 **완전히 다른 조향 정책**이 섞인다.
+ * 실측(2026-08-08): 고친 조향의 cat 런은 kills 가 358 → 228 로 **줄었는데** 클리어는 빨라졌다.
+ * 돌진이 전투 자체를 바꾼 것이지 카드가 그만큼 센 것이 아니다.
+ *
+ * `--contact-steer` 를 주면 **카드와 무관하게 양쪽 런 다** 접촉 조향을 쓴다 — 그러면 배수가
+ * 다시 카드만의 차이가 된다. `id 1` 을 재려면 사실상 필수다.
+ *   SEEDS=32 node .../vite-node.mjs bench/runCurve.ts -- --levels=10,40 --catalysts=1 --durable --contact-steer
+ * **미지정이면 종전 경로와 비트 동일**하다 — 게이트가 `contactPilotInput` 의 가장 바깥이고
+ * 미지정 시 원본 프레임 객체가 그대로 나온다(`--pick=N` 과 같은 규율).
  *
  * ## 왜 이 파일이 생겼는가 — "조용한 성공"이 있었다 (2026-08-06)
  * 곡선 스윕은 원래 `src/bench/rosterBench.ts` 의 `main()` 안 `--curve` 분기였고, 그 분기는
@@ -105,6 +122,7 @@ import { buildRunConfig } from '../src/run/runConfig.js';
 import { createWorld, stepWorld } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
 import { beginMeasureRun } from '../src/sim/measurePilot.js';
+import { applyPilotPickPolicy } from '../src/sim/autopilot.js';
 import { contactPilotInput } from './contactPilot.js';
 import { catalystById, SLOT_CAP } from '../src/data/catalysts.js';
 
@@ -196,6 +214,29 @@ function resolveDurableHp(): number | undefined {
   return n;
 }
 
+/**
+ * `--pick=N` — 레벨업 3택에서 언제나 칸 N 을 고른다. 미지정이면 `undefined` = **종전 경로
+ * 비트 동일**(파일 헤더 §`--pick=N` 이 사유를 소유한다). 클램프는 정책 함수의 몫이다.
+ */
+function resolvePickIndex(): number | undefined {
+  const raw = argOf('pick');
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    console.error(`[runCurve] WARNING --pick=${raw} is not a non-negative number -- ignored.`);
+    return undefined;
+  }
+  return Math.floor(n);
+}
+
+/**
+ * `--contact-steer` — 카드와 무관하게 접촉 조향을 켠다. 미지정이면 `false` = **종전 경로 비트
+ * 동일**(파일 헤더 §`--contact-steer` 가 사유를 소유한다).
+ */
+function resolveContactSteer(): boolean {
+  return ARGV.includes('--contact-steer');
+}
+
 // ---------------------------------------------------------------------------
 // 촉매 짝지은 배수 스윕 (ADR-0052 레인 F2)
 // ---------------------------------------------------------------------------
@@ -228,6 +269,8 @@ function runPaired(
   seed: number,
   catalysts: readonly number[],
   durableHp: number | undefined,
+  pickIndex: number | undefined,
+  contactSteer: boolean,
 ): {
   readonly hashBaseTick0: number;
   readonly hashCatTick0: number;
@@ -254,7 +297,14 @@ function runPaired(
 
     let sawBoss = false;
     for (let i = 0; i < MAX_TICKS; i++) {
-      stepWorld(state, contactPilotInput(state));
+      // 픽 정책은 파일럿 **바깥**에서 덧씌운다 — 미지정이면 첫 줄에서 그대로 반환돼
+      // 프레임이 종전과 비트 동일하다(`applyPilotPickPolicy` 계약 1).
+      // `contactSteer` 는 **base·cat 양쪽 같은 값**이라 짝지음이 깨지지 않는다. 미지정(false)이면
+      // `contactPilotInput` 첫 게이트에서 그대로 반환돼 프레임이 종전과 비트 동일하다.
+      stepWorld(
+        state,
+        applyPilotPickPolicy(state, contactPilotInput(state, contactSteer), pickIndex),
+      );
       if (state.wave.boss) sawBoss = true;
       if (state.victory || state.gameOver) break;
     }
@@ -318,6 +368,8 @@ function runPairedCurveSweep(opts: {
   readonly levels: readonly number[];
   readonly catalysts: readonly number[];
   readonly durableHp: number | undefined;
+  readonly pickIndex: number | undefined;
+  readonly contactSteer: boolean;
   readonly onPoint?: (p: RatioPoint) => void;
 }): RatioPoint[] {
   const out: RatioPoint[] = [];
@@ -340,7 +392,16 @@ function runPairedCurveSweep(opts: {
     let hashesDiverge = true;
 
     for (const seed of opts.seeds) {
-      const r = runPaired(opts.ship, opts.planet, level, seed, opts.catalysts, opts.durableHp);
+      const r = runPaired(
+        opts.ship,
+        opts.planet,
+        level,
+        seed,
+        opts.catalysts,
+        opts.durableHp,
+        opts.pickIndex,
+        opts.contactSteer,
+      );
       baseKillSum += r.base.kills;
       catKillSum += r.cat.kills;
       baseTickSum += r.base.ticks;
@@ -394,7 +455,14 @@ function r2(x: number | null): string {
   return x === null ? '-' : x.toFixed(2);
 }
 
-function asciiRatioTable(points: readonly RatioPoint[], catalysts: readonly number[]): void {
+/** `id 1 plunder` — 접촉 조향 게이트를 여는 유일한 카드(`bench/contactPilot.ts`). */
+const PLUNDER_ID = 1;
+
+function asciiRatioTable(
+  points: readonly RatioPoint[],
+  catalysts: readonly number[],
+  contactSteer: boolean,
+): void {
   console.log(
     `--- catalyst power sweep (ratio vs 무촉매 기준선, ADR-0052 파워: 칸 정의) -- catalysts=[${catalysts.join(',')}] ---`,
   );
@@ -436,6 +504,16 @@ function asciiRatioTable(points: readonly RatioPoint[], catalysts: readonly numb
   console.log(
     '     (dash-gated catalysts measure as 0 gain, and id 1 needs body contact, otherwise).',
   );
+  if (catalysts.includes(PLUNDER_ID) && !contactSteer) {
+    // 조용히 잘못된 표를 내지 않는다 — 이 조합에서는 base 가 카이팅, cat 이 돌진이라
+    // 배수가 카드의 힘이 아니라 조향 정책의 차이를 담는다.
+    console.log(
+      'WARNING catalyst id 1 without --contact-steer: base kites while cat charges, so the ratios',
+    );
+    console.log(
+      '     below mix the card with an entirely different steering policy. Re-run with --contact-steer.',
+    );
+  }
 }
 
 /**
@@ -502,6 +580,8 @@ function main(): void {
   const wantMd = ARGV.includes('--md');
   const catalysts = resolveCatalysts();
   const durableHp = resolveDurableHp();
+  const pickIndex = resolvePickIndex();
+  const contactSteer = resolveContactSteer();
 
   if (levels.length === 0) failEmpty('--levels resolved to an empty list.');
   if (seeds.length === 0) failEmpty('SEEDS resolved to an empty list.');
@@ -512,7 +592,8 @@ function main(): void {
     console.error(
       `[runCurve] CATALYST SWEEP catalysts=[${catalysts.join(',')}] ship=${ship} planet=${planet} ` +
         `seeds=${seeds.length}/${ROSTER_SEEDS.length} levels=${levels.join(',')} maxTicks=${MAX_TICKS} ` +
-        `durableHp=${durableHp ?? 'off'} ` +
+        `durableHp=${durableHp ?? 'off'} pick=${pickIndex ?? 'default(0)'} ` +
+        `contactSteer=${contactSteer ? 'on(both runs)' : 'off(card-gated)'} ` +
         '(paired base vs catalyst runs; contactPilotInput, not frozen autopilot)',
     );
     const t0 = Date.now();
@@ -523,6 +604,8 @@ function main(): void {
       levels,
       catalysts,
       durableHp,
+      pickIndex,
+      contactSteer,
       onPoint: (p) =>
         console.error(
           `[runCurve] Lv${p.level} stage${p.stage}: clear ${(p.clearRateBase * 100).toFixed(1)}%->` +
@@ -533,11 +616,27 @@ function main(): void {
     });
     const elapsedMs = Date.now() - t0;
     if (points.length === 0) failEmpty('runPairedCurveSweep returned zero points.');
-    asciiRatioTable(points, catalysts);
+    asciiRatioTable(points, catalysts, contactSteer);
     console.log('');
     console.log(`elapsed: ${(elapsedMs / 1000).toFixed(1)}s`);
     console.log('done.');
     return;
+  }
+
+  // `--pick` 은 촉매 스윕 모드 전용이다 — 무촉매 곡선은 `runCurveSweep`(`src/bench/rosterBench.ts`)
+  // 이 자기 루프를 소유하고 있어 이 파일에서 프레임에 손댈 자리가 없다. 조용히 무시하면
+  // "눌렀는데 안 눌렸다"가 되므로 크게 알린다.
+  if (pickIndex !== undefined) {
+    console.error(
+      `[runCurve] WARNING --pick=${pickIndex} is ignored without --catalysts ` +
+        '(pick policy is wired only in the paired catalyst sweep).',
+    );
+  }
+  if (contactSteer) {
+    console.error(
+      '[runCurve] WARNING --contact-steer is ignored without --catalysts ' +
+        '(contact steering is wired only in the paired catalyst sweep).',
+    );
   }
 
   const t0 = Date.now();

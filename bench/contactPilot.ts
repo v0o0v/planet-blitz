@@ -18,10 +18,21 @@
  * 게이트가 켜졌을 때만 이동 성분을 교체한다. sim 파일은 한 줄도 바뀌지 않으므로 기존 골든·
  * 회귀·리플레이 계약이 전부 그대로다.
  *
+ * ## ⚠️ 카드 유무로 조향이 갈리면 **배수가 카드만의 차이가 아니다** (`--contact-steer` 의 사유)
+ * 게이트가 `config.catalysts.includes(1)` 하나뿐이면 짝지은 스윕에서 **base 런은 카이팅, cat 런은
+ * 돌진**이 된다 — `clearSecX` 안에 "카드의 힘"과 "완전히 다른 조향 정책"이 섞인다. 실측
+ * (2026-08-08)에서 고친 조향의 cat 런은 kills 가 358 → 228 로 **줄었는데** 클리어는 빨라졌다:
+ * 돌진이 전투 자체를 바꾼 것이지 카드가 그만큼 센 것이 아니다.
+ *
+ * 그래서 {@link contactPilotInput} 은 **카드와 무관하게 접촉 조향을 켜는 두 번째 인자**를 받는다
+ * (`bench/runCurve.ts --contact-steer`). 켜면 base·cat 두 런이 같은 조향을 쓰므로 배수가 다시
+ * 카드만의 차이가 된다. **미지정이면 종전 경로와 비트 동일**이다 — 게이트가 가장 바깥이다.
+ *
  * ## 계약 넷
- * 1. **게이트가 가장 바깥이다.** `config.catalysts` 에 `id 1` 이 없으면 `measurePilotInput` 의
- *    반환값을 **그대로** 돌려준다 — 그 경로에서는 이 파일이 프레임을 만들지도, 읽지도 않는다.
- *    무촉매 `bench:curve` 출력이 비트 단위로 종전과 같다는 근거가 이것이다.
+ * 1. **게이트가 가장 바깥이다.** `contactSteer` 가 참이 아니고 `config.catalysts` 에 `id 1` 이
+ *    없으면 `measurePilotInput` 의 반환값을 **그대로** 돌려준다 — 그 경로에서는 이 파일이
+ *    프레임을 만들지도, 읽지도 않는다. 무촉매 `bench:curve` 출력이 비트 단위로 종전과 같다는
+ *    근거가 이것이다.
  * 2. **RNG 를 소비하지 않는다.** 표적 선택은 좌표·id 만 보는 순수 함수이고 동률은 id 오름차순으로
  *    깬다(`autopilot.ts` 의 `nearestTarget` 과 같은 규약).
  * 3. **표식은 접근자로만 읽는다.** `readMark(e, 'plunder')` 뿐이고 비트를 직접 만지지 않는다.
@@ -62,17 +73,20 @@ export const CONTACT_HP_FLOOR = 0.5;
 /**
  * 이번 틱의 **접촉 조향 입력 프레임**. `world` 상태만의 순수 함수 — 부작용 없음.
  *
- * `id 1` 이 실리지 않은 런에서는 {@link measurePilotInput} 의 반환값을 **그대로** 돌려준다
- * (계약 1). 실린 런에서는 강탈 대상이 있을 때만 이동 성분을 그쪽 직진으로 교체하고, 조준·대시·
- * 액티브 비트는 측정 파일럿 정본을 그대로 쓴다 — 무엇을 쏘는가와 어디로 가는가는 별개 축이다.
+ * `id 1` 이 실리지 않았고 `contactSteer` 도 켜지지 않은 런에서는 {@link measurePilotInput} 의
+ * 반환값을 **그대로** 돌려준다(계약 1). 켜진 런에서는 강탈 대상이 있을 때만 이동 성분을 그쪽
+ * 직진으로 교체하고, 조준·대시·액티브 비트는 측정 파일럿 정본을 그대로 쓴다 — 무엇을 쏘는가와
+ * 어디로 가는가는 별개 축이다.
+ *
+ * @param contactSteer 카드와 무관하게 접촉 조향을 켠다(`--contact-steer`). 미지정 = 종전 경로.
  */
-export function contactPilotInput(world: WorldState): InputFrame {
+export function contactPilotInput(world: WorldState, contactSteer?: boolean): InputFrame {
   const base = measurePilotInput(world);
 
   // ── 게이트(가장 바깥) ─────────────────────────────────────────────────────
   // 여기서 빠지는 경로는 아래 코드를 한 줄도 실행하지 않는다. 무촉매·타촉매 런의 프레임이
   // 종전과 비트 동일하다는 것의 전부가 이 return 이다.
-  if (!carriesPlunder(world)) return base;
+  if (contactSteer !== true && !carriesPlunder(world)) return base;
 
   // 프리즈 틱에는 이동 성분이 의미가 없고, 발동 비트를 실어서도 안 된다(측정 파일럿의 프리즈
   // 규율). `pilotSteer` 는 순수 함수라 다시 물어도 RNG 를 소비하지 않는다.
@@ -108,9 +122,16 @@ function carriesPlunder(world: WorldState): boolean {
  * 가장 가까운 **강탈 대상**. 없으면 undefined.
  *
  * 대상은 둘이다:
- *   - `kind === 'enemy'` 이고 `plunder` 표식이 선 것(= 배선 레인이 엘리트에 찍는다).
+ *   - `kind === 'enemy'` 이고 `plunder` 표식이 **서지 않은** 것(= 아직 안 뜯긴 적).
  *   - **보스**(`boss` · `defenseBoss`) — 표식이 아니라 **kind 로** 잡는다. 보스의 `aux0` 비트 0 은
  *     추격 모드 취약화 플래그라 `readMark` 로 읽으면 오독이다(`catalystMarks.ts` §대상).
+ *
+ * ## ⚠️ 술어의 방향 — 여기를 다시 뒤집지 마라 (2026-08-08 실측으로 고쳤다)
+ * `plunder` 비트는 **`1 = 강탈 완료`** 다(`catalystMarks.ts` 의 비트 표가 *"⚠️ 뜻이 반대다"* 라고
+ * 직접 못 박았고, 세우는 자리는 리포 전체에서 `catalyst/drops.ts` 의 `dropsOnEnemyContact`
+ * 하나뿐이다 — **접촉이 성립한 순간** 선다). 그래서 종전의 `!== 0` 은 *"이미 뜯은 적만 표적"* 이라
+ * **닭-달걀 잠금**이었다: 표식은 접촉으로만 서는데 접촉 조향은 표식이 선 적에게만 갔다.
+ * 실측(시드 32 · Lv10/40)에서 `CatalystContribution.fired` 가 p50 = 0 이었던 원인 본체가 이것이다.
  *
  * 동률은 id 오름차순으로 깬다 — 플랫폼 순회 순서에 의존하지 않는다.
  */
@@ -135,5 +156,6 @@ function nearestPlunderTarget(world: WorldState, player: Entity): Entity | undef
 function isPlunderTarget(e: Entity): boolean {
   if (e.kind === 'boss' || e.kind === 'defenseBoss') return true;
   if (e.kind !== 'enemy') return false;
-  return readMark(e, 'plunder') !== 0;
+  // `1 = 강탈 완료` 이므로 **아직 안 뜯긴** 적이 표적이다(위 §술어의 방향).
+  return readMark(e, 'plunder') === 0;
 }

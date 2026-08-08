@@ -23,7 +23,7 @@
  */
 
 import type { InputFrame, WorldState } from './world.js';
-import { SPECIAL_NONE, packPowerupPick } from './world.js';
+import { SPECIAL_NONE, SPECIAL_POWERUP_PICK, packPowerupPick } from './world.js';
 import type { Entity } from './entities.js';
 import { atan2, length } from './math.js';
 import { isObjectiveDestructible } from './modes/objective.js';
@@ -106,6 +106,58 @@ export interface PilotSteer {
  */
 export function pilotFreezeFrame(): InputFrame {
   return { moveX: 0, moveY: 0, aim: 0, dash: false, special: packPowerupPick(0) };
+}
+
+/**
+ * `special` 의 파워업 픽 인덱스가 쓸 수 있는 상한 — 비트 배치가 2비트(`packPowerupPick` 의
+ * `& 0x3`)라 구조적으로 0..3 이다. 이보다 큰 값을 주면 조용히 접혀 **엉뚱한 칸**이 눌린다.
+ */
+export const MAX_PICK_INDEX = 3;
+
+/**
+ * **벤치 전용 오퍼 픽 정책** — 레벨업 3택에서 *"언제나 칸 N 을 고른다"* 로 바꾼다.
+ *
+ * ## 왜 필요한가 — 계측기가 안 누르는 칸이 있었다 (2026-08-08 실측)
+ * {@link pilotFreezeFrame} 은 언제나 **오퍼 0번**을 고른다. 그래서 특정 칸에 붙는 카드
+ * (`id 18 mercantile` 의 빚 칸 = `MERCANTILE_DEBT_INDEX` 2)는 봇 런에서 **60런 전부 정확히
+ * 0** 으로 측정됐다. 그 0 은 카드가 죽었다는 뜻이 아니라 **계측기가 그 칸을 안 누른다**는
+ * 뜻이다(`bench/runCurve.ts` 헤더 「조용한 성공」과 같은 부류의 계측기 결함).
+ *
+ * ## 계약 넷 — 이 함수의 전부다
+ * 1. **게이트가 가장 바깥이다.** `pickIndex === undefined` 면 `frame` 을 **그대로** 돌려준다.
+ *    기본 벤치·골든 경로가 종전과 비트 동일하다는 근거가 이 return 이다
+ *    (`bench/contactPilot.ts` 의 `id 1` 게이트와 같은 모양).
+ * 2. **{@link pilotFreezeFrame} 의 시그니처를 건드리지 않는다.** 두 파일럿과 그 골든의 정본은
+ *    무인자 호출 그대로다 — 이 함수는 파일럿이 이미 만든 프레임 **바깥에서** 덧씌운다.
+ * 3. **RNG 를 한 칸도 소비하지 않는다.** 3택은 `drawPowerupChoices` 가 이미 굴린 **뒤**이고,
+ *    여기서는 그 결과 배열의 자리를 고를 뿐이다.
+ * 4. **오퍼 수로 클램프한다.** `world.ts` 의 픽 처리 블록은 범위 밖 인덱스를 만나면 픽을
+ *    **소비하지 않고 프리즈를 유지**한다 — 즉 3택이 접혀 2칸일 때 `--pick=2` 를 그대로 내면
+ *    런이 **영원히 멈춘다**. 그래서 `0 <= idx <= min(offers-1, MAX_PICK_INDEX)` 로 접는다.
+ *    오퍼가 0개면 고를 자리가 없으므로 `frame` 을 그대로 둔다(어차피 sim 이 소비하지 않는다).
+ *
+ * 프리즈 틱이 아니거나 프레임이 픽 비트를 싣고 있지 않으면 손대지 않는다 — 이 함수가 바꾸는
+ * 것은 **이미 픽인 프레임의 인덱스 하나**뿐이고, 발동 비트를 새로 싣지 않는다(프리즈 규율).
+ */
+export function applyPilotPickPolicy(
+  world: WorldState,
+  frame: InputFrame,
+  pickIndex: number | undefined,
+): InputFrame {
+  // ── 게이트(가장 바깥) ─────────────────────────────────────────────────────
+  if (pickIndex === undefined) return frame;
+  if (!world.pendingLevelUp) return frame;
+  if ((frame.special & SPECIAL_POWERUP_PICK) === 0) return frame;
+
+  const offers = world.powerupChoices.length;
+  if (offers <= 0) return frame;
+
+  const want = Math.floor(pickIndex);
+  const hi = Math.min(offers - 1, MAX_PICK_INDEX);
+  const idx = want < 0 ? 0 : want > hi ? hi : want;
+  const special = packPowerupPick(idx);
+  if (special === frame.special) return frame;
+  return { ...frame, special };
 }
 
 /**

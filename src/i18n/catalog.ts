@@ -446,7 +446,7 @@ export const EN = {
     'Past five loot on the ground, a red current rises off the pile and enemy afterimages lengthen.',
   'catalyst.plunder.name': 'Plunder',
   'catalyst.plunder.rule':
-    'Elites and bosses drop nothing on death, but ramming one loots it all at once — and you take contact damage.',
+    'Elites drop nothing on death, but ramming one loots it all at once — and you take contact damage.',
   'catalyst.plunder.signal':
     'Plunderable enemies pulse with a gold outline; on plunder their body bursts and loot spills out.',
   'catalyst.harvest.name': 'Harvest',
@@ -2917,7 +2917,7 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.abundance.signal': '바닥 전리품이 다섯을 넘으면 더미에서 붉은 기류가 피어오르고 적의 잔상이 길어진다.',
   'catalyst.plunder.name': '약탈',
   'catalyst.plunder.rule':
-    '엘리트와 보스는 죽어도 전리품을 안 뱉지만, 몸에 부딪히면 한 번에 전부 강탈한다 — 부딪히면 접촉 피해도 받는다.',
+    '엘리트는 죽어도 전리품을 안 뱉지만, 몸에 부딪히면 한 번에 전부 강탈한다 — 부딪히면 접촉 피해도 받는다.',
   'catalyst.plunder.signal': '강탈 가능한 적은 금색 외곽선이 맥동하고, 강탈 순간 몸통이 터지며 전리품이 쏟아진다.',
   'catalyst.harvest.name': '수확',
   'catalyst.harvest.rule':
