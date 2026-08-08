@@ -76,6 +76,7 @@ import {
   type ShipSkillDef,
 } from '../../../data/ships/index.js';
 import { axisInvested } from '../../items/skills.js';
+import { skillDetailOf } from '../skillDetail.js';
 import {
   activeSlotViews,
   equipActive,
@@ -219,7 +220,24 @@ const POP_ROW_PITCH = POP_ROW_H + POP_ROW_GAP;
  * 원칙대로 정확히 그 수만큼만 잡는다(팝업 헤더 "왜 창을 두지 않는가" 절의 같은 원칙).
  */
 const POP_VISIBLE_ROWS = SKILLS_PER_AXIS;
-const POP_W = 900;
+/**
+ * 팝업은 **2단**이다: 왼쪽 목록(요약) + 오른쪽 상세(수치) — 사용자 요청 2026-08-09.
+ *
+ * ## 왜 행에 상세를 넣지 않는가
+ * 축당 10행이 **스크롤 없이** 한 화면에 들어가는 것이 이 팝업의 계약이고, 단위 테스트가 그
+ * 세로를 못 박아 두었다. 행 하나에 수치 4~5줄을 넣으면 행 높이가 3배가 되어 그 계약이 즉시
+ * 깨지고, 스크롤이 살아나면 "무엇을 고를까"를 비교하려고 위아래로 오가야 한다 — 비교가
+ * 목적인 화면에서 최악의 형태다. 그래서 **행은 훑고 상세는 옆에서 읽는다.**
+ *
+ * ## 행 클릭의 의미가 바뀌었다
+ * 예전에는 행 클릭 = **즉시 1포인트 투자**였다. 상세를 볼 방법이 없으니 그것이 유일한 조작
+ * 이었지만, 이제는 상세를 읽고 나서 투자해야 하므로 **행 클릭 = 선택**이고 투자는 상세 패널의
+ * 버튼이 맡는다. 오투자(읽으려고 눌렀다가 포인트가 나가는)도 함께 사라진다.
+ */
+const POP_LIST_W = 860;
+const POP_DETAIL_W = 620;
+const POP_COL_GAP = 20;
+const POP_W = PANEL_EDGE_PAD * 2 + POP_LIST_W + POP_COL_GAP + POP_DETAIL_W;
 /** 팝업 세로는 **목록이 정한다**(빈 자리 금지 — 형제 화면 셋이 전부 잡아 고친 결함). */
 const POP_SUB_GAP = 32;
 const POP_LIST_TOP = TITLED_BOX_Y + POP_SUB_GAP;
@@ -236,7 +254,17 @@ const PBOX = {
 const POP_ICON = 48;
 /** 스크롤 막대 자리 — 행이 그 밑으로 들어가지 않도록 행 폭에서 미리 뺀다. */
 const POP_BAR_W = 14;
-const POP_ROW_W = PBOX.w - POP_BAR_W;
+const POP_ROW_W = POP_LIST_W - POP_BAR_W;
+/** 왼쪽 목록 단. `PBOX` 는 이제 **두 단을 합친** 콘텐츠 상자다. */
+const PLIST = { x: PBOX.x, w: POP_LIST_W, right: PBOX.x + POP_LIST_W } as const;
+/** 오른쪽 상세 단. */
+const PDETAIL = {
+  x: PBOX.x + POP_LIST_W + POP_COL_GAP,
+  w: POP_DETAIL_W,
+  right: PBOX.x + POP_LIST_W + POP_COL_GAP + POP_DETAIL_W,
+} as const;
+/** 상세 단의 문단 사이 여백. 절 제목 앞뒤로만 쓴다(자리 눈대중 금지). */
+const DET_GAP = 14;
 
 // --- 액티브 스킬 팝업(ADR-0041 · AC-16·17) ---
 /**
@@ -425,6 +453,23 @@ export const POPUP_LIST = {
   /** 마스크 하한(패널 로컬) = 콘텐츠 상자 바닥. */
   bottom: PBOX.bottom,
   rowW: POP_ROW_W,
+} as const;
+
+/**
+ * 팝업 **2단 배치**의 좌표 전제(사용자 요청 2026-08-09). 단위 테스트가 부등식으로 잠근다.
+ *
+ * 잠글 것이 둘이다: ① 두 단이 **겹치지 않는다**(겹치면 상세 글자가 목록 행 위에 얹힌다 —
+ * 이 리포가 격납고 헤더에서 이미 겪은 유형) ② 넓어진 팝업이 **화면 밖으로 안 나간다**
+ * (1920 디자인 스페이스). 둘 다 캔버스 없이 눈으로 못 잡는다.
+ */
+export const POPUP_COLUMNS = {
+  panelW: POP_W,
+  panelX: POP_X,
+  listX: PLIST.x,
+  listRight: PLIST.right,
+  detailX: PDETAIL.x,
+  detailRight: PDETAIL.right,
+  boxRight: PBOX.right,
 } as const;
 
 /** 액티브 격자의 셀 폭. 열 수 = **그 기체의 계열 수**다(3 을 상수로 박으면 삐져나온다). */
@@ -741,6 +786,11 @@ export class ResearchLabScreen {
   /** 열려 있는 전체 스킬 팝업의 **계열 인덱스**(null = 닫힘). */
   private popupTree: number | null = null;
   private popupScrollY = 0;
+  /**
+   * 상세 패널이 보여 주는 스킬의 **flat 인덱스**. 팝업을 열면 그 축의 첫 스킬로 선다 —
+   * `null` 로 열면 상세 단이 빈 채로 서서 "여기 뭐가 나오는 자리"인지 알 수 없다.
+   */
+  private popupSelected: number | null = null;
   /** 액티브 스킬 팝업이 열려 있는가(AC-16·17). 전체 스킬 팝업과 상호 배타다. */
   private activesOpen = false;
   /** 본 패널 투자 목록의 계열별 스크롤 위치(방어적으로 유지 — 지금은 축당 10노드라 실사용 없음). */
@@ -956,6 +1006,8 @@ export class ResearchLabScreen {
   private openPopup(tree: number): void {
     this.popupTree = tree;
     this.popupScrollY = 0;
+    // 그 축의 **첫 스킬**을 선택한 채로 연다(빈 상세 단 금지 — 위 필드 주석).
+    this.popupSelected = shipTreeRange(this.def(), tree).start;
     this.activesOpen = false;
     this.hint = '';
     this.tooltip.hide();
@@ -965,6 +1017,20 @@ export class ResearchLabScreen {
   private closePopup(): void {
     this.popupTree = null;
     this.popupScrollY = 0;
+    this.popupSelected = null;
+    this.refresh();
+  }
+
+  /**
+   * 목록 행 클릭 = **선택**(투자가 아니다 — `POP_LIST_W` 주석의 「행 클릭의 의미가 바뀌었다」).
+   *
+   * 이미 고른 행을 다시 눌러도 아무 일이 없다. 두 번째 클릭을 투자로 삼는 대안은 기각했다 —
+   * 그 규칙은 화면 어디에도 안 적히고, 읽으려고 두 번 누른 사용자의 포인트를 말없이 가져간다.
+   */
+  private selectPopupNode(index: number): void {
+    if (this.popupSelected === index) return;
+    this.popupSelected = index;
+    this.hint = '';
     this.refresh();
   }
 
@@ -1649,10 +1715,10 @@ export class ResearchLabScreen {
     const totalH = listStackHeight(perTree, 1, POP_ROW_H, POP_ROW_GAP);
 
     const clip = new Container();
-    clip.position.set(PBOX.x, POP_LIST_TOP);
+    clip.position.set(PLIST.x, POP_LIST_TOP);
     container.addChild(clip);
     const mask = new Graphics();
-    mask.rect(PBOX.x, POP_LIST_TOP, PBOX.w, viewH).fill({ color: 0xffffff });
+    mask.rect(PLIST.x, POP_LIST_TOP, PLIST.w, viewH).fill({ color: 0xffffff });
     container.addChild(mask);
     clip.mask = mask;
 
@@ -1671,11 +1737,14 @@ export class ResearchLabScreen {
       content.addChild(row);
     }
 
+    // 상세 단은 **클립 밖**이다 — 목록이 스크롤해도 같이 움직이면 안 된다.
+    this.renderPopupDetail(container, accent);
+
     if (totalH > viewH) {
       // 스크롤 위치 표시 막대(오른쪽 안쪽, `POP_BAR_W` 만큼 행에서 미리 비워 둔 자리).
       const maxScroll = totalH - viewH;
       const thumbH = Math.max(40, Math.round((viewH / totalH) * viewH));
-      const barX = PBOX.right - 6;
+      const barX = PLIST.right - 6;
       const track = new Graphics();
       track.roundRect(barX, POP_LIST_TOP, 4, viewH, 2).fill({ color: 0x000000, alpha: 0.35 });
       container.addChild(track);
@@ -1688,7 +1757,7 @@ export class ResearchLabScreen {
       // (`isMask`) 리스너가 영영 안 불린다(실측). hitArea 를 주면 행 사이 빈자리에서도 잡히고,
       // 행 위에서는 행 → 클립으로 버블링되어 함께 성립한다.
       clip.eventMode = 'static';
-      clip.hitArea = new Rectangle(0, 0, PBOX.w, viewH);
+      clip.hitArea = new Rectangle(0, 0, PLIST.w, viewH);
       clip.on('wheel', (e) => {
         // 스크롤량을 행 피치에 맞춰 스냅한다 — 멈춘 자리에서 위쪽에 반토막 행이 남지 않는다.
         const snapped = Math.round((this.popupScrollY + e.deltaY) / POP_ROW_PITCH) * POP_ROW_PITCH;
@@ -1701,18 +1770,142 @@ export class ResearchLabScreen {
   }
 
   /**
-   * 팝업 목록 행: 아이콘 + 이름 + 설명 + `현재/최대`. 행 클릭 = 1포인트 투자. ADR-0049 이후
-   * 선행 조건이 없으므로 `canInvest` 는 포인트 有 + 미달성 두 조건뿐이다.
+   * 팝업 오른쪽 **상세 단** — 이 스킬을 찍을지 판단할 재료 전부 (사용자 요청 2026-08-09).
+   *
+   * ## 수치는 여기서 만들지 않는다
+   * 전부 `skillDetailOf` → `src/sim/skills/*Scaling.ts` 의 순수 함수가 낸다. 화면이 자기 공식을
+   * 적으면 밸런스 한 줄에 조용히 갈린다(그 파일 머리에 기각 근거가 있다). 이 메서드는 **배치와
+   * 라벨만** 소유한다.
+   *
+   * ## 상세가 없는 기체는 조용히 내려앉는다
+   * 이번 레인은 스트라이커 30스킬만 채운 **형태 확정 파일럿**이다(사용자 판단 2026-08-09).
+   * 나머지 6기체는 `skillDetailOf` 가 `null` 을 내고, 그때는 종전 `node.desc` 한 줄 + 투자
+   * 버튼만 선다 — 빈 패널을 세우거나 "준비 중"을 적지 않는다.
+   */
+  private renderPopupDetail(container: Container, accent: number): void {
+    const index = this.popupSelected;
+    if (index === null) return;
+    const def = this.def();
+    const node = flattenShipNodes(def)[index];
+    if (node === undefined) return;
+
+    const cur = this.invest()[index] ?? 0;
+    const maxed = cur >= node.maxPoints;
+    const detail = skillDetailOf(def.slug, node.id);
+
+    const plate = rowPlate(PDETAIL.w, PBOX.bottom - PBOX.y);
+    plate.view.position.set(PDETAIL.x, PBOX.y);
+    plate.setSelected(true);
+    container.addChild(plate.view);
+
+    const padX = PDETAIL.x + 18;
+    const textW = PDETAIL.w - 36;
+    let y = PBOX.y + 16;
+
+    /** 한 줄(또는 접힌 여러 줄)을 쌓고 소비한 세로만큼 커서를 내린다. */
+    const put = (
+      text: string,
+      opts: { size?: number; fill?: number; weight?: '400' | '700' | '800'; gapAfter?: number },
+    ): void => {
+      const size = opts.size ?? 14;
+      const view = new Text({
+        resolution: 2,
+        text,
+        style: {
+          fontFamily: UI_FONT,
+          fontSize: size,
+          fontWeight: opts.weight ?? '400',
+          fill: opts.fill ?? SLAB_BODY_FILL,
+          wordWrap: true,
+          wordWrapWidth: textW,
+          lineHeight: size + 6,
+          dropShadow: TEXT_SHADOW,
+        },
+      });
+      view.position.set(padX, y);
+      container.addChild(view);
+      // ⚠️ `view.height` 를 읽으면 Pixi 캔버스 텍스트 계측이 돌아 **헤드리스에서 터진다**
+      // (정산 화면 레인 2026-08-09 이 같은 자리를 밟았다). 대신 줄 수를 문자 폭으로 **추정**
+      // 한다 — 과대 추정이면 여백이 조금 뜰 뿐이고, 과소 추정이라야 겹친다. 그래서 폭 계수를
+      // 넉넉히 잡는다(한글 1자 ≈ size, 라틴 ≈ size×0.6 → 보수적으로 size×0.92).
+      const perLine = Math.max(1, Math.floor(textW / (size * 0.92)));
+      const lines = Math.max(1, Math.ceil(text.length / perLine));
+      y += lines * (size + 6) + (opts.gapAfter ?? 0);
+    };
+
+    put(node.name, { size: 22, weight: '800', fill: maxed ? COLOR.gold : COLOR.cream });
+    put(t('lab.detail.level', { cur, max: node.maxPoints }), {
+      size: 15,
+      weight: '700',
+      fill: accent,
+      gapAfter: DET_GAP,
+    });
+
+    put(detail?.body ?? node.desc, { size: 14, fill: COLOR.cream, gapAfter: DET_GAP });
+
+    if (detail !== null) {
+      put(t('lab.detail.scale'), { size: 13, weight: '800', fill: accent });
+      put(detail.scale, { gapAfter: DET_GAP });
+
+      // 현재 레벨 실수치. **미투자(0)면 "1포인트를 넣으면"으로 바꿔 보여 준다** — 0 레벨의
+      // 수치를 적으면 대부분 0 이라 판단에 아무 도움이 안 된다(투자 판단이 이 화면의 목적이다).
+      const shown = cur > 0 ? cur : 1;
+      put(t(cur > 0 ? 'lab.detail.now' : 'lab.detail.ifOne', { lv: shown }), {
+        size: 13,
+        weight: '800',
+        fill: accent,
+      });
+      for (const line of detail.values(shown)) put(`· ${line}`, { fill: COLOR.cream });
+      y += DET_GAP;
+
+      // 만렙은 **현재 레벨과 다를 때만** 적는다. 만렙에서 같은 값을 두 번 적으면 지면만 먹는다.
+      if (shown !== node.maxPoints) {
+        put(t('lab.detail.atMax', { lv: node.maxPoints }), {
+          size: 13,
+          weight: '800',
+          fill: accent,
+        });
+        for (const line of detail.values(node.maxPoints)) put(`· ${line}`, { fill: COLOR.cream });
+        y += DET_GAP;
+      }
+
+      put(t('lab.detail.lv1'), { size: 13, weight: '800', fill: accent });
+      put(detail.lv1, { gapAfter: DET_GAP });
+      put(t('lab.detail.max'), { size: 13, weight: '800', fill: accent });
+      put(detail.max, { gapAfter: DET_GAP });
+    }
+
+    // 투자 버튼은 **상세 단 바닥 고정**이다. 본문 아래에 흘려 두면 스킬마다 위치가 달라져
+    // 연속 투자에서 매번 다른 자리를 눌러야 한다(그리고 위 `put` 의 줄 수는 추정이라 바닥
+    // 정렬이 오히려 정확하다).
+    const btn = this.chromeButton({
+      tone: maxed ? 'stone' : 'gold',
+      width: PDETAIL.w - 36,
+      height: 48,
+      fontSize: 18,
+      label: maxed
+        ? t('lab.detail.btn.maxed')
+        : t('lab.detail.btn.invest', { n: this.profile.skillPoints }),
+      onClick: () => this.investNode(index),
+    });
+    btn.container.position.set(padX, PBOX.bottom - 48 - 12);
+    container.addChild(btn.container);
+  }
+
+  /**
+   * 팝업 목록 행: 아이콘 + 이름 + 요약 + `현재/최대`. 행 클릭 = **선택**(상세 단이 그것을
+   * 펼친다) — 투자는 상세 단의 버튼이 맡는다. 근거는 `POP_LIST_W` 주석.
    */
   private makePopupRow(index: number, node: ShipSkillDef, accent: number): Container {
     const cur = this.invest()[index] ?? 0;
     const maxed = cur >= node.maxPoints;
-    const canInvest = !maxed && this.profile.skillPoints > 0;
 
     const row = new Container();
     const plate = rowPlate(POP_ROW_W, POP_ROW_H);
     row.addChild(plate.view);
-    plate.setSelected(cur > 0);
+    // 선택 강조가 **투자 여부보다 우선**이다 — 지금 상세 단이 무엇을 보여 주는지가 먼저 읽혀야
+    // 한다. 투자 여부는 우측 `현재/최대` 숫자 색이 이미 말한다.
+    plate.setSelected(this.popupSelected === index || cur > 0);
 
     const iconBoxY = Math.round((POP_ROW_H - POP_ICON) / 2);
     row.addChild(makeSkillIcon(skillNodeTexture(this.ui, node), 12, iconBoxY, POP_ICON, accent, maxed));
@@ -1770,13 +1963,15 @@ export class ResearchLabScreen {
     detail.position.set(textX, 36);
     row.addChild(detail);
 
-    // 투자 여력이 없으면 흐리게 — 클릭은 살려 안내 힌트를 띄운다(DOM 판과 같은 규칙).
-    if (!canInvest) row.alpha = maxed ? 0.85 : 0.62;
+    // 만렙만 흐리게 둔다. **포인트가 없다고 흐리게 하지 않는다** — 행 클릭이 이제 선택이라,
+    // 포인트가 0 이어도 읽는 것은 언제나 가능해야 한다(오히려 그때가 "다음에 뭘 찍을까"를
+    // 고르는 순간이다). 투자 가능 여부는 상세 패널의 버튼이 말한다.
+    if (maxed) row.alpha = 0.85;
 
     // 클릭 판정은 행 Container 에(바탕 Graphics 에만 걸면 텍스트·아이콘이 삼킨다).
     row.eventMode = 'static';
-    row.cursor = canInvest ? 'pointer' : 'default';
-    row.on('pointertap', () => this.investNode(index));
+    row.cursor = 'pointer';
+    row.on('pointertap', () => this.selectPopupNode(index));
     return row;
   }
 
