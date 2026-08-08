@@ -1,19 +1,24 @@
 /**
  * 레벨업 오버레이 보조 로직 테스트 (src/ui/buildStatus.ts).
  *
- * 두 축을 검증한다:
+ * 세 축을 검증한다:
  *  1) levelUpOverlayAction — 오버레이 표시/숨김이 sim의 pendingLevelUp의 순수 함수라,
  *     "픽 후 오버레이가 남고 뒤에서 게임이 진행"되던 레이스가 재발하지 않음(회귀 가드).
  *  2) readBuildStatus / choiceRelevance — 현재 빌드 표시 스냅샷과 카드 관련성 배지.
+ *  3) mercantileDebtOffer — `id 18 mercantile` 의 빚 칸이 sim 과 **같은 칸**을 가리키는가.
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   levelUpOverlayAction,
   readBuildStatus,
   choiceRelevance,
   weaponTypeName,
+  mercantileDebtOffer,
 } from '../src/ui/buildStatus.js';
+import { mercantileDebtOf } from '../src/sim/catalyst/resource.js';
 import { createWorld, stepWorld, emptyInput, packPowerupPick, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
 
@@ -157,5 +162,78 @@ describe('통합: 레벨업 → 픽 소비 사이클이 오버레이를 고아�
 
     // 렌더 루프: 표시 중이나 pendingLevelUp=false → hide.
     expect(levelUpOverlayAction(state.pendingLevelUp, state.level, true, shown)).toBe('hide');
+  });
+});
+
+// ===========================================================================
+// mercantileDebtOffer — `id 18 mercantile` 의 빚 칸 표시 (ADR-0052 §신호)
+// ===========================================================================
+//
+// 이 축이 지키는 것은 하나다: **화면이 붉게 칠하는 칸 == sim 이 부채를 매기는 칸.**
+// 둘이 갈리면 플레이어는 대가가 없는 칸을 피하고 대가가 있는 칸을 모르고 고른다.
+/** `id 18 mercantile` 를 실은 채 레벨업 프리즈까지 진행한 월드(3칸 3택 보장). */
+function mercantileWorldAtLevelUp(): WorldState {
+  const state = createWorld(0x1234, {
+    ...DEFAULT_CONFIG,
+    playerHp: 100_000_000,
+    catalysts: [18],
+  });
+  for (let t = 0; t < 4000 && !state.pendingLevelUp; t++) stepWorld(state, emptyInput());
+  return state;
+}
+
+describe('mercantileDebtOffer — 빚 카드가 서는 칸', () => {
+  it('id 18 미소지 런은 -1 (종전과 같은 평범한 3택)', () => {
+    expect(mercantileDebtOffer([], 3)).toBe(-1);
+    expect(mercantileDebtOffer([5, 17, 19], 3)).toBe(-1);
+    expect(mercantileDebtOffer(undefined, 3)).toBe(-1);
+  });
+
+  it('id 18 소지 + 3칸 → 마지막 칸(index 2)', () => {
+    expect(mercantileDebtOffer([18], 3)).toBe(2);
+    expect(mercantileDebtOffer([1, 18, 30], 3)).toBe(2);
+  });
+
+  it('도박사 칩 4칸에서도 칸은 2 다 — 길이에서 파생하지 않는다', () => {
+    // 길이-1 로 파생하면 4칸 레벨업에서 화면은 3번 칸을 칠하는데 sim 은 2번 칸에
+    // 부채를 매긴다. 상수 고정이 이 갈림을 원천 차단한다.
+    expect(mercantileDebtOffer([18], 4)).toBe(2);
+  });
+
+  it('접힌 3택(2칸 이하)은 -1 — 축소 작동', () => {
+    // `id 9 epiphany`(1칸)·`id 14 mastery` 가 칸을 접으면 sim 의 offeredIndex 가 2 에
+    // 닿을 수 없다. 표시도 같이 사라져야 "있는데 못 고르는 칸"이 안 생긴다.
+    expect(mercantileDebtOffer([18], 2)).toBe(-1);
+    expect(mercantileDebtOffer([18], 1)).toBe(-1);
+    expect(mercantileDebtOffer([18], 0)).toBe(-1);
+  });
+});
+
+describe('빚 칸 상수가 sim 과 한 정의다', () => {
+  it('`resource.ts` 의 MERCANTILE_DEBT_INDEX 가 2 이고 export 돼 있다', () => {
+    // 표시 쪽이 이 값을 **import** 로 읽는다는 것 자체가 계약이다. 누군가 `export` 를
+    // 떼고 UI 에서 2 를 되적으면 술어가 두 곳으로 갈린다 — 그 순간을 여기서 잡는다.
+    const src = readFileSync(
+      fileURLToPath(new URL('../src/sim/catalyst/resource.ts', import.meta.url)),
+      'utf8',
+    );
+    expect(/export const MERCANTILE_DEBT_INDEX = 2;/.test(src)).toBe(true);
+    expect(/export const MERCANTILE_DEBT_PER_PICK = 40;/.test(src)).toBe(true);
+  });
+
+  it('오퍼 인덱스 2 를 실제로 뽑았을 때만 sim 이 부채를 적립한다', () => {
+    // 표시(-1/2)와 거동을 **같은 테스트에서** 맞물려 본다. 표시만 검사하면
+    // "칸은 칠해지는데 부채는 다른 칸에서 는다"를 영영 못 잡는다.
+    const state = mercantileWorldAtLevelUp();
+    expect(mercantileDebtOffer(state.config.catalysts, state.powerupChoices.length)).toBe(2);
+    expect(mercantileDebtOf(state)).toBe(0);
+    stepWorld(state, { ...emptyInput(), special: packPowerupPick(2) });
+    expect(mercantileDebtOf(state)).toBe(40);
+  });
+
+  it('빚 칸이 아닌 칸을 뽑으면 부채가 늘지 않는다', () => {
+    const state = mercantileWorldAtLevelUp();
+    stepWorld(state, { ...emptyInput(), special: packPowerupPick(0) });
+    expect(mercantileDebtOf(state)).toBe(0);
   });
 });

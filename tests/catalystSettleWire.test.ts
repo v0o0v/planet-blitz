@@ -107,9 +107,13 @@ describe('① 발동 수가 실제로 배율에 도달한다', () => {
   // 합성식 = 1 + Σ(cap−1)×progress×0.5. 네 카드 전부 cap 1.5 라 포화 1장 = 1 + 0.5×0.5 = 1.25.
   const SATURATED: readonly (readonly [number, CatalystContributionLike])[] = [
     [21, led(21, 12)], // 정착 결정 12 = SHARD_LIVE_CAP
-    [33, led(33, 20)], // 점프 즉사 20
+    // ⚠️ 33·45 는 **실측으로 채운 포화점**이다(2026-08-08, 60런 분포의 p90 근방). 종전
+    // placeholder 20·15 는 실측 최솟값(37)·p17 보다 작아 **모든 런이 즉시 포화**했다 —
+    // 조건축이 존재하지 않는 상태였고 그것이 곧 헌장이 금지한 무조건 배율이다.
+    // 값 정본은 `src/data/catalystDrops.ts` 의 `saturation` 이고 여기는 그것을 되적는다.
+    [33, led(33, 90)], // 점프 즉사 90
     [38, led(38, 1)], // 기함 격추 1(런당 한 척 — 이진 사건)
-    [45, led(45, 15)], // 엄폐 뒤 부순 블록 15
+    [45, led(45, 55)], // 엄폐 뒤 부순 블록 55
   ];
 
   it.each(SATURATED)('id %i — 포화하면 개별 상한(×1.5)의 합성분에 닿는다', (_id, row) => {
@@ -118,7 +122,7 @@ describe('① 발동 수가 실제로 배율에 도달한다', () => {
 
   it('절반만 채우면 배율도 절반이다 (선형 진행)', () => {
     expect(catalystDropMultFromContributions([led(21, 6)])).toBeCloseTo(1.125, 10);
-    expect(catalystDropMultFromContributions([led(33, 10)])).toBeCloseTo(1.125, 10);
+    expect(catalystDropMultFromContributions([led(33, 45)])).toBeCloseTo(1.125, 10);
   });
 
   it('포화 이상은 더 안 오른다 (개별 상한 초과 금지)', () => {

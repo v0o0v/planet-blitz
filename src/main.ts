@@ -51,7 +51,8 @@ import { bossHudName } from './ui/bossLabels.js';
 import { bossProgress } from './sim/bossProgress.js';
 import { PowerupOverlay } from './ui/powerupOverlay.js';
 import { EncounterOverlay, encounterPromptView } from './ui/encounterOverlay.js';
-import { levelUpOverlayAction, readBuildStatus } from './ui/buildStatus.js';
+import { levelUpOverlayAction, readBuildStatus, mercantileDebtOffer } from './ui/buildStatus.js';
+import { mercantileDebtOf, MERCANTILE_DEBT_PER_PICK } from './sim/catalyst/resource.js';
 import { shouldEnterSettlement } from './ui/runFlow.js';
 import type { LaunchSelection } from './ui/planetSelect.js';
 import { HangarScreen } from './ui/pixi/hangar.js';
@@ -2771,9 +2772,24 @@ async function main(): Promise<void> {
         // `levelUp`(레벨 수치 상승)과 다른 사건이다: 프리즈가 걸려 화면이 멈추고 선택을 요구하는
         // 순간이 카드 등장이고, 그 둘은 같은 프레임이 아닐 수 있다(픽 소비 전 재표시 경로).
         audio.play('card');
-        powerupOverlay.show([...w.powerupChoices], readBuildStatus(w), (offerIndex) => {
-          controller.queuePowerupPick(offerIndex);
-        });
+        // `id 18 mercantile` — *"3택 한 칸이 붉은 차용증으로 바뀐다"*(ADR-0052 §신호).
+        // 칸 번호는 sim 이 부채를 매길 때 쓰는 **같은 상수**에서 온다(`mercantileDebtOffer`).
+        // 미소지 런·접힌 3택은 `-1` 이라 `debt` 를 아예 안 넘긴다(종전 호출과 동일).
+        const debtIndex = mercantileDebtOffer(w.config.catalysts, w.powerupChoices.length);
+        powerupOverlay.show(
+          [...w.powerupChoices],
+          readBuildStatus(w),
+          (offerIndex) => {
+            controller.queuePowerupPick(offerIndex);
+          },
+          debtIndex >= 0
+            ? {
+                offerIndex: debtIndex,
+                perPick: MERCANTILE_DEBT_PER_PICK,
+                total: mercantileDebtOf(w),
+              }
+            : undefined,
+        );
       } else if (action === 'hide') {
         shownLevel = 0;
         powerupOverlay.hide();
@@ -2950,6 +2966,9 @@ async function main(): Promise<void> {
         // 액티브 쿨다운 2칸(AC-18) — `bossEta` 와 같은 읽기 전용 월드 파생이라 스냅샷 경유가
         // 불필요하다. 미장착 런은 빈 배열이 나가고 HUD 가 칸을 감춘다.
         actives: hudActives(w),
+        // 누적 부채(id 18 mercantile — 설계 명세 §신호 2). `bossEta`·`actives` 와 같은 읽기 전용
+        // 월드 파생이라 스냅샷 경유가 불필요하다. 미소지 런은 슬롯이 0 이라 HUD 가 줄을 감춘다.
+        debt: mercantileDebtOf(w),
       });
 
       const seg = w.wave.segmentIndex + 1;

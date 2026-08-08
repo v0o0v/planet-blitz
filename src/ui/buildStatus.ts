@@ -1,18 +1,22 @@
 /**
  * 레벨업 오버레이 보조 로직 (순수 함수 — DOM·sim 비의존, 단위 테스트 가능).
  *
- * 두 가지를 담당한다:
+ * 세 가지를 담당한다:
  *  1) `readBuildStatus` — 현재 무기/스탯을 레벨업 카드 옆에 보여줄 표시용 스냅샷으로
  *     추출(렌더 전용, sim 상태 미변경). "적절한 선택"을 돕는 기능 요구.
  *  2) `levelUpOverlayAction` — 오버레이 표시/숨김을 sim 상태(`pendingLevelUp`)의
  *     순수 함수로 결정. 클릭 시 낙관적으로 숨기던 기존 구조가 `pendingLevelUp`이
  *     아직 참인 프레임에 렌더 루프의 재표시와 경쟁해 "오버레이가 남고 뒤에서 게임이
  *     진행"되던 레이스를 제거한다.
+ *  3) `mercantileDebtOffer` — `id 18 mercantile` 의 **빚 칸**이 이번 3택 어디에 서는지.
+ *     sim 이 쓰는 상수를 그대로 읽어, 화면이 칠하는 칸과 부채가 매겨지는 칸을 한 정의로 묶는다.
  */
 
 import type { WorldState } from '../sim/world.js';
 import { FIRE_CD_Q } from '../sim/constants.js';
 import { POWERUPS } from '../sim/powerups.js';
+import { CARD_MERCANTILE, MERCANTILE_DEBT_INDEX } from '../sim/catalyst/resource.js';
+import { hasCatalyst } from '../data/catalysts.js';
 import type { SkillTree } from '../../data/ships/types.js';
 import { AFFINITY_LEGACY_TREE } from '../../data/ships/index.js';
 
@@ -76,6 +80,29 @@ export function readBuildStatus(state: WorldState): BuildStatus {
     dashCooldownTicks: state.config.dashCooldownTicks,
     magnetRadius: state.magnetRadius,
   };
+}
+
+/**
+ * `id 18 mercantile` — 이번 3택에서 **빚 카드가 서는 칸**의 오퍼 인덱스. 없으면 `-1`.
+ *
+ * ⚠️ **판정을 여기서 새로 만들지 않는다.** 칸 번호도 소지 여부도 sim 이 `onPowerupPicked` 에서
+ * 쓰는 것과 **같은 상수·같은 술어**를 읽는다({@link MERCANTILE_DEBT_INDEX} ·
+ * {@link hasCatalyst}). 화면이 붉게 칠한 칸과 sim 이 부채를 매기는 칸은 정의상 같은 칸이어야
+ * 하고, 술어를 두 곳에 적으면 그 둘이 조용히 갈린다(이 리포가 이미 한 번 밟은 결함이다).
+ *
+ * **접힌 3택은 저절로 축소 작동한다** — `id 9 epiphany`·`id 14 mastery` 가 칸을 접어
+ * `choiceCount <= MERCANTILE_DEBT_INDEX` 가 되면 sim 쪽 `offeredIndex` 가 그 칸에 닿을 수
+ * 없고, 여기서도 `-1` 이라 빚 카드가 그려지지 않는다.
+ *
+ * @param catalystIds 이 런에 **실제로 스탬프된** 촉매 배열(`state.config.catalysts`).
+ * @param choiceCount 이번에 제시된 칸 수(`state.powerupChoices.length`).
+ */
+export function mercantileDebtOffer(
+  catalystIds: readonly number[] | undefined,
+  choiceCount: number,
+): number {
+  if (catalystIds === undefined || !hasCatalyst(catalystIds, CARD_MERCANTILE)) return -1;
+  return choiceCount > MERCANTILE_DEBT_INDEX ? MERCANTILE_DEBT_INDEX : -1;
 }
 
 /** 카드 한 장의 빌드 관련성(배지 표시 + 현재 무기 강조). */

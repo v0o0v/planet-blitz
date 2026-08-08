@@ -19,12 +19,37 @@
  * xpTotal·lootCount 의 catalyst/base 배수를 낸다. `--json`/`--md` 는 아직 이 모드에 없다.
  *   SEEDS=5 node .../vite-node.mjs bench/runCurve.ts -- --levels=10,40 --catalysts=17,22,29
  *
- * ⚠️ **지금은 배수가 전부 1.00(±xp/loot 는 그대로) 이 정상이다** — `src/sim/catalystHooks.ts`
- * 전 분기가 아직 스텁이라 촉매가 sim 산술에 실제로 개입하지 않는다(ADR-0052 배선 레인이 나중에
- * 채운다). 대신 이 모드는 **계측기가 촉매 id 를 실제로 싣고 있다는 것**을 `hashDiverge` 열로
- * 증명한다 — `config.catalysts` 는 `createWorld` 직후 정규화되어 해시 꼬리에 즉시 접히므로
- * (`src/sim/replay.ts` :530-538), 시뮬레이션을 한 틱도 안 돌려도 촉매 유무 두 런의 tick0 해시가
- * 갈린다. `hashDiverge=NO(bug!)` 가 뜨면 그건 계측기 결함이지 sim 배선 문제가 아니다.
+ * ⛔ **"배수가 전부 1.00 이 정상" 은 낡은 문장이었다(2026-08-08 삭제).** 그 문장은 아래에
+ * *"배선 레인이 나중에 채운다"* 를 달고 있었고 **그 레인이 끝났다**(PR#380). 이제 1.00 은
+ * 정상이 아니라 **결함 신호**다 — 주입이 실제로 먹었는지부터 의심해라. `hashDiverge` 열은
+ * 여전히 유효하다: `config.catalysts` 는 `createWorld` 직후 정규화되어 해시 꼬리에 즉시
+ * 접히므로(`src/sim/replay.ts` :530-538) 한 틱도 안 돌려도 두 런의 tick0 해시가 갈린다.
+ * 단 그것이 증명하는 것은 **주입뿐**이고 sim 이 그 값을 실제로 쓰는지는 아니다.
+ *
+ * ## ⚠️ `--durable[=hp]` — 이것 없이는 `clearSecX` 가 영영 `-` 다 (2026-08-08 실측)
+ * 기본 HP 로는 `contactPilotInput` 이 **base·cat 양쪽 다 클리어율 0%** 다(Lv10·Lv40, 실측).
+ * `clearSecRatio` 는 승리한 런만 평균하므로 분모가 0 이면 `null` → 표에 `-` 가 찍히고
+ * **헌장 `파워:` 칸(무촉매 대비 클리어 시간 배수)을 잴 수단 자체가 없다.** ADR-0051 이
+ * 봇 완주 e2e 를 게이트에서 내린 것과 **같은 원인**이고, 같은 처방(내구 파일럿)을 여기에도 쓴다.
+ *   SEEDS=5 node .../vite-node.mjs bench/runCurve.ts -- --levels=10,40 --catalysts=1,4,7 --durable
+ * 기본값은 `1e8`. **미지정이면 종전 경로와 비트 동일**이다(플래그가 가장 바깥 게이트다).
+ * ⚠️ 내구화는 공짜가 아니다 — **생존을 관측에서 뺀다.** 방어·회피축 카드는 이 모드에서
+ * 구조적으로 이득 0 으로 측정된다. 여기서 나오는 것은 *"안 죽는다고 칠 때의 파워"* 이고,
+ * 그것이 헌장 `파워:` 칸이 묻는 것(클리어 시간)에는 맞지만 카드 전체 가치는 아니다.
+ *
+ * ## ⚠️ 시드 30 미만으로 이 축을 재지 마라 (2026-08-08 실측)
+ * Lv10 stage2 · 내구 파일럿에서 base 클리어율이 **40.6%(13/32)** 다. 시드 5 로 재면 5판 중
+ * 2승이라 `clearSecRatio` 가 **한두 런에 좌우된다** — 실제로 같은 조합이 시드 5 에서 0.56,
+ * 시드 32 에서 0.79 로 나왔다(정밀 강공명). 시드 5 표만 보고 "헌장 선 위반"으로 판정할
+ * 뻔했다. **표본이 작으면 이 표는 정답이 아니라 잡음을 낸다.**
+ *
+ * ## ⚠️ 3택 픽에 의존하는 카드는 이 계측기로 못 잰다
+ * 두 파일럿이 공유하는 `pilotFreezeFrame()`(`src/sim/autopilot.ts`)이 레벨업마다 **언제나
+ * 오퍼 0번**을 고른다. 그래서 특정 칸에 붙는 카드(`id 18 mercantile` 의 빚 칸 =
+ * `MERCANTILE_DEBT_INDEX` 2)는 봇 런에서 **항상 정확히 0** 으로 측정된다 — 60런 실측으로
+ * 확인했다. 그 0 은 카드가 죽었다는 뜻이 아니라 **계측기가 그 칸을 안 누른다**는 뜻이다.
+ * 재려면 파일럿에 픽 정책을 넣어야 하고, 그것은 `pilotFreezeFrame` 이 정본이라 **두 파일럿
+ * 전부와 그 골든**을 함께 건드리는 일이다.
  *
  * ⚠️ **조향은 `measurePilotInput` 을 쓴다**(얼어붙은 `autopilotInput` 이 아니다) — 대시 발동
  * 촉매(id 27·29 등)를 재려면 봇이 실제로 대시를 눌러야 하는데 `autopilotInput` 은 전 분기
@@ -152,6 +177,25 @@ function resolveCatalysts(): readonly number[] | undefined {
   return known;
 }
 
+/** 내구 파일럿 기본 HP — 테스트 관용구(`tests/catalyst.test.ts` `DURABLE`)와 같은 값. */
+const DURABLE_HP_DEFAULT = 100_000_000;
+
+/**
+ * `--durable` 또는 `--durable=<hp>`. 미지정이면 `undefined` = **종전 경로 비트 동일**.
+ * 파일 헤더 §`--durable` 이 왜 필요한지(클리어율 0% → `clearSecX` 가 영영 `-`)를 소유한다.
+ */
+function resolveDurableHp(): number | undefined {
+  if (ARGV.includes('--durable')) return DURABLE_HP_DEFAULT;
+  const raw = argOf('durable');
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.error(`[runCurve] WARNING --durable=${raw} is not a positive number -- ignored.`);
+    return undefined;
+  }
+  return n;
+}
+
 // ---------------------------------------------------------------------------
 // 촉매 짝지은 배수 스윕 (ADR-0052 레인 F2)
 // ---------------------------------------------------------------------------
@@ -168,17 +212,27 @@ function resolveCatalysts(): readonly number[] | undefined {
  * 즉시 해시 꼬리에 접히므로(정규화 후, `replay.ts`), 시뮬레이션을 한 틱도 돌리지 않아도 이미
  * 갈린다. 이것이 "계측기가 촉매를 실제로 싣고 있다"의 물증이다(sim 배선 여부와 무관).
  */
+interface PairedRunOutcome {
+  victory: boolean;
+  ticks: number;
+  xpTotal: number;
+  lootCount: number;
+  kills: number;
+  sawBoss: boolean;
+}
+
 function runPaired(
   ship: number,
   planet: number,
   level: number,
   seed: number,
   catalysts: readonly number[],
+  durableHp: number | undefined,
 ): {
   readonly hashBaseTick0: number;
   readonly hashCatTick0: number;
-  readonly base: { victory: boolean; ticks: number; xpTotal: number; lootCount: number; sawBoss: boolean };
-  readonly cat: { victory: boolean; ticks: number; xpTotal: number; lootCount: number; sawBoss: boolean };
+  readonly base: PairedRunOutcome;
+  readonly cat: PairedRunOutcome;
 } {
   const stageNo = standardStage(level);
   const perTree = standardPerTree(level);
@@ -191,6 +245,9 @@ function runPaired(
     s.level = level;
     s.equipped = standardEquipped(level, seed, planet);
     const config = buildRunConfig(p, { planet, stage: stageNo, catalysts: [...cats] });
+    // 내구 파일럿 — base·cat **양쪽 같은 값**이라 비교는 여전히 촉매 유무만의 차이다.
+    // 미지정이면 이 줄이 아예 안 돈다(종전 경로 비트 동일).
+    if (durableHp !== undefined) config.playerHp = durableHp;
     const state = createWorld(seed, config);
     beginMeasureRun(state);
     const hashTick0 = hashWorld(state);
@@ -207,17 +264,27 @@ function runPaired(
       ticks: state.tick,
       xpTotal: state.xpTotal,
       lootCount: state.loot.length,
+      kills: state.kills,
       sawBoss,
     };
   }
+
+  const strip = (r: ReturnType<typeof runOne>): PairedRunOutcome => ({
+    victory: r.victory,
+    ticks: r.ticks,
+    xpTotal: r.xpTotal,
+    lootCount: r.lootCount,
+    kills: r.kills,
+    sawBoss: r.sawBoss,
+  });
 
   const base = runOne([]);
   const cat = runOne(catalysts);
   return {
     hashBaseTick0: base.hashTick0,
     hashCatTick0: cat.hashTick0,
-    base: { victory: base.victory, ticks: base.ticks, xpTotal: base.xpTotal, lootCount: base.lootCount, sawBoss: base.sawBoss },
-    cat: { victory: cat.victory, ticks: cat.ticks, xpTotal: cat.xpTotal, lootCount: cat.lootCount, sawBoss: cat.sawBoss },
+    base: strip(base),
+    cat: strip(cat),
   };
 }
 
@@ -231,6 +298,10 @@ interface RatioPoint {
   readonly bossReachRatio: number | null;
   readonly xpTotalRatio: number | null;
   readonly lootCountRatio: number | null;
+  /** 처치 수 배수 — 클리어율이 0 이라 `clearSecRatio` 가 `null` 일 때 남는 유일한 파워 대리 지표. */
+  readonly killsRatio: number | null;
+  /** 런 길이(틱) 배수. 내구 모드에서는 "얼마나 빨리 끝냈나" 로 읽고, 아니면 생존 시간이다. */
+  readonly ticksRatio: number | null;
   readonly hashesDiverge: boolean;
 }
 
@@ -246,6 +317,7 @@ function runPairedCurveSweep(opts: {
   readonly seeds: readonly number[];
   readonly levels: readonly number[];
   readonly catalysts: readonly number[];
+  readonly durableHp: number | undefined;
   readonly onPoint?: (p: RatioPoint) => void;
 }): RatioPoint[] {
   const out: RatioPoint[] = [];
@@ -261,10 +333,18 @@ function runPairedCurveSweep(opts: {
     let catXpSum = 0;
     let baseLootSum = 0;
     let catLootSum = 0;
+    let baseKillSum = 0;
+    let catKillSum = 0;
+    let baseTickSum = 0;
+    let catTickSum = 0;
     let hashesDiverge = true;
 
     for (const seed of opts.seeds) {
-      const r = runPaired(opts.ship, opts.planet, level, seed, opts.catalysts);
+      const r = runPaired(opts.ship, opts.planet, level, seed, opts.catalysts, opts.durableHp);
+      baseKillSum += r.base.kills;
+      catKillSum += r.cat.kills;
+      baseTickSum += r.base.ticks;
+      catTickSum += r.cat.ticks;
       if (r.hashBaseTick0 === r.hashCatTick0) hashesDiverge = false;
       if (r.base.victory) {
         baseWins++;
@@ -289,13 +369,19 @@ function runPairedCurveSweep(opts: {
       runs: n,
       clearRateBase: n > 0 ? baseWins / n : 0,
       clearRateCat: n > 0 ? catWins / n : 0,
-      clearSecRatio: ratioOf(
-        catWins > 0 ? catClearSecSum / catWins : 0,
-        baseWins > 0 ? baseClearSecSum / baseWins : 0,
-      ),
+      // ⚠️ **양쪽 다 이겨야 배수가 성립한다.** 종전에는 `catWins === 0` 일 때 분자를 0 으로
+      // 접어 `ratioOf` 가 **`0.00` 을 돌려줬다** — 표에서 그것은 "즉시 클리어"로 읽히는데
+      // 실제 뜻은 "촉매 런이 한 번도 못 이겼다"(= 측정 불가)로 정반대다. 2026-08-08 실측에서
+      // 약공명 셋이 그 자리에 `0.00` 을 찍었다. 측정 불가는 `null`(`-`)로 낸다.
+      clearSecRatio:
+        catWins > 0 && baseWins > 0
+          ? ratioOf(catClearSecSum / catWins, baseClearSecSum / baseWins)
+          : null,
       bossReachRatio: ratioOf(catBossReach, baseBossReach),
       xpTotalRatio: ratioOf(catXpSum, baseXpSum),
       lootCountRatio: ratioOf(catLootSum, baseLootSum),
+      killsRatio: ratioOf(catKillSum, baseKillSum),
+      ticksRatio: ratioOf(catTickSum, baseTickSum),
       hashesDiverge,
     };
     out.push(point);
@@ -313,7 +399,7 @@ function asciiRatioTable(points: readonly RatioPoint[], catalysts: readonly numb
     `--- catalyst power sweep (ratio vs 무촉매 기준선, ADR-0052 파워: 칸 정의) -- catalysts=[${catalysts.join(',')}] ---`,
   );
   console.log(
-    'lv  | stg | clear%(base->cat)     | clearSecX | bossReachX | xpTotalX | lootCountX | hashDiverge',
+    'lv  | stg | clear%(base->cat)     | clearSecX | bossReachX | xpTotalX | lootCountX | killsX | ticksX | hashDiverge',
   );
   for (const p of points) {
     console.log(
@@ -321,17 +407,26 @@ function asciiRatioTable(points: readonly RatioPoint[], catalysts: readonly numb
         `${`${(p.clearRateBase * 100).toFixed(1)}->${(p.clearRateCat * 100).toFixed(1)}`.padStart(21)} | ` +
         `${r2(p.clearSecRatio).padStart(9)} | ${r2(p.bossReachRatio).padStart(10)} | ` +
         `${r2(p.xpTotalRatio).padStart(8)} | ${r2(p.lootCountRatio).padStart(10)} | ` +
+        `${r2(p.killsRatio).padStart(6)} | ${r2(p.ticksRatio).padStart(6)} | ` +
         `${p.hashesDiverge ? 'yes' : 'NO(bug!)'}`,
     );
   }
   console.log('');
   console.log(
-    'NOTE ratio == 1.00 across the board is EXPECTED right now -- catalystHooks.ts branches are',
+    'NOTE ratio == 1.00 across the board is NO LONGER expected (the ADR-0052 wiring lane landed,',
   );
   console.log(
-    '     all still stubs (ADR-0052 wiring lane lands later). hashDiverge=yes proves the harness',
+    '     PR#380). A flat 1.00 now means the injection did not take -- suspect the harness first.',
   );
-  console.log('     is actually loading the catalyst ids into the run config either way.');
+  console.log(
+    '     hashDiverge=yes only proves the ids reached the run config, NOT that sim consumed them.',
+  );
+  console.log(
+    'NOTE clearSecX == "-" means NOBODY cleared (base or cat). Re-run with --durable to make the',
+  );
+  console.log(
+    '     charter power axis measurable at all; killsX/ticksX are the proxies when it is "-".',
+  );
   console.log(
     'AUTOPILOT NOTE this sweep uses contactPilotInput (measurePilotInput + contact steering when',
   );
@@ -406,6 +501,7 @@ function main(): void {
   const wantJson = ARGV.includes('--json');
   const wantMd = ARGV.includes('--md');
   const catalysts = resolveCatalysts();
+  const durableHp = resolveDurableHp();
 
   if (levels.length === 0) failEmpty('--levels resolved to an empty list.');
   if (seeds.length === 0) failEmpty('SEEDS resolved to an empty list.');
@@ -416,6 +512,7 @@ function main(): void {
     console.error(
       `[runCurve] CATALYST SWEEP catalysts=[${catalysts.join(',')}] ship=${ship} planet=${planet} ` +
         `seeds=${seeds.length}/${ROSTER_SEEDS.length} levels=${levels.join(',')} maxTicks=${MAX_TICKS} ` +
+        `durableHp=${durableHp ?? 'off'} ` +
         '(paired base vs catalyst runs; contactPilotInput, not frozen autopilot)',
     );
     const t0 = Date.now();
@@ -425,11 +522,13 @@ function main(): void {
       seeds,
       levels,
       catalysts,
+      durableHp,
       onPoint: (p) =>
         console.error(
           `[runCurve] Lv${p.level} stage${p.stage}: clear ${(p.clearRateBase * 100).toFixed(1)}%->` +
             `${(p.clearRateCat * 100).toFixed(1)}% clearSecX=${r2(p.clearSecRatio)} ` +
-            `xpX=${r2(p.xpTotalRatio)} lootX=${r2(p.lootCountRatio)} hashDiverge=${p.hashesDiverge}`,
+            `xpX=${r2(p.xpTotalRatio)} lootX=${r2(p.lootCountRatio)} killsX=${r2(p.killsRatio)} ` +
+            `ticksX=${r2(p.ticksRatio)} hashDiverge=${p.hashesDiverge}`,
         ),
     });
     const elapsedMs = Date.now() - t0;

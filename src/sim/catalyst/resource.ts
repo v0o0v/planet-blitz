@@ -185,11 +185,37 @@ const GREED_SPAWN_OFFSET_X = 260;
  * `id 9 epiphany` 가 칸을 접었는지에 따라 **제시 때와 선택 때의 칸이 갈린다**. 상수로 고정하면
  * 3택이 3칸일 때만 빚 칸이 서고, 접힌 3택(2칸 이하)에서는 `offeredIndex` 가 이 값에 절대
  * 닿지 않아 **축소 작동**(빚 카드 없음 = 평범한 3택)이 저절로 성립한다.
+ *
+ * ⚠️ **표시(3택 UI)가 이 상수를 읽는다** — `src/ui/buildStatus.ts` 의 `mercantileDebtOffer`.
+ * 그래서 `export` 다. 표시 쪽이 2 를 되적으면 *"화면은 2번 칸을 붉게 칠하는데 sim 은 다른 칸을
+ * 빚으로 친다"* 가 조용히 성립한다 — 같은 술어를 두 곳에 적지 않는다.
  */
-const MERCANTILE_DEBT_INDEX = 2;
+export const MERCANTILE_DEBT_INDEX = 2;
 
-/** `id 18` — 빚 카드를 한 번 받을 때 지는 부채(자원 단위). */
-const MERCANTILE_DEBT_PER_PICK = 40;
+/**
+ * `id 18` — 빚 카드를 한 번 받을 때 지는 부채(자원 단위).
+ *
+ * 표시 쪽(`mercantileDebtOffer` 를 읽는 3택 카드)이 *"+40"* 을 적을 때도 이 값을 쓴다.
+ *
+ * ## ⭐ 실측 근거 (2026-08-08) — 이 값이 실제로 하는 일은 **압류 1:1 비율뿐**이다
+ * 정산은 `debtRepaid = min(debt, runResources)` 로 **자원 상환을 먼저** 시도하고 미상환분만
+ * `DEBT_PER_SEIZED_ITEM`(= 이 값과 같은 40, `src/save/settlement.ts`)으로 나눠 전리품을
+ * 압류한다. 그런데 **런 자원이 그 규모가 아니다** — 표준 빌드 60런 실측(Lv10/40/70 × 20시드,
+ * 내구 파일럿, 행성 0)에서 런 종료 시 `state.resources` 는 **p50 = 2**(최대 2)였다.
+ * `state.resources` 를 올리는 경로가 보급 습격뿐이기 때문이다.
+ *
+ * → 빚 카드 1장이면 미상환분이 38 이라 `ceil(38/40) = 1` — **상환 경로는 구조적으로 거의
+ * 안 돌고 대가는 언제나 전리품 1점 압류로 떨어진다.** 이것은 결함이 아니라 이 카드가 약속한
+ * 교환("지금 파워업, 나중에 전리품")이 성립하는 유일한 형태다: 40 을 런 자원 규모(1~2)로
+ * 내리면 **매번 전액 상환돼 대가가 사라지고**, ADR-0029 가 기각한 *"위험 없는 버프 = 세금"*
+ * 이 된다. ⚠️ 그러니 이 값을 내리려면 `state.resources` 의 발행 규모를 **먼저** 바꿔야 한다.
+ *
+ * ⚠️ **부채 자체는 봇으로 못 잰다** — 두 파일럿이 공유하는 `pilotFreezeFrame()` 이 언제나
+ * **오퍼 0번**을 고르는데 빚 칸은 `MERCANTILE_DEBT_INDEX = 2` 다. 그래서 봇 계측에서 부채는
+ * **항상 정확히 0** 이고, 그 0 은 카드가 죽었다는 뜻이 아니라 계측기가 그 칸을 안 누른다는
+ * 뜻이다(실측으로 확인했다 — 60런 전부 0). 이 축을 재려면 파일럿에 픽 정책을 넣어야 한다.
+ */
+export const MERCANTILE_DEBT_PER_PICK = 40;
 
 /** `id 19` — 광석 덩어리의 충돌 반경. */
 const ORE_RADIUS = 34;
@@ -579,6 +605,17 @@ export function resourceOnPowerupPicked(state: WorldState, poolIndex: number, of
   const debt = readCatalystSlot(state.catalystSlots, MercantileSlot.Debt);
   writeCatalystSlot(state.catalystSlots, MercantileSlot.Debt, debt + MERCANTILE_DEBT_PER_PICK);
   notifyCatalystFx(state, CARD_MERCANTILE, CATALYST_FX.trigger, state.entities[0]?.x ?? 0, state.entities[0]?.y ?? 0);
+}
+
+/**
+ * `id 18 mercantile` — 지금까지 진 **부채 총액**(표시 전용 읽기, 상태 미변경).
+ *
+ * ⚠️ **슬롯 enum 을 sim 밖으로 내보내지 않으려고 있는 함수다.** `MercantileSlot` 은
+ * `const enum` 이라 UI·테스트가 직접 import 하면 `isolatedModules` 에 걸린다
+ * (`catalystSlots.ts` 헤더). 값만 넘기면 그 제약이 호출부로 새지 않는다.
+ */
+export function mercantileDebtOf(state: WorldState): number {
+  return readCatalystSlot(state.catalystSlots, MercantileSlot.Debt);
 }
 
 /** {@link import('../catalystHooks.js').onDashPierceCatalyst} 의 resource 몫. **미배선**(위 §주석). */

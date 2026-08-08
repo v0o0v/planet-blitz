@@ -72,7 +72,11 @@ const SLOT_MERCANTILE_DEBT = 6;
  *
  * 도출: 빚 카드 1장이 얹는 부채가 40(`src/sim/catalyst/resource.ts` `MERCANTILE_DEBT_PER_PICK`)
  * 이므로 **미상환 빚 카드 1장 = 전리품 1점**이 된다. 카드가 약속한 교환("지금 파워업, 나중에
- * 전리품")이 1:1 로 읽히는 유일한 값이다. // BALANCE
+ * 전리품")이 1:1 로 읽히는 유일한 값이다.
+ *
+ * ⭐ **`// BALANCE` 를 뗀다(2026-08-08).** 이것은 자유 파라미터가 아니라 **도출값**이다 —
+ * `MERCANTILE_DEBT_PER_PICK` 에서 1:1 로 따라오고, 그쪽이 왜 40 이어야 하는지는 그 상수의
+ * 주석이 실측(런 자원 p50 = 2 · 60런)으로 소유한다. 둘 중 하나만 바꾸면 1:1 이 깨진다.
  */
 const DEBT_PER_SEIZED_ITEM = 40;
 
