@@ -73,6 +73,28 @@ export interface SettlementSummary {
    */
   catalystDropList?: readonly { readonly id: number; readonly qty: number }[];
   /**
+   * 이번 런에 얻은 **방어체 설계도**(M7b `blueprintDropsFromLoot` 파생) — 표시명 + 장수.
+   *
+   * 정산은 이 목록을 처음부터 손에 쥐고 있었지만(`SettlementOutcome.blueprintsGained`)
+   * 화면에 닿는 경로가 없어 **서버로만 흘러가고 플레이어는 몰랐다** — 얻었는지 확인하려면
+   * 관제탑 → 방어 사령부까지 들어가 보유량을 세는 수밖에 없었다(사용자 요청 2026-08-09,
+   * 촉매 칩 줄이 먼저 같은 이유로 생겼다).
+   *
+   * 표시명은 **호출부가 이미 해석해서** 넘긴다(`catalogName`) — 그 술어를 화면에 한 벌 더
+   * 적으면 카탈로그 표기가 두 화면에서 갈린다.
+   */
+  blueprintGains?: readonly { readonly name: string; readonly count: number }[];
+  /**
+   * 이번 런에 **발령된 의뢰서**(서버 `issue_commission_for_run` — 등급 표시명).
+   *
+   * ⚠️ 발령은 `pve_runs` AFTER 트리거라 **정산 응답에 안 실린다.** 클라가 아는 유일한 길은
+   * 런 시작 시 재고를 스냅샷해 두고 정산 뒤 다시 읽어 **차집합**을 내는 것이다. 그래서 이
+   * 필드는 `drops` 와 같이 사후에 채워진다(`ResultOverlayScreen.updateCommissionGains`).
+   *
+   * 스냅샷이 없으면(오프라인·조회 실패) **채우지 않는다** — 근거 없이 "발령됨"을 적지 않는다.
+   */
+  commissionGains?: readonly string[];
+  /**
    * `id 18 mercantile` 이 **런 자원에서 갚은** 액수(ADR-0052). > 0 일 때만 줄이 선다.
    *
    * ⚠️ {@link SettlementSummary.debtSeized} 와 **반드시 갈려 보여야 한다**(명세의 `신호:` 칸).
@@ -268,6 +290,21 @@ export class ResultOverlay {
       }
       if (st.overflow > 0) {
         loot.appendChild(row(t('result.loot.overflow'), t('result.loot.overflowVal', { n: st.overflow })));
+      }
+      // 설계도·의뢰서 획득(사용자 요청 2026-08-09). Pixi 판은 별도 줄로 그리지만 DOM 판은
+      // 회귀 대비 폴백이라 기존 키·값 격자에 그대로 얹는다. 없으면 줄이 안 생긴다.
+      const bps = st.blueprintGains ?? [];
+      if (bps.length > 0) {
+        loot.appendChild(
+          row(
+            t('result.loot.blueprintList'),
+            bps.map((b) => (b.count > 1 ? `${b.name} ×${b.count}` : b.name)).join(', '),
+          ),
+        );
+      }
+      const coms = st.commissionGains ?? [];
+      if (coms.length > 0) {
+        loot.appendChild(row(t('result.loot.commissionList'), coms.join(', ')));
       }
       this.root.appendChild(loot);
 
