@@ -241,6 +241,8 @@ function summaryFromConfig(cfg: ReturnType<typeof buildRunConfig>, profile: Prof
   return {
     summary: {
       victory: true,
+      // 승리 픽스처이므로 보스 격파도 참이다(서버 자격은 둘의 논리곱).
+      bossKilled: true,
       planet: cfg.planet ?? 0,
       stage: cfg.stage ?? 1,
       finalTick: 1000,

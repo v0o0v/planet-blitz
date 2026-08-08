@@ -660,3 +660,83 @@ select profile_id, count(*) as granted_day
 select skip_reason, count(*) from public.commission_issues
  where created_at > now() - interval '1 day' group by 1 order by 2 desc;
 ```
+
+## ⏳ 적용 대기 — 의뢰서 발령률이 **0% 였다** (2026-08-08 실측)
+
+마이그레이션 `20260808100000_commission_victory_predicate.sql`,
+적용 스크립트 `scripts/apply-commission-victory-predicate.ps1`.
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\apply-commission-victory-predicate.ps1
+```
+
+### 근본 원인 — 서버가 **없는 키**를 읽었고, 그 NULL 이 not null 컬럼을 쳤다
+
+`issue_commission_for_run` 2단계:
+
+```sql
+v_victory := (p_summary->>'victory' = 'true' and p_summary->>'bossKilled' = 'true');
+```
+
+그런데 클라(`PveSettleSummary`)는 **`bossKilled` 를 한 번도 보낸 적이 없다.** SQL 3값 논리:
+
+| 런 | 식 | 결과 |
+|---|---|---|
+| 패배 | `false and NULL` | **false** → 앵커 정상 삽입, `skip_reason='not-victory'` |
+| 승리 | `true and NULL` | **NULL** → `claimed_victory boolean **not null**` 위반 → 서브트랜잭션 롤백 → **1단계 앵커까지 함께 소멸** → `raise warning` 하나 |
+
+발령 실패는 원래 조용하도록 설계돼 있어(20260803000000 §자인) **화면에 아무 증상이 없었다.**
+
+### 원격 실측이 정확히 확증했다
+
+```
+pve_runs verified            48   = 패배 33 (앵커 전부 있음) + 승리 15 (앵커 전부 없음)
+commission_issues rows       33        48 - 33 = 15, 승리 수와 정확히 일치
+claimed_victory = true        0
+claimed_victory is null       0   <- not null 이라 저장 자체가 불가능했다
+granted = true                0
+summary ? 'bossKilled'        0   <- 키를 보낸 적이 없다
+```
+
+⚠️ **"claimed_victory 에 NULL 이 저장돼 빈도 상한 분자가 빈다" 는 틀린 가설이었다.** `not null`
+이 저장을 막고 대신 **행 전체를 날렸다.** 증상은 "새는 캡"이 아니라 **발령률 0%** 다.
+
+### 고치는 것 셋 — 두 곳이 같은 술어를 갖게 한다
+
+1. **클라가 `bossKilled` 를 싣는다.** sim 순수 리더 `bossKilledOf` = `bossSpawned && victory`.
+   `victory` 재진술이 아니다 — PvE 승리는 **코어 파괴** 경로로도 서므로(`compact()` 의
+   `e.kind='core'`) `bossSpawned` 요구가 실제로 더 강한 관측이다. 타입은 **필수 필드**다
+   (optional 이면 "안 실어도 통과"라 같은 결함이 재발한다).
+2. **SQL 이 3값 논리를 끝낸다.** `coalesce` 두 겹 + `jsonb_exists` 분기 → 어떤 payload 가 와도
+   NULL 이 안 나온다. 키 부재는 **거부가 아니라 폴백**(`victory` 만으로 판정) — 거부하면
+   캐시된 구 클라가 계속 0% 이고, 지금 고치려는 것이 바로 그 0% 다.
+3. **삽입에 최후 방어**(`coalesce(v_victory,false)`). 중복이지만 일부러 남긴다 — 이 결함의
+   치명성은 술어가 틀린 것이 아니라 **틀렸을 때 앵커까지 지워져 무증상이 된 것**이었다.
+
+**배포 순서 무관** — 구 클라는 폴백으로 즉시 발령이 살아나고, 새 클라는 주장 둘을 보낸다.
+
+### ⭐ 적용 스크립트가 **실거동을 증명한다** (롤백되는 트랜잭션)
+
+구조 대조로는 "이제 된다"를 못 보인다 — 버그 자체가 *구조는 멀쩡한데 런타임에 NULL* 이었다.
+그래서 함수를 실제로 네 payload 로 호출하고 `rollback` 한다:
+
+| 케이스 | payload | 기대 |
+|---|---|---|
+| A | `victory:true, bossKilled:true` | 앵커 1 · `claimed_victory=true` |
+| B | `victory:true` (키 부재 = 구 클라) | 앵커 1 · `claimed_victory=true` ← **이것이 수정본** |
+| C | `victory:true, bossKilled:false` | 앵커 1 · `claimed_victory=false` |
+| D | `victory:false` | 앵커 1 · `claimed_victory=false` |
+
+롤백이 무시됐을 경우를 대비해 잔여 행을 명시적으로 확인·삭제한다.
+
+### 관측할 것 (배포 후)
+
+```sql
+-- 승리 런에 앵커가 생기기 시작해야 한다. 이 값이 계속 0 이면 수정이 안 먹은 것이다.
+select count(*) from public.commission_issues where claimed_victory;
+
+-- 발령이 실제로 나가기 시작했는지. 30% x 드랍 축 배율이므로 승리 앵커의 3할 언저리가 정상.
+select coalesce(skip_reason,'(granted)') as outcome, count(*)
+  from public.commission_issues where created_at > now() - interval '1 day'
+ group by 1 order by 2 desc;
+```

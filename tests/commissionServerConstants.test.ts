@@ -208,6 +208,22 @@ function issueRateSql(): string {
   return found;
 }
 
+/**
+ * `commission_issues.skip_reason` check 제약의 **적용 순 마지막 선언**을 담은 파일 전문.
+ *
+ * 함수와 **다른 축**이다 — 제약은 `alter table ... add constraint` 로 갱신되고, 함수 재정의와
+ * 무관하게 움직인다. 한쪽 최신 파일에서 둘 다 찾으면 다른 쪽이 조용히 안 잡힌다.
+ */
+function effectiveSkipReasonConstraint(): string {
+  let found: string | null = null;
+  for (const f of readdirSync(MIGRATIONS_DIR).filter((x) => x.endsWith('.sql')).sort()) {
+    const text = new TextDecoder().decode(readFileSync(MIGRATIONS_DIR + f));
+    if (/add constraint[\s\S]{0,200}?check\s*\(skip_reason in \(/.test(text)) found = text;
+  }
+  if (found === null) throw new Error('skip_reason check 제약 선언을 찾지 못했습니다');
+  return found;
+}
+
 describe('발령 확률 게이트 SQL ↔ TS 미러', () => {
   it('ISSUE_CHANCE_CP == COMMISSION_ISSUE_CHANCE_CP', () => {
     const code = stripLineComments(issueRateSql());
@@ -219,7 +235,13 @@ describe('발령 확률 게이트 SQL ↔ TS 미러', () => {
   it("skip_reason check 에 'roll' 이 있다", () => {
     // 없으면 4b 의 update 가 check 위반 -> 서브트랜잭션 롤백 -> 앵커까지 소멸(fail-closed).
     // 증상은 warning 하나뿐이고 화면상으론 "발령률 0%" 라 조용하다. 여기서 못 박는다.
-    const m = /check\s*\(skip_reason in \(([^)]*)\)\)/.exec(issueRateSql());
+    //
+    // ⚠️ **함수 본문이 아니라 제약을 따로 좇는다**(2026-08-08 2차에 분리했다). 제약은 함수와
+    //    **수명이 다르다** — 함수를 재정의하는 마이그레이션이 제약을 건드릴 이유가 없고,
+    //    실제로 `20260808100000`(자격 술어 복구)이 함수만 재정의했다. 그때 "최신 **함수** 정의
+    //    파일"에서 제약을 찾던 이 단언이 빨개졌다. 찾는 대상이 틀렸던 것이지 제약이 사라진 게
+    //    아니다. 두 축을 각자의 최신 정의로 따로 잰다.
+    const m = /check\s*\(skip_reason in \(([^)]*)\)\)/.exec(effectiveSkipReasonConstraint());
     expect(m, 'skip_reason check 제약을 찾지 못함').not.toBeNull();
     const labels = cap(m, 1, 'skip_reason 라벨')
       .split(',')

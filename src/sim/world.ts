@@ -5233,6 +5233,35 @@ export function endCommissionSegment(state: WorldState, outcome: 'cleared' | 'es
   else state.gameOver = true;
 }
 
+/**
+ * 이번 런이 **보스를 잡아서** 끝났는가 — 서버 의뢰서 발령 자격의 두 번째 주장
+ * (`issue_commission_for_run` 2단계의 `p_summary->>'bossKilled'`). 순수 리더다
+ * (`echoStabilizedOf` 와 같은 부류 — sim 상태를 읽기만 하고 아무것도 안 바꾼다).
+ *
+ * ## ⚠️ 이 리더가 왜 뒤늦게 생겼나 — 서버가 **없는 키**를 읽고 있었다
+ * 발령 함수는 `victory and bossKilled` 로 자격을 판정하는데 **클라가 `bossKilled` 를 한 번도
+ * 보낸 적이 없었다**(2026-08-08 원격 실측: `summary ? 'bossKilled'` 인 행 **0건**). 그래서
+ * `p_summary->>'bossKilled'` 가 NULL 이었고, 승리 런에서 `true and NULL = NULL` 이 되어
+ * `claimed_victory boolean **not null**` 을 위반했다. 서브트랜잭션이 롤백되며 **자기 앵커까지
+ * 지우고** `raise warning` 하나만 남겼다 — 화면에는 아무 증상이 없다.
+ *
+ * 실측이 정확히 그 형태였다: verified 48건 중 **패배 33건은 전부 앵커가 있고
+ * (`skip_reason='not-victory'`), 승리 15건은 전부 앵커가 없다.** `granted` 는 **0건** —
+ * 즉 의뢰서 발령률은 절반이 아니라 **0%** 였다.
+ *
+ * ## 왜 `state.victory` 를 그대로 쓰지 않는가 — 그러면 두 주장이 하나로 접힌다
+ * PvE 에서 승리는 두 경로로 선다: 보스 사망(`endCommissionSegment('cleared')`)과 **코어 파괴**
+ * (`compact()` 의 `e.kind === 'core'` 분기 — `invasion3` 미존재 PvE 에서도 조건이 참이다).
+ * `bossSpawned` 를 함께 요구하면 후자를 배제하므로 이 주장이 `victory` 의 재진술이 아니라
+ * **실제로 더 강한 관측**이 된다. 서버가 주장 둘을 요구하는 설계도 그때 의미를 갖는다.
+ *
+ * `bossSpawned` 는 `WORLD_FRESH` 라 다구간 의뢰에서도 **마지막 구간의 것**이다 — 승리 역시
+ * 마지막 구간에서만 서므로 둘의 시점이 일치한다.
+ */
+export function bossKilledOf(state: WorldState): boolean {
+  return state.bossSpawned && state.victory;
+}
+
 function compact(state: WorldState): void {
   // 앵커 ⑤(S0)의 기준점. `compact` 이 킬 집계의 **단일 수렴점**이라(탄 명중·화염 DoT·전격·
   // 폭탄 기물이 전부 여기서 `dead` 로 수거된다) 이 델타 하나가 전 사망 경로를 덮는다.

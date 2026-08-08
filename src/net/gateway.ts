@@ -26,6 +26,21 @@ import type { SupabaseConfig } from './config.js';
 /** PvE 정산 요약(settle_pve_run 인자 p_summary). resources→credits, minerals→minerals 로 지급. */
 export interface PveSettleSummary {
   victory: boolean;
+  /**
+   * **보스를 잡아서** 끝난 런인가(sim `bossKilledOf` 파생 = `bossSpawned && victory`).
+   * 서버 `issue_commission_for_run` 2단계가 `victory and bossKilled` 로 자격을 판정한다.
+   *
+   * ## ⚠️ 이 필드는 **없어서** 의뢰서 발령률을 0% 로 만들고 있었다 (2026-08-08 실측)
+   * 서버는 2026-08-03 부터 이 키를 읽었는데 클라가 한 번도 보내지 않았다. `->>'bossKilled'`
+   * 가 NULL 이라 승리 런에서 `true and NULL = NULL` 이 되고, `claimed_victory boolean not null`
+   * 을 위반해 서브트랜잭션이 롤백되며 **자기 앵커까지 지웠다**(warning 하나뿐, 무증상).
+   * 원격 대조: verified 48건 = 패배 33(앵커 있음) + 승리 15(앵커 **전부 없음**), granted 0.
+   *
+   * **필수 필드로 둔다.** optional 로 두면 "안 실어도 타입이 통과"해서 같은 결함이 재발한다 —
+   * 서버는 키 부재를 구 클라 폴백으로 관대하게 다루지만(하위 호환), **새 클라는 반드시 싣는다**
+   * 가 이 타입의 계약이다.
+   */
+  bossKilled: boolean;
   planet: number;
   stage: number;
   /** 생존 틱(개연성 캡 산정에 쓰이니 실측값). */
