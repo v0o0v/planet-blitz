@@ -28,7 +28,7 @@ import { blankEntity, addEntity } from './entities.js';
 import {
   ENEMY_BULLET_CAP_MULT,
   ENEMY_COUNT_MULT,
-  ENEMY_DAMAGE_MULT,
+  enemyDamageScale,
   ENEMY_HP_MULT,
   scaledFireCooldown,
 } from './enemyScale.js';
@@ -636,7 +636,7 @@ function spawnEnemy(state: WorldState, def: EnemyDef, x: number, y: number): Ent
   // 촉매 적 피해 페널티 — 접촉 피해에 곱한다(무주입 ×1 → 불변). 적탄 피해는 def.attack 파생이라
   // 여기서 건드리지 않는다(patterns 소관).
   // ENEMY_DAMAGE_MULT: 밀도 패스의 짝 축(실측값 — 그 상수 주석이 정본).
-  e.damage = def.contactDamage * state.catalystMods.enemyDamage * ENEMY_DAMAGE_MULT;
+  e.damage = def.contactDamage * state.catalystMods.enemyDamage * enemyDamageScale(state.config);
   e.enemyType = def.typeIndex;
   // Stagger first fire so a freshly spawned pack does not volley in lockstep.
   e.cooldown = scaledFireCooldown(def.fireCooldown, def.attack.kind) + state.waveRng.int(0, 30);
@@ -679,7 +679,7 @@ export function summonEnemy(state: WorldState, def: EnemyDef, x: number, y: numb
   e.maxHp = hp;
   // ENEMY_DAMAGE_MULT: 밀도 패스의 짝 축(실측값 — 그 상수 주석이 정본). 지금 1.0 이라 무영향이지만
   // 피해 축은 짝이 아니라 **모든 적에 균일**이 계약이라 소환 경로에도 그대로 건다.
-  e.damage = def.contactDamage * state.catalystMods.enemyDamage * ENEMY_DAMAGE_MULT;
+  e.damage = def.contactDamage * state.catalystMods.enemyDamage * enemyDamageScale(state.config);
   e.enemyType = def.typeIndex;
   e.cooldown = scaledFireCooldown(def.fireCooldown, def.attack.kind); // 고정 쿨다운(결정론, RNG 미소비)
   return addEntity(state, e);

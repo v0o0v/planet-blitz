@@ -64,6 +64,8 @@
  * ⚠️ **PvE 골든은 이 값들에 걸려 있다.** 고치면 `tests/pilotFrameFreeze.test.ts` 가 먼저 빨개진다.
  */
 
+import { stageDamageMult } from '../../data/waves.js';
+
 /**
  * 적 **수** 배수. 웨이브 유입·온스크린 상한 **양쪽**에 걸린다 — 한쪽만 걸면 상한이 유입을
  * 막거나(밀도가 안 오른다) 유입이 상한을 못 채운다(상한이 무의미해진다).
@@ -130,6 +132,27 @@ export const ENEMY_XP_MULT = 1 / ENEMY_COUNT_MULT;
  * 갱신하라 — 이 상수는 계산이 아니라 실측으로만 정한다.
  */
 export const ENEMY_DAMAGE_MULT = 1.0;
+
+/**
+ * 이 런의 **적 피해 총 배수** = {@link ENEMY_DAMAGE_MULT} × 단계 곡선(`stageDamageMult`).
+ * 적 피해를 곱하는 자리는 **전부 이 함수를 통과해야 한다** — 소비 지점이 여섯이고 그 중
+ * `summonEnemy` 하나가 침공 경로다.
+ *
+ * ## ⚠️ 침공 게이트가 여기 있다 — 단계로는 못 막는다
+ * 침공은 `config.stage` 가 **1** 이라 «단계 1 은 배수 1» 규약에 기대는 축(`stageHpMult`)은
+ * 자동으로 안전하지만, 단계 피해 곡선은 단계 1 이 **2.0** 이다. 그래서 게이트를 `invasion3`
+ * 유무에 건다 — 침공에서는 정확히 `ENEMY_DAMAGE_MULT` 만 남아 **거동·해시가 바이트 불변**이다.
+ *
+ * `WorldState` 대신 **구조적 최소 타입**을 받는다 — 이 모듈은 import 가 0 개인 순수 상수
+ * 모듈이고, `world.ts` 를 끌어오면 순환이 된다.
+ */
+export function enemyDamageScale(config: {
+  readonly stage?: number;
+  readonly invasion3?: unknown;
+}): number {
+  if (config.invasion3 !== undefined) return ENEMY_DAMAGE_MULT;
+  return ENEMY_DAMAGE_MULT * stageDamageMult(config.stage ?? 1);
+}
 
 /**
  * 세그먼트 동시 적탄 상한 배수 = 탄 유입 증가분(`적 수 × 발사 빈도`).
