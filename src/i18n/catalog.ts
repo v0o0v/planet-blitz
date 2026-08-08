@@ -466,9 +466,9 @@ export const EN = {
     "On level-up all ground loot explodes at once, brightening the screen as it's pulled in a tier lower.",
   'catalyst.refinement.name': 'Refinement',
   'catalyst.refinement.rule':
-    'A refine option appears on level-up to fuse three same-rarity items into one higher tier, but losing the run loses the forge.',
+    'Loot you pick up goes into the forge instead of your pack, and every third of a rarity comes out one tier higher, but whatever is still in the forge is lost if you lose the run.',
   'catalyst.refinement.signal':
-    'One level-up slot becomes a refine card; fusing triggers an upgrade flourish, with the forge shown on the HUD.',
+    'Pickups vanish into the forge with a slot flash, then the third one drops in a tier higher; the slot flashes again on level-up while stock remains.',
   'catalyst.gilding.name': 'Gilding',
   'catalyst.gilding.rule':
     'Enemies gild over time and grow stronger, but killing one strips the gilding onto the nearest enemy.',
@@ -759,6 +759,11 @@ export const EN = {
   'powerup.title': 'Level Up! — Choose an Upgrade',
   'powerup.hint': 'Click or keys {keys}',
   'powerup.aria': 'Upgrade {n}: {name} — {desc}',
+  // id 18 mercantile — 빚 카드(3택 한 칸). 정본 규칙문은 `catalyst.mercantile.rule`.
+  'powerup.debt.badge': 'IOU',
+  'powerup.debt.note': 'Double stack now — debt +{n}',
+  'powerup.debt.total': 'Debt so far {n}',
+  'powerup.debt.aria': 'Debt card: double stack now, debt +{n}, seized from this run’s loot if unpaid',
   'powerup.stat.weapon': 'Weapon',
   'powerup.stat.level': 'Lv',
   'powerup.stat.damage': 'Damage',
@@ -834,6 +839,10 @@ export const EN = {
   // 회수 개수 HUD 연출(PR#366 서버 권위 드랍 후속). `WorldState.loot.length` 그대로 — 콤보와
   // 같은 관용구로 0 이면 감춘다.
   'hud.lootCount': 'Loot {n}',
+  // `id 18 mercantile` 의 런 중 누적 부채(설계 명세 §신호 2 — "받을 때마다 HUD 에 부채 총액이
+  // 쌓인다"). 문구는 3택 오버레이의 `powerup.debt.total` 과 **같은 말**이어야 한다 — 같은 카드가
+  // 두 화면에서 다른 어휘를 쓰면 그 둘이 같은 값이라는 것을 읽을 수 없다.
+  'hud.debt.total': 'Debt so far {n}',
   'hud.phaseTransition': '⚙ Phase {n} transition…',
   'hud.overheat': "🔥 Overheat — now's your chance! (2× damage)",
   'hud.phase': 'Phase {n}',
@@ -2925,9 +2934,9 @@ export const KO: Record<MessageKey, string> = {
     '레벨업 순간 바닥 전리품이 일제히 폭발하며 화면이 밝아지고, 등급색이 한 칸씩 내려앉은 채 빨려 들어온다.',
   'catalyst.refinement.name': '정련',
   'catalyst.refinement.rule':
-    '레벨업 3택에 정련 선택지가 떠 같은 등급 셋을 한 단계 위로 합칠 수 있지만, 정련로에 든 것은 지면 전부 잃는다.',
+    '주운 전리품이 회수되지 않고 정련로에 쌓여, 같은 등급 셋째부터 한 단계 위로 승급해 실리지만, 정련로에 남은 것은 지면 전부 잃는다.',
   'catalyst.refinement.signal':
-    '3택 한 칸이 정련로 카드로 바뀌고, 합성 순간 승격 연출이 터진다. HUD 에 정련로 잔량이 상시 표시된다.',
+    '수거해도 전리품이 실리지 않고 촉매 슬롯이 번쩍이다가, 셋째에서 등급이 한 칸 오른 채 실린다. 잔량이 있으면 레벨업마다 슬롯이 다시 번쩍인다.',
   'catalyst.gilding.name': '도금',
   'catalyst.gilding.rule':
     '적은 살아 있는 시간에 비례해 도금되어 강해지지만, 처치하면 도금이 벗겨져 가장 가까운 적에게 옮겨 붙는다.',
@@ -2948,8 +2957,8 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.epiphany.signal': '3택 화면이 단일 금테 카드로 접히며 나머지 두 자리가 재로 흩어지고, 선택 버튼이 없다.',
   'catalyst.insight.name': '통찰',
   'catalyst.insight.rule':
-    '적탄이 발사되기 전 예고선으로 미리 보이지만, 그 예고선 위에 서 있는 동안만 경험치가 세 배로 들어온다.',
-  'catalyst.insight.signal': '발사 전 붉은 예고선이 그어지고, 그 위에 서면 기체가 백색으로 빛나며 젬 배율이 표시된다.',
+    '적탄이 발사되기 전 예고 링으로 미리 보이지만, 그 예고 링 안에 서 있는 동안만 경험치가 세 배로 들어온다.',
+  'catalyst.insight.signal': '발사 전 붉은 예고 링이 그려지고, 그 안에 서면 기체가 백색으로 빛나며 젬 배율이 표시된다.',
   'catalyst.tutelage.name': '교습',
   'catalyst.tutelage.rule':
     '레벨 5에서 곧장 시작하지만, 이 런에서는 이후 모든 레벨업이 3택 없이 전부 자동으로 결정되어 버린다.',
@@ -3182,6 +3191,11 @@ export const KO: Record<MessageKey, string> = {
   'powerup.title': '레벨업! — 파워업을 선택하세요',
   'powerup.hint': '클릭 또는 {keys} 키',
   'powerup.aria': '{n}번 파워업: {name} — {desc}',
+  // id 18 mercantile — 빚 카드. 용어는 `catalyst.mercantile.rule`(빚 카드 · 2중첩 · 부채 · 압류)와 맞춘다.
+  'powerup.debt.badge': '차용증',
+  'powerup.debt.note': '지금 2중첩 — 부채 +{n}',
+  'powerup.debt.total': '누적 부채 {n}',
+  'powerup.debt.aria': '빚 카드: 지금 2중첩으로 받고 부채 {n} 을 지며, 못 갚으면 이 런의 전리품이 압류된다',
   'powerup.stat.weapon': '무기',
   'powerup.stat.level': 'Lv',
   'powerup.stat.damage': '피해량',
@@ -3245,6 +3259,7 @@ export const KO: Record<MessageKey, string> = {
   'hud.exitTest': '시험 침공 종료',
   'hud.combo': '콤보 x{mult} ({combo})',
   'hud.lootCount': '전리품 {n}',
+  'hud.debt.total': '누적 부채 {n}',
   'hud.phaseTransition': '⚙ 페이즈 {n} 전환 중…',
   'hud.overheat': '🔥 과열 — 지금이 기회입니다! (피해 2배)',
   'hud.phase': '페이즈 {n}',

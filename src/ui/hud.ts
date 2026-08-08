@@ -85,6 +85,16 @@ export interface HudState {
    * 직접 파생한다({@link hudActives}) — `bossEta: bossProgress(w)` 와 같은 선례다.
    */
   actives?: readonly HudActiveState[] | undefined;
+  /**
+   * `id 18 mercantile` 의 **누적 부채 총액**(설계 명세 §신호 2). 호출부가 `mercantileDebtOf(w)` 를
+   * 그대로 넘긴다 — 읽기 전용 파생이라 sim 무영향이고, 새 카운터를 두지 않는다(`bossEta`·
+   * `actives` 와 같은 선례).
+   *
+   * ⚠️ **`0` 과 `undefined` 를 똑같이 감춘다.** 미소지 런은 이 필드가 없고, 소지했으나 아직 빚
+   * 카드를 안 받은 런은 `0` 이다 — 둘 다 "아직 진 빚이 없다"라 줄이 서면 안 된다(무촉매 런
+   * 화면 불변이 계약이다).
+   */
+  debt?: number | undefined;
 }
 
 /** 좌하단 쿨다운 한 칸. 문자열은 호출부가 이미 번역해 넣는다(BossHudState.name 과 같은 규율). */
@@ -277,6 +287,11 @@ const STYLE = `
 #pb-hud .pb-topline { display:flex; justify-content:space-between; font-size:13px; font-weight:700; margin-bottom:6px; text-shadow:0 1px 3px #000; }
 #pb-hud .pb-combo { color:#ffd24c; }
 #pb-hud .pb-loot { color:#8fd8ff; margin-left:8px; }
+/* 누적 부채 줄(id 18 mercantile) — HP/XP 바 **아래** 별도 블록이다. topline 에 붙이지 않는 이유는
+   .pb-topline 의 flex 자식이 정확히 둘이어야 하기 때문이다(셋이 되면 콤보가 중앙으로 밀린다 —
+   회수 칩이 이미 밟은 결함). 3택의 붉은 차용증과 같은 색 계열이라 두 화면이 같은 것을 말한다.
+   ⚠️ 이 STYLE 은 템플릿 리터럴이다 — 주석에도 백틱을 쓰지 마라(문자열이 그 자리에서 끊긴다). */
+#pb-hud .pb-debt { margin-top:4px; font-size:12px; font-weight:800; color:#ff9a8a; letter-spacing:.3px; text-shadow:0 1px 2px #000; }
 #pb-supply { position:absolute; top:300px; left:50%; transform:translateX(-50%); background:rgba(255,180,40,.14); border:1px solid #ffcc44; color:#ffd98a; padding:6px 18px; border-radius:20px; font:700 15px 'Segoe UI',sans-serif; letter-spacing:1px; pointer-events:none; text-shadow:0 1px 2px #000; }
 #pb-boss { position:absolute; top:20px; left:50%; transform:translateX(-50%); width:640px; max-width:80vw; font-family:'Segoe UI',sans-serif; color:#fff; pointer-events:none; text-align:center; }
 #pb-boss .pb-bossname { font-size:14px; font-weight:800; letter-spacing:2px; text-shadow:0 1px 3px #000; margin-bottom:4px; }
@@ -384,6 +399,8 @@ export class Hud {
   private readonly comboEl: HTMLElement;
   private readonly lootEl: HTMLElement;
   private readonly timeEl: HTMLElement;
+  /** 누적 부채 줄(`id 18 mercantile`). 빚이 0 이거나 미소지면 감춘다({@link HudState.debt}). */
+  private readonly debtEl: HTMLElement;
   private readonly supplyBanner: HTMLElement;
   private readonly bossRoot: HTMLElement;
   private readonly bossFill: HTMLElement;
@@ -494,6 +511,11 @@ export class Hud {
     this.root.appendChild(this.topline);
     this.root.appendChild(this.hpBar.root);
     this.root.appendChild(this.xpBar.root);
+    // 누적 부채 줄 — 기본 숨김. 빚 카드를 한 번도 안 받은 런에서는 자리를 차지하지 않는다.
+    this.debtEl = document.createElement('div');
+    this.debtEl.className = 'pb-debt';
+    this.debtEl.style.display = 'none';
+    this.root.appendChild(this.debtEl);
     document.body.appendChild(this.root);
 
     this.supplyBanner = document.createElement('div');
@@ -978,6 +1000,17 @@ export class Hud {
     this.lootEl.textContent = s.lootCount > 0 ? t('hud.lootCount', { n: s.lootCount }) : '';
 
     this.supplyBanner.style.display = s.supplyActive ? 'block' : 'none';
+
+    // 누적 부채(id 18 mercantile). 미소지(undefined)와 아직 안 짐(0)을 똑같이 감춘다 —
+    // 오염 게이지·액티브 칸과 같은 관용구다.
+    const debt = s.debt ?? 0;
+    if (debt > 0) {
+      this.debtEl.style.display = 'block';
+      this.debtEl.textContent = t('hud.debt.total', { n: debt });
+    } else {
+      this.debtEl.style.display = 'none';
+      this.debtEl.textContent = '';
+    }
 
     if (s.boss !== undefined) {
       this.bossRoot.style.display = 'block';

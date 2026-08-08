@@ -60,6 +60,15 @@ const STYLE = `
 #pb-powerup.picked .pb-card:hover { transform:none; border-color:#2a3552; box-shadow:none; }
 #pb-powerup .pb-card.chosen { border-color:#7affea; box-shadow:0 0 24px rgba(122,255,234,.4); }
 #pb-powerup .pb-hint { color:#68789c; font-size:12px; letter-spacing:1px; }
+/* id 18 mercantile — 빚 카드(붉은 차용증). 같은 파워업을 2중첩으로 주는 대신 부채를 지게 한다. */
+#pb-powerup .pb-card.debt { border-color:#c0392b; background:linear-gradient(160deg,#2b1014,#180a0d); }
+/* not(.picked) 로 좁힌다 — 선택이 끝난 뒤의 hover 무력화(.picked .pb-card:hover)를 되살리지 않기 위해서다. */
+#pb-powerup:not(.picked) .pb-card.debt:hover { border-color:#ff6b5a; box-shadow:0 10px 30px rgba(255,107,90,.28); }
+#pb-powerup .pb-card.debt .pb-key { background:#e05a45; color:#180a0d; }
+#pb-powerup .pb-badge.debt { color:#180a0d; background:#e05a45; border-color:#e05a45; }
+#pb-powerup .pb-debt { margin-top:10px; padding-top:8px; border-top:1px dashed #6b2a24; color:#ff9a86; font-size:13px; line-height:1.5; }
+#pb-powerup .pb-debt .tot { display:block; color:#c98a80; font-size:12px; }
+#pb-powerup .pb-card.debt.chosen { border-color:#ff6b5a; box-shadow:0 0 24px rgba(255,107,90,.45); }
 `;
 
 /**
@@ -85,6 +94,33 @@ function buildIcon(poolIndex: number, alt: string): HTMLElement | null {
     badge.className = 'pb-wbadge';
     badge.appendChild(pixelIcon(badgeUrl, BADGE_SIZE));
     box.appendChild(badge);
+  }
+  return box;
+}
+
+/**
+ * `id 18 mercantile` 의 3택 표시 입력. **판정은 여기 없다** — 어느 칸인지는 sim 상수를 읽는
+ * `mercantileDebtOffer` 가 정하고, 이 오버레이는 받은 칸을 칠하기만 한다.
+ */
+export interface DebtMark {
+  /** 빚 카드가 서는 오퍼 인덱스(0-based). */
+  offerIndex: number;
+  /** 이 카드를 받으면 지는 부채(`MERCANTILE_DEBT_PER_PICK`). */
+  perPick: number;
+  /** 지금까지 진 부채 총액. 0 이면 총액 줄을 생략한다(아직 진 빚이 없다). */
+  total: number;
+}
+
+/** 빚 카드 하단의 대가 문구(2중첩 + 부채 증가 + 누적 총액). */
+function debtNote(debt: DebtMark): HTMLElement {
+  const box = document.createElement('div');
+  box.className = 'pb-debt';
+  box.textContent = t('powerup.debt.note', { n: debt.perPick });
+  if (debt.total > 0) {
+    const tot = document.createElement('span');
+    tot.className = 'tot';
+    tot.textContent = t('powerup.debt.total', { n: debt.total });
+    box.appendChild(tot);
   }
   return box;
 }
@@ -156,8 +192,19 @@ export class PowerupOverlay {
     if (this.onPick !== null) this.onPick(offerIndex);
   }
 
-  /** Show the three offered powerups (pool indices) + the current build status. */
-  show(choices: number[], status: BuildStatus, onPick: (offerIndex: number) => void): void {
+  /**
+   * Show the three offered powerups (pool indices) + the current build status.
+   *
+   * `debt` 는 `id 18 mercantile` 의 **빚 칸 표시**다(선택적 — 미소지 런은 넘기지 않는다).
+   * 칸 번호는 sim 상수에서 온다({@link import('./buildStatus.js').mercantileDebtOffer}) —
+   * 이 오버레이가 스스로 정하지 않는다.
+   */
+  show(
+    choices: number[],
+    status: BuildStatus,
+    onPick: (offerIndex: number) => void,
+    debt?: DebtMark,
+  ): void {
     this.offered = choices.slice();
     this.onPick = onPick;
     this.picked = false;
@@ -168,16 +215,31 @@ export class PowerupOverlay {
     choices.forEach((poolIndex, offerIndex) => {
       const def = POWERUPS[poolIndex];
       const rel = choiceRelevance(poolIndex, status.weaponType);
+      const isDebt = debt !== undefined && debt.offerIndex === offerIndex;
       const card = document.createElement('div');
-      card.className = `pb-card${rel.matchesWeapon ? ' match' : ''}`;
+      card.className = `pb-card${isDebt ? ' debt' : rel.matchesWeapon ? ' match' : ''}`;
       // 최소 접근성: 스크린리더가 카드를 버튼으로 인식하고 이름을 읽도록.
       card.setAttribute('role', 'button');
+      const aria = t('powerup.aria', {
+        n: offerIndex + 1,
+        name: def?.name ?? '',
+        desc: def?.desc ?? '',
+      });
+      // 빚 카드는 **대가가 이름·설명 밖에 있다** — 낭독에 붙이지 않으면 화면 없이 고르는
+      // 사용자에게는 평범한 카드와 구별되지 않는다.
       card.setAttribute(
         'aria-label',
-        t('powerup.aria', { n: offerIndex + 1, name: def?.name ?? '', desc: def?.desc ?? '' }),
+        isDebt ? `${aria} — ${t('powerup.debt.aria', { n: debt.perPick })}` : aria,
       );
 
-      if (rel.label !== '') {
+      // 빚 카드는 관련성 배지 자리를 **차용증 배지가 가져간다.** 두 배지를 겹치면 같은
+      // 모서리에서 서로를 가리고, 이 칸에서 먼저 읽혀야 하는 것은 대가 쪽이다.
+      if (isDebt) {
+        const badge = document.createElement('div');
+        badge.className = 'pb-badge debt';
+        badge.textContent = t('powerup.debt.badge');
+        card.appendChild(badge);
+      } else if (rel.label !== '') {
         const badge = document.createElement('div');
         badge.className = `pb-badge${rel.matchesWeapon ? ' match' : ''}`;
         badge.textContent = rel.label;
@@ -198,6 +260,7 @@ export class PowerupOverlay {
       if (icon !== null) card.appendChild(icon);
       card.appendChild(name);
       card.appendChild(desc);
+      if (isDebt) card.appendChild(debtNote(debt));
       card.addEventListener('click', () => this.pick(offerIndex));
       this.cards.appendChild(card);
     });
