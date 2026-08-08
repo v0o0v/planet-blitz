@@ -26,6 +26,7 @@ import type { InputFrame, WorldState } from './world.js';
 import { SPECIAL_NONE, SPECIAL_POWERUP_PICK, packPowerupPick } from './world.js';
 import type { Entity } from './entities.js';
 import { atan2, length } from './math.js';
+import { segmentBlocked } from './los.js';
 import { isObjectiveDestructible } from './modes/objective.js';
 import { isShelter, isShelterSecured } from './modes/chase.js';
 import { INVASION_WINDOW_HALF_W } from './invasion/scroll.js';
@@ -247,7 +248,30 @@ export function pilotSteer(world: WorldState): PilotSteer {
     }
   }
 
-  // ④ 카이팅: 최근접 적/보스와 목표 거리를 유지한다.
+  // ④ 사선 확보: 최근접 표적과의 사이를 **벽이 막고 있으면 옆으로 비켜 사선을 연다.**
+  //
+  // ⚠️ **이것도 밸런스 조정이 아니라 계측기 수리다**(③ 전리품 수거와 같은 사유·같은 형태).
+  //    봇에는 벽이라는 개념이 아예 없었다 — 이 파일에 `wall` 이라는 단어가 없었다. 그래서
+  //    2026-08-04 벽 프리팹 도입 이후 봇은 *"쏘면 벽에 맞는 자리"* 에 붙박여 카이팅만 하다
+  //    죽었고, 그 결과가 경제 지표 두 건의 밴드 이탈로 나타났다(§R50).
+  //
+  //    교환 대조가 그것을 못박았다(카르곤 32시드 · 표준 빌드):
+  //      · 벽을 통째로 끄면 클리어율 31.3% → 100%(Lv5) — 축은 벽이 맞다.
+  //      · 벽 **회피**(접촉률 6.3% → 0%)를 넣으면 40.6% → 31.3%(악화) — 끼임은 원인이 **아니다.**
+  //      · 아군탄만 벽을 통과시키면 31.3% → 56.3% — 막힌 것은 **사선**이다.
+  //    즉 지형이 어려워진 것이 아니라 **계측기가 지형을 못 읽는다.** 여기를 고치지 않고 적
+  //    축을 낮추면 존재하지 않는 문제를 튜닝하게 된다(§R1 아르케 · §R8 장비 표본 · ③ 전리품에
+  //    이은 네 번째 계측기 고장).
+  //
+  // 활성 벽이 없는 무대는 {@link openFireLane} 이 첫 줄에서 반환하므로 **거동·해시가 바이트
+  // 불변**이다(뱀서류 이전 청크·침공 등).
+  const lane = openFireLane(world, player, target);
+  if (lane !== undefined) {
+    const v = clampBackward(lane, forward, slack);
+    return { moveX: v.x, moveY: v.y, aim, freeze: false };
+  }
+
+  // ⑤ 카이팅: 최근접 적/보스와 목표 거리를 유지한다.
   if (target !== undefined) {
     const dx = target.x - player.x;
     const dy = target.y - player.y;
@@ -295,6 +319,68 @@ function scrollForward(world: WorldState): { x: number; y: number } | undefined 
   if (world.scrollRuntime === undefined) return undefined;
   if (world.config.planetMode === PLANET_MODE.racing) return { x: 1, y: 0 };
   return undefined;
+}
+
+/**
+ * 사선을 열려고 옆으로 비켜 볼 **시험 거리**(월드 유닛). 좌·우 두 점만 재고 열리는 쪽으로 민다.
+ *
+ * 벽 조각의 최소 전폭이 120u 이므로 그보다 넉넉히 커야 한 번의 시험으로 조각을 넘어선 자리를
+ * 본다. 반대로 너무 크면 "지금 옆으로 가면 열린다"가 아니라 "저 멀리 가면 열린다"를 재게 되어
+ * 봇이 표적에서 떨어져 나간다. 260 은 그 사이에서 고른 값이고, 이 상수를 만지면 PvE 골든이
+ * 갈린다.
+ */
+const LANE_PROBE_STEP = 260;
+
+/**
+ * 사선이 막혔을 때 **비켜설 방향**(단위 벡터). 다음 셋 중 하나라도 아니면 `undefined` 이고,
+ * 그때 호출부는 종전 경로를 한 글자도 안 바꾼 채 지나간다:
+ *   ① 이 무대에 활성 벽이 없다  ② 표적이 없다  ③ 이미 사선이 뚫려 있다
+ *
+ * ## 왜 좌·우 두 점만 재는가
+ * 봇 휴리스틱의 규율은 "단순·견고" 다(이 파일 머리말). 경로 탐색을 넣으면 벽 배치마다 결과가
+ * 갈리고 골든이 지형 데이터에 종속된다. 표적 방향의 **수직 두 방향**만 시험해 열리는 쪽으로
+ * 미는 것으로 충분하다 — 실측에서 그것만으로 클리어율이 두 배가 됐다.
+ *
+ * ## 동률 규약
+ * 양쪽이 다 열리거나 다 막히면 **+수직**(표적 방향을 반시계로 90° 돌린 쪽)을 고른다. 플랫폼
+ * 순회 순서나 부동소수 미세차에 기대지 않는 고정 규약이다(`nearestTarget` 의 id 오름차순 동률
+ * 깨기와 같은 성질).
+ *
+ * ## 결정론
+ * `length`(결정론 math 모듈)와 비교·사칙연산뿐이다. 거듭제곱·`Math.random`·`Date` 를 쓰지 않는다.
+ */
+function openFireLane(
+  world: WorldState,
+  player: Entity,
+  target: Entity | undefined,
+): { x: number; y: number } | undefined {
+  const walls = world.activeWalls;
+  if (walls.length === 0 || target === undefined) return undefined;
+  if (!segmentBlocked(player.x, player.y, target.x, target.y, walls)) return undefined;
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const d = length(dx, dy);
+  if (d < 0.0001) return undefined;
+  // 표적 방향의 수직(반시계 90°).
+  const px = -dy / d;
+  const py = dx / d;
+  const plusOpen = !segmentBlocked(
+    player.x + px * LANE_PROBE_STEP,
+    player.y + py * LANE_PROBE_STEP,
+    target.x,
+    target.y,
+    walls,
+  );
+  if (plusOpen) return { x: px, y: py };
+  const minusOpen = !segmentBlocked(
+    player.x - px * LANE_PROBE_STEP,
+    player.y - py * LANE_PROBE_STEP,
+    target.x,
+    target.y,
+    walls,
+  );
+  if (minusOpen) return { x: -px, y: -py };
+  return { x: px, y: py };
 }
 
 /**
