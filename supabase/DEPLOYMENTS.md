@@ -411,3 +411,72 @@ Invoke-WebRequest -Uri "https://qxgbxwyccbxokdgwxcuw.supabase.co/functions/v1/<s
 
 배포할 때마다 위 표를 갱신한다. **버전 번호만 적지 마라** — 번들 해시와 소스 커밋이 없으면
 다음 사람이 "무엇이 올라가 있나"를 다시 알 수 없고, 그게 이 파일이 생긴 이유다.
+
+## ✅ 적용 완료 — 의뢰서 발령 확률 30% (2026-08-08, PR#391 / #392 / #393)
+
+`20260808070000_commission_issue_rate.sql` 을 원격 적용했다
+(`scripts/apply-commission-issue-rate-migration.ps1` — 재실행 안전).
+
+올라간 것 셋:
+1. `commission_issues.skip_reason` 도메인에 **`'roll'`** 추가. **이름을 가정하지 않는 DO 루프**로
+   `skip_reason` 을 참조하는 check 제약을 전부 걷어낸 뒤 정본 하나를 세운다(PR#393).
+2. `issue_commission_for_run` 에 **게이트 4b**(`ISSUE_CHANCE_CP = 3000` = 30%). 위치가
+   **세 상한 뒤 · 계급 롤 앞**이고 그것이 방어 계약이다(.sql 머리말 참조).
+3. `revoke all on function … from public/anon/authenticated/service_role` 4줄.
+
+사후 검증 실측(스크립트 7항목 전부 통과):
+
+```
+gate               const_3000=True  roll_branch=True
+본문 오프셋        stock=4108 < roll=4556 < grade=5213 < horizon=6806   (순서 계약 성립)
+skip_reason 제약   1개 (commission_issues_skip_reason_check) · 'roll' 허용=True
+'roll' insert      통과(롤백) · 음성 대조군(미등록 라벨) 거부됨
+실행 권한          anon=False  authenticated=False  service_role=False  public=False
+트리거             pve_runs_issue_commission = 1
+commission_issues  rls_on=True  policies=0        (skip_reason 클라 노출 경로 없음)
+schema_migrations  20260808070000 = 1행
+```
+
+**본문 오프셋 4개를 순서로 재는 것이 이 배포의 핵심 검증이다.** 게이트가 상한보다 앞에 있으면
+빈도 상한이 세는 `claimed_victory` 행이 롤에 좌우돼 위조 처리량 방어가 새고, `horizon` 이 롤보다
+앞이면 미발령 런이 쿨다운 지평을 밀어 누적기 불변이 깨진다. 값 대조로는 둘 다 안 잡힌다.
+
+`public=False` 는 **PR#391 이 떨어뜨렸던 revoke 4줄이 실제로 올라갔다는 물증**이다. 그 누락은
+in-order 원격에서는 `create or replace` 가 ACL 을 보존해 **증상이 0** 이라 오직 이 관측으로만 확인된다.
+
+### 재적용으로 첫 적용을 확증했다
+
+1차 실행은 `'roll'` insert 프로브가 `profile_id` 에 null 을 넣어 **NOT NULL 위반**으로 죽었다 —
+마이그레이션은 이미 적용된 뒤였고 실패한 것은 검증기다. 프로브를 고쳐 재실행했더니 전제 조건이
+`already_gated=True` 로 나왔다(1차에서는 False). **그 전이가 첫 적용이 성립했다는 증거**다.
+프로브에 **음성 대조군**(미등록 라벨은 거부되어야 한다)을 함께 넣었다 — 없으면 제약이 아예 없는
+테이블에서도 통과한다.
+
+⛔ 같은 함정을 촉매 스크립트가 먼저 밟았다(§위 "통과할 수 없는 검증기"). 이번은 프로세스가 아니라
+**프로브 데이터**가 원인이라 형태가 달랐다. 교훈은 같다: **검증기 자신을 먼저 통과시켜라.**
+
+### EF 재배포는 불필요하다 — 문장이 아니라 구조로 판정했다
+
+어떤 EF 도 `src/sim` 을 import 하지 않는다(ADR-0050 §결정 1이 재실행 검증을 삭제했다).
+`verify-commission` 은 `src/run/commission.ts` 의 **타입만** 가져온다(`import type`, 1줄).
+이번 변경은 SQL 함수 본문과 제약뿐이라 번들에 닿는 축이 아예 없다.
+
+### 클라 선행도 불필요하다
+
+`COMMISSION_ISSUE_CHANCE_CP`(TS)는 **테스트 전용 미러**다 — 런타임 소비처가 0건이고 드리프트
+테스트만 읽는다. 게이트는 전적으로 서버측이며 의뢰서를 **더 적게** 발령하는 방향이라 구 클라가
+어긋날 표면이 없다. (촉매 `SLOT_CAP` 8→3 은 반대였다 — 서버가 클라가 아직 허용하는 편성을
+거부하기 시작해서 클라 선행이 필수였다.)
+
+### 관측할 것 — 실효 발령률
+
+```sql
+select coalesce(skip_reason, 'GRANTED') as outcome, count(*)
+  from public.commission_issues
+ where created_at > now() - interval '1 day'
+ group by 1 order by 2 desc;
+```
+
+`'stock'` 을 통과한 행 중 **약 70% 가 `'roll'`** 이면 30% 게이트가 의도대로 도는 것이다.
+⚠️ "상한보다 확률이 먼저 문다"고 읽지 마라 — 실측 p50 `finalTick` 이 782틱(≈13초)이라 반복
+플레이어는 `'rate'`(시간당 20 주장)에 **상시 닿는다**. 실효 = min(20/h 주장) × 30% 다.
