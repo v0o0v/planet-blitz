@@ -411,9 +411,16 @@ export function settleRun(
 
   // 6. 설계도 파생(M7b) — 장비 확정과 같은 드랍 시드에서 되풀어 쓰는 순수 함수라 RNG 커서를
   //    건드리지 않는다. 지급(서버 RPC)은 호출부 몫이다(위 SettlementOutcome 주석 참조).
-  //    행성 인기 수량 배율(ADR-0038)이 엘리트 드랍 **건수**를 바꿨으므로, 특산 설계도 기대
-  //    획득률이 불변이도록 동반 확률을 역수 보정한다(보스 확정 드랍은 제외 — LootRecord.elite).
-  const blueprintsGained = blueprintDropsFromLoot(result.loot, multFromCenti(result.planetMultCenti));
+  //    ⚠️ **세 번째 인자가 클리어 게이트다**(2026-08-08). 패배·중도 이탈 런은 수거한 드랍이
+  //    있어도 설계도를 내지 않는다 — `victory` 를 넘기지 않으면 기본값이 false 라 조용히
+  //    0개가 되므로, 이 배선을 지우면 설계도 축 전체가 죽는다(테스트: blueprintDrops.test.ts).
+  //    행성 인기 배율은 런 단위 3% 게이트가 건수와 획득률을 분리하면서 역수 보정이 불필요해졌다
+  //    (경위는 blueprintDropsFromLoot 주석) — 인자는 계약 유지를 위해 그대로 넘긴다.
+  const blueprintsGained = blueprintDropsFromLoot(
+    result.loot,
+    multFromCenti(result.planetMultCenti),
+    result.victory === true,
+  );
 
   // 7. 스토리 시스템(Phase E, ADR-0023) — 마일스톤 누적 · 파편 수집 · 챕터 보상 claim.
   //    전부 비-sim 메타 경로라 해시·리플레이 무관이다. 오염 런·하네스 침공 런은 호출부(main.ts)가

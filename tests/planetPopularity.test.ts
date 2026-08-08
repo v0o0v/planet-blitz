@@ -409,35 +409,54 @@ describe('§7 배율이 닿으면 안 되는 축', () => {
     expect(cfg.planetMultEpoch).toBeUndefined();
   });
 
-  it('특산 설계도 기대 획득률이 배율에 불변이다(엘리트 유래만 역수 보정)', () => {
-    // 같은 시드 집합으로 엘리트 유래 loot 를 만들고, 건수를 배율만큼 늘린 뒤 역수 보정된
-    // 확률로 굴리면 기대 설계도 수가 보정 전과 같은 수준이어야 한다.
-    const mk = (n: number, elite: 1 | undefined) =>
+  /**
+   * ⚠️ **2026-08-08: 역수 보정이 사라졌다 — 단언을 더 강한 것으로 바꾼다.**
+   *
+   * ADR-0038 이 지키려던 불변은 "특산 설계도 기대 획득률은 수량 배율 밖"이었고, 구현 수단이
+   * 엘리트 유래 레코드의 동반 확률을 ×(1/m) 하는 보정이었다. 그 보정은 **근사**였다 —
+   * 건수는 정수라 반올림이 남고, 위 테스트도 15% 오차를 허용해야 했다.
+   *
+   * 런 단위 3% 게이트는 획득률을 건수와 **구조적으로 분리**하므로 같은 불변이 근사가 아니라
+   * **항등**으로 선다. 그래서 오차 허용을 없애고 완전 일치를 잰다. 보정을 되살리면(= 배율이
+   * 추첨 가중치를 건드리면) 이 단언이 즉시 깨진다.
+   */
+  it('특산 설계도 획득률이 배율에 완전 불변이다(런 단위 게이트가 항등으로 지킨다)', () => {
+    const mk = (run: number, n: number, elite: 1 | undefined) =>
       Array.from({ length: n }, (_, i) => ({
-        seed: (i * 2654435761) >>> 0,
+        seed: (run * 2654435761 + i * 0x85ebca6b) >>> 0,
         rarity: 3,
         planet: 0,
         ...(elite !== undefined ? { elite } : {}),
       }));
-    const N = 4000;
-    const baseCount = blueprintDropsFromLoot(mk(N, 1), 1).reduce((a, g) => a + g.count, 0);
-    // 배율 1.2 → 건수 1.2배 + 확률 1/1.2 → 기대치 불변.
-    const upCount = blueprintDropsFromLoot(mk(Math.round(N * 1.2), 1), 1.2).reduce(
-      (a, g) => a + g.count,
-      0,
-    );
-    expect(baseCount).toBeGreaterThan(0);
-    expect(Math.abs(upCount - baseCount) / baseCount).toBeLessThan(0.15);
+    const RUNS = 3000;
+    const count = (n: number, mult: number): number => {
+      let total = 0;
+      for (let run = 0; run < RUNS; run++) {
+        total += blueprintDropsFromLoot(mk(run, n, 1), mult, true).reduce((a, g) => a + g.count, 0);
+      }
+      return total;
+    };
+    const base = count(3, 1);
+    expect(base).toBeGreaterThan(0);
+    // 같은 런 시드 집합에 배율만 바꾼다 → 바이트 단위로 같은 결과.
+    expect(count(3, 1.2)).toBe(base);
+    expect(count(3, 0.8)).toBe(base);
+    // 건수를 늘려도(배율이 실제로 하는 일) 획득률은 안 움직인다 — 구 모델은 여기서 ×m 이었다.
+    const fat = count(9, 1.2);
+    expect(Math.abs(fat - base) / base).toBeLessThan(0.15);
   });
 
-  it('보스 확정 드랍(elite 미표기)은 역수 보정을 받지 않는다', () => {
-    const boss = Array.from({ length: 2000 }, (_, i) => ({
-      seed: (i * 40503) >>> 0,
-      rarity: 3,
-      planet: 0,
-    }));
-    const a = blueprintDropsFromLoot(boss, 1).reduce((s, g) => s + g.count, 0);
-    const b = blueprintDropsFromLoot(boss, 1.2).reduce((s, g) => s + g.count, 0);
+  it('보스 확정 드랍(elite 미표기)도 배율에 불변이다', () => {
+    // 구 모델에서는 "엘리트만 보정" 이 이 단언의 근거였다. 지금은 배율이 설계도 축에 아예
+    // 닿지 않으므로 엘리트/보스 구분 없이 성립한다 — 더 넓은 불변이다.
+    let a = 0;
+    let b = 0;
+    for (let run = 0; run < 3000; run++) {
+      const boss = [{ seed: (run * 40503 + 1) >>> 0, rarity: 3, planet: 0 }];
+      a += blueprintDropsFromLoot(boss, 1, true).reduce((s, g) => s + g.count, 0);
+      b += blueprintDropsFromLoot(boss, 1.2, true).reduce((s, g) => s + g.count, 0);
+    }
+    expect(a).toBeGreaterThan(0);
     expect(b).toBe(a);
   });
 });

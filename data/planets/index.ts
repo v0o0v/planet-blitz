@@ -35,7 +35,11 @@ import {
   type BlueprintSpecialty,
 } from './blueprints.js';
 import { CATALOG_BOSS, CATALOG_KIND_COUNTS } from '../invasion/catalog.js';
-import { rollBlueprintDrop, DEFAULT_BLUEPRINT_CHANCE_CP } from '../../src/sim/drops.js';
+import {
+  rollRunBlueprint,
+  DEFAULT_BLUEPRINT_CHANCE_CP,
+  type BlueprintCandidate,
+} from '../../src/sim/drops.js';
 
 /**
  * 행성 드랍 rarity 기준 확률(src/sim/drops.ts가 소비).
@@ -395,46 +399,56 @@ export interface LootLike {
 }
 
 /**
- * 런이 수거한 장비 드랍 목록 → 동반 설계도 목록(순수).
+ * 런이 수거한 장비 드랍 목록 → 동반 설계도 목록(순수). **클리어한 런만** 설계도를 낸다.
  *
  * 정산이 `LootRecord` 를 장비로 확정하는 것과 **같은 입력**에서 파생한다 — 설계도용 추가
  * RNG 소비도 없다(그래서 해시·fixture 가 그대로다). 판정은 드랍이 난 행성의 특산 테이블로
  * 하므로 "이 방어체는 이 행성" 규칙이 자동으로 지켜진다.
  *
- * ## `planetMult` 역수 보정 — 특산 설계도는 배율 밖이다(ADR-0038)
- * 원칙은 **"대체 가능한 보상에만 배율"** 이다. 특산 설계도는 그 행성에서만 나오므로 대체 불가라
- * 배율 대상이 아닌데, 수량 배율이 엘리트 드랍 **건수**를 ×m 으로 바꾸면 설계도 기대 획득량도
- * 자동으로 ×m 이 돼 버린다. 그래서 **엘리트 유래 레코드의 동반 확률만 ×(1/m)** 로 되돌려
- * 기대 획득률을 불변으로 만든다.
+ * ## 2026-08-08 재조정 — 런 단위 3% 게이트 (사용자 지시)
+ * 구 모델은 레코드마다 등급별 cp 를 굴려 런당 **0~N개**를 냈고, "런당 획득 확률"은 어디에도
+ * 적혀 있지 않은 창발값이었다(재구성치 약 7%~14%). 지금은 두 축으로 쪼갠다:
+ *   - **총량** — `rollRunBlueprint` 의 게이트 1회. `BLUEPRINT_RUN_CHANCE_CP`(=3%) 하나가
+ *     드랍 건수·단계·행성 배율과 무관하게 런당 확률을 정한다. 결과는 **0개 아니면 1개**.
+ *   - **분포** — 게이트를 통과했을 때 후보를 등급별 cp 로 가중 추첨한다. rare:unique 비중과
+ *     행성별 편차(카르곤 5/20 … 아르케 8/26)가 종전 그대로 보존된다.
  *
- * ⚠️ **보스 확정 드랍은 보정하지 않는다** — 그 1개는 애초에 수량 배율 밖(ADR-0035 확정성 계약)
- * 이라 건수가 변하지 않았고, 함께 보정하면 오히려 ∓m 만큼 틀어진다. 두 출처의 구분은
- * `LootRecord.elite` 표식이 한다.
+ * ## 클리어 게이트
+ * `victory` 가 아니면 즉시 빈 목록이다. 예전에는 패배·중도 이탈 런도 수거한 드랍만 있으면
+ * 설계도가 나왔다 — "클리어할 때만 먹는다"가 지시의 첫 줄이고, 여기가 그 유일한 관문이다.
+ * (의뢰서 쪽 대응 관문은 서버 `issue_commission_for_run` 의 `victory and bossKilled` 다.)
  *
- * `planetMult === 1`(중립)이면 `chanceCp` 가 원본 배열 그대로라 산술·분기가 구 경로와 동일하다.
+ * ## ⚠️ `planetMult` 역수 보정을 **걷어냈다**
+ * ADR-0038 의 보정은 "수량 배율이 엘리트 드랍 **건수**를 ×m 으로 바꾸면 설계도 기대 획득량도
+ * ×m 이 된다"는 문제를 풀기 위한 것이었다. 런 단위 게이트는 건수와 획득률을 **구조적으로
+ * 분리**하므로 그 문제가 존재하지 않는다 — 드랍이 2건이든 20건이든 런당 3% 다. 보정을 남기면
+ * 이제는 기대 획득률이 아니라 **엘리트 대 보스의 추첨 비중만** 근거 없이 틀어놓는다. 그래서
+ * 지운다. ADR-0038 이 지키려던 불변("특산 설계도 기대 획득률은 배율 밖")은 보정이 아니라
+ * 게이트가 더 강하게 지킨다(근사가 아니라 항등).
  */
 export function blueprintDropsFromLoot(
   loot: readonly LootLike[],
   planetMult = 1,
+  victory = false,
 ): BlueprintGrant[] {
-  const grants: BlueprintGrant[] = [];
-  for (const rec of loot) {
+  void planetMult; // ADR-0038 역수 보정 철거 잔여 — 호출부 시그니처는 유지한다(위 주석).
+  if (!victory) return [];
+
+  // 후보 구성 — 순회 순서가 해시 계약이라 `loot` 순서를 그대로 유지한다.
+  const cands: BlueprintCandidate[] = loot.map((rec) => {
     const base = planetContent(rec.planet).dropTable;
-    // 엘리트 유래 + 비중립 배율일 때만 동반 확률을 역수 보정한다. `Math.round` 로 centi-percent
-    // 정수 규율을 지키고(테이블이 정수 배열), 상한 10000(=100%)으로 클램프한다.
-    const odds =
-      rec.elite === 1 && planetMult !== 1
-        ? {
-            ...base,
-            blueprintChanceCp: (base.blueprintChanceCp ?? DEFAULT_BLUEPRINT_CHANCE_CP).map((cp) =>
-              Math.min(10000, Math.round(cp / planetMult)),
-            ),
-          }
-        : base;
-    const code = rollBlueprintDrop({ seed: rec.seed, rarityCode: rec.rarity }, odds);
-    if (code === null) continue;
-    const grant = resolvePlanetBlueprintDrop(rec.planet, code);
-    if (grant !== null) grants.push(grant);
-  }
-  return mergeBlueprintGrants(grants);
+    const table = base.blueprintChanceCp ?? DEFAULT_BLUEPRINT_CHANCE_CP;
+    return {
+      seed: rec.seed,
+      weightCp: table[rec.rarity] ?? 0,
+      tableSize: base.blueprintTableSize ?? 0,
+    };
+  });
+
+  const hit = rollRunBlueprint(cands);
+  if (hit === null) return [];
+  const rec = loot[hit.pick];
+  if (rec === undefined) return [];
+  const grant = resolvePlanetBlueprintDrop(rec.planet, hit.code);
+  return grant === null ? [] : mergeBlueprintGrants([grant]);
 }
