@@ -116,6 +116,58 @@ import { activeByWireId } from '../../../data/ships/actives/index.js';
 // `data/ships/{ship}.ts` 의 `trees` 배열이다 — 설계서의 서술 순서(SQ→ME→CU)와 우연히 일치하는
 // 것에 기대지 마라.
 
+import {
+  BODY_RECOIL_RANGE,
+  ECHO_BOND_TICK_CAP,
+  FORGIVENESS_USE_PCT,
+  INSTANT_EXCHANGE_PIERCE,
+  MATURITY_VOLLEY_ARC,
+  MATURITY_VOLLEY_BASE,
+  MATURITY_VOLLEY_PIERCE,
+  ME9_WALL_TICKS,
+  PAIN_ANESTHESIA_BASE_BP,
+  RECOIL_RINSE_PER_DEBT,
+  afterimageRinseRadius,
+  bankruptcyIframeTicks,
+  bodyRecoilPct,
+  capitalizationPct,
+  capitalizationPerSettle,
+  debtCeilingPct,
+  debtFuryCapBp,
+  debtFuryPerDebtBp,
+  debtMagnetCapBp,
+  debtMagnetPerDebtBp,
+  debtStampPush,
+  earlyRepaymentTicks,
+  echoBondPct,
+  fluffConvalescenceCut,
+  forgivenessLoadPct,
+  fullDeferralBp,
+  graceOfSettlementTicks,
+  growthConversionPct,
+  healedHideMaxBp,
+  installmentForgiveBp,
+  instantExchangeDamageBp,
+  instantExchangePer,
+  interestBurnDamage,
+  maturityDivisor,
+  maturityVolleyDamage,
+  momentumDamageBp,
+  momentumSpeedBp,
+  overloadThreshold,
+  painAnesthesiaCapBp,
+  painAnesthesiaPerDebtBp,
+  painlessDrivePeriod,
+  painlessSettlementPct,
+  rebateTherapyPct,
+  recoilRinseRadius,
+  rhythmForgivenessBp,
+  scarCannonCapBp,
+  scarCannonPerDamageBp,
+  settlementBlastPct,
+  settlementBlastRadius,
+} from './mallowScaling.js';
+
 const enum Sk {
   /** SQ1 부채 격노 */ debtFury = 0,
   /** SQ2 청산 폭발 */ settlementBlast = 1,
@@ -166,33 +218,8 @@ function lv(state: WorldState, flat: Sk): number {
 // 레벨 스케일 — 설계서 ② 의 공식 그대로
 // ---------------------------------------------------------------------------
 
-/**
- * CU7 의 만충 감소량 K = 1500 + 3500×Lv/(Lv+12) bp.
- * Lv1 ≈ 1769 · Lv20 ≈ 3687 · **점근 5000**(= 최대 50%) — 어픽스로 레벨이 20 을 넘어도
- * 10000bp 에 닿지 못하므로 피해가 음수가 되는 특이점이 없다(설계서 수지 불변식 3).
- *
- * ⚠️ 나눗셈이 `createWorld` 가 아니라 여기 있는 이유는 스트라이커 헤더가 적은 그대로다 —
- * `world.ts` 가 이 모듈을 런타임 import 하면 순환의 씨앗이 되고, 공식을 `world.ts` 에 다시
- * 적으면 이중 정본이 된다. 이 함수는 **피격 틱에만** 불린다(매 틱 나눗셈이 아니다).
- */
-function healedHideMaxBp(level: number): number {
-  return 1500 + (3500 * level) / (level + 12);
-}
 
-/**
- * ME9 가 요구하는 **연속** 벽 접촉 틱(설계서 3R M3: K = 60 고정).
- *
- * ⚠️ "정산 틱에 접촉" 이 아니라 **직전 60틱 연속 접촉**이다. 3판 안(정산 틱만 판정)은 129틱을
- * 멀리서 보내고 마지막 1틱만 벽을 짚어 정산을 임의 발동하는 기술이 됐고, CU9(정산 무적)·
- * SQ2(정산 폭발)와 조합하면 정산이 리듬이 아니라 스킬샷이 된다 — 설계서가 폐기한 안이다.
- * `state.wallContactTicks` 는 접촉이 끊기면 0 으로 리셋되는 **연속** 카운터라 그대로 쓴다.
- */
-const ME9_WALL_TICKS = 60;
 
-/** ME9 의 임계 **인하폭**(틱) = round(20 + 50×Lv/(Lv+12)). Lv1 ≈ 24 · Lv20 ≈ 51 · 점근 70. */
-function fluffConvalescenceCut(level: number): number {
-  return Math.round(20 + (50 * level) / (level + 12));
-}
 
 /**
  * 이번 틱의 **실효 정산 임계**(양의 정수). 앵커 ⑲(`onCushionThreshold`)과 CU7 의 감소 분모가
@@ -218,129 +245,21 @@ export function mallowSettleThreshold(state: WorldState, base: number): number {
   return t > 1 ? t : 1;
 }
 
-/** ME10 의 부채→XP 전환율(%) = 20 + 50×Lv/(Lv+10). Lv20 ≈ 53 · 점근 70. */
-function growthConversionPct(level: number): number {
-  return 20 + (50 * level) / (level + 10);
-}
 
-/** SQ1 의 증폭 상한 bp = 1000 + 3000×Lv/(Lv+10). Lv20 = 3000 · 점근 4000. */
-function debtFuryCapBp(level: number): number {
-  return 1000 + (3000 * level) / (level + 10);
-}
 
-/** SQ8 의 증폭 상한 bp = 800 + 2400×Lv/(Lv+12). Lv20 = 2300 · 점근 3200. */
-function scarCannonCapBp(level: number): number {
-  return 800 + (2400 * level) / (level + 12);
-}
 
-/**
- * ME5 의 **이월분 탕감률** bp = 6000×Lv/(Lv+20). Lv1 ≈ 286 · Lv20 = 3000 · **점근 6000**
- * (= 여백의 최대 60% 만 잠식). 설계서 ME5 「레벨 스케일」의 여백 비례 점근형 그대로다.
- *
- * ⚠️ 설계서 공식의 일반형은 *갱신값 = 현재율 + (10000 − 현재율) × r / 10000* 이고, 그 「현재율」은
- * **ME8「리듬 탕감」이 올려 둔 탕감률**을 뜻한다. ME8 은 아직 미배선이라(탕감률 상수
- * `CUSHION_RECOVER_BP` 가 `shipSignature.ts` 순수 함수 **안**이라 앵커 ㉕ 에 닿을 수 없다)
- * 현재율은 항상 0 이고, 그러면 갱신값 = r 로 정확히 축약된다. ME8 이 도는 날 이 함수의
- * 호출부가 여백 합성으로 바뀌어야 한다 — 합산 상한(불변식 3)은 설계서가 증명해 뒀다.
- */
-function installmentForgiveBp(level: number): number {
-  return (6000 * level) / (level + 20);
-}
 
-/** ME4 의 탕감→회복 전환율(%) = 20 + 60×Lv/(Lv+15). Lv20 = 54 · 점근 80. */
-function rebateTherapyPct(level: number): number {
-  return 20 + (60 * level) / (level + 15);
-}
 
-/** CU3 의 회당 상한 비율(%) = round(30 − 18×Lv/(Lv+10)). Lv20 = 18 · 점근 12. */
-function painlessSettlementPct(level: number): number {
-  return Math.round(30 - (18 * level) / (level + 10));
-}
 
-/** CU10 의 탕감→maxHp 전환율(%) = round(4 + 16×Lv/(Lv+16)). Lv20 ≈ 13 · 점근 20. */
-function capitalizationPct(level: number): number {
-  return Math.round(4 + (16 * level) / (level + 16));
-}
 
-/**
- * CU1 의 **대형 피해 임계**(절대 피해량) = round(40 − 25×Lv/(Lv+10)).
- * Lv1 ≈ 38 · Lv20 ≈ 23 · 점근 15 — 레벨이 오르면 더 작은 피해도 "대형" 으로 취급된다.
- *
- * ⚠️ **maxHp 비율이 아니라 절대값이다**(설계 정본 그대로). 비율로 바꾸면 계보·장비로 기본 HP 를
- * 부풀리는 이 기체의 성장축에서 임계가 함께 부풀어 스킬이 레벨과 무관하게 죽는다.
- */
-function overloadThreshold(level: number): number {
-  return Math.round(40 - (25 * level) / (level + 10));
-}
 
-/** CU2 의 부채 한도 비율(%) = round(25 + 30×Lv/(Lv+12)). Lv1 ≈ 27 · Lv20 ≈ 44 · 점근 55. */
-function debtCeilingPct(level: number): number {
-  return Math.round(25 + (30 * level) / (level + 12));
-}
 
-/**
- * CU5 의 **지속 중 지연율** bp = 6000 + 3500×Lv/(Lv+12). Lv1 ≈ 6269 · Lv20 ≈ 8188 ·
- * **점근 9500 < 10000** — 즉시분이 0 이 되는 특이점이 없다(설계서 "즉시분 0 금지").
- */
-function fullDeferralBp(level: number): number {
-  return 6000 + (3500 * level) / (level + 12);
-}
 
-/**
- * CU6 발동 시 세울 무적 틱 = 30 + 3×Lv.
- *
- * ⚠️ 실제 적용은 `max(hitIframes, 이 값)` 이다(설계서 3R-6). 기본 `hitIframes` 가 40 이라
- * 하한을 안 걸면 **Lv1~3 의 무적이 통상 피격 무적보다 짧아 효과가 통째로 무효**가 된다 —
- * 화면상 조용한 미발현이다. `max` 는 소비처({@link mallowPlayerDamaged})가 진다.
- */
-function bankruptcyIframeTicks(level: number): number {
-  return 30 + 3 * level;
-}
 
-/**
- * ME7 의 **소각액→자석 버프 틱** 전환율(%) = 60 + 40×Lv/(Lv+10).
- * Lv1 ≈ 63.6 · Lv20 ≈ 86.7 · 점근 100 — floor 로 접어 잔여를 버린다(신규 캐리 0).
- */
-function echoBondPct(level: number): number {
-  return 60 + (40 * level) / (level + 10);
-}
 
-/** ME7 이 한 번에 열 수 있는 자석 버프 창의 상한(틱). 설계서 ME7 「레벨 스케일」의 600. */
-const ECHO_BOND_TICK_CAP = 600;
 
-/**
- * SQ9 가 부여하는 화상의 **틱당 피해** = round(기본 화염 × (100 + 4×Lv) / 100).
- *
- * ⚠️ 설계서는 *"기본 화염 기준 틱당 피해 +4%p/Lv"* 라고만 적고 「기본 화염」의 수치를 정의하지
- * 않았다. 이 저장소에서 그 이름이 가리키는 유일한 값은 원소 프리픽스 `flaming` 의 굴림
- * 범위(`data/affixes.ts` 의 `fireDmg` min 2 · max 5)이고, **하한 2** 를 기준으로 잡았다 —
- * 스킬이 어픽스 최상 굴림보다 세지 않게 하는 보수적 선택이다(Lv20 에서 4 로 max 5 미만).
- * 설계서가 수치를 명시하면 그 값이 정본이다.
- */
-const SQ9_BURN_BASE = 2;
-function interestBurnDamage(level: number): number {
-  return Math.round((SQ9_BURN_BASE * (100 + 4 * level)) / 100);
-}
 
-/**
- * SQ10 의 **정산액당 탄수 제수** = 30 − 20×Lv/(Lv+15). Lv1 = 28.75 · Lv20 ≈ 18.6 ·
- * 점근 10 — 레벨이 오를수록 같은 정산액에서 탄이 조밀해진다.
- */
-function maturityDivisor(level: number): number {
-  return 30 - (20 * level) / (level + 15);
-}
 
-/**
- * ME8 의 **실효 탕감률** bp = base + 3500 × (스택×Lv) / (스택×Lv + 120).
- * 10스택 Lv20 = 6000 + 3500×200/320 ≈ 8188 · **점근 base + 3500 = 9500 < 10000** —
- * 어떤 스택·레벨·어픽스 연장에서도 전액 탕감(부호 반전)에 닿지 않는다(설계서 불변식 3).
- *
- * ⚠️ `base` 는 앵커 ㉘ 이 넘겨 주는 {@link CUSHION_RECOVER_BP} 다 — 상수를 복제하지 않는다.
- */
-function rhythmForgivenessBp(base: number, stacks: number, level: number): number {
-  const sl = stacks * level;
-  return base + (3500 * sl) / (sl + 120);
-}
 
 // ---------------------------------------------------------------------------
 // 앵커별 진입점 — `skillHooks.ts` 의 `case SIG_MALLOW_CUSHION:` 이 부른다
@@ -371,16 +290,12 @@ export function mallowGemMagnetParams(
   if (me2 < 1) return;
   const debt = player.aux0;
   if (debt <= 0) return;
-  const capBp = 3000 + (4000 * me2) / (me2 + 12);
-  const rawBp = debt * (6 + 2 * me2);
+  const capBp = debtMagnetCapBp(me2);
+  const rawBp = debt * debtMagnetPerDebtBp(me2);
   const bp = rawBp > capBp ? capBp : rawBp;
   params.radius *= 1 + bp / 10000;
 }
 
-/** ME3 과금 주기 N = `1 + floor(Lv/6)` 틱 (Lv1~5 = 매 틱 · Lv20 = 4틱당 1 — 6레벨 폭 정수 계단). */
-function painlessDrivePeriod(level: number): number {
-  return 1 + Math.floor(level / 6);
-}
 
 /**
  * 앵커 ㉙ **이동 배율 산출 직전** — ME3 무통 주행 · CU8 통증 마취.
@@ -440,8 +355,8 @@ export function mallowPlayerMoveParams(
   if (debt <= 0) return;
   const cu8 = lv(state, Sk.painAnesthesia);
   if (cu8 < 1) return;
-  const capBp = 1500 + (1500 * cu8) / (cu8 + 10);
-  const rawBp = 400 + debt * (2 + cu8);
+  const capBp = painAnesthesiaCapBp(cu8);
+  const rawBp = PAIN_ANESTHESIA_BASE_BP + debt * painAnesthesiaPerDebtBp(cu8);
   const bp = rawBp > capBp ? capBp : rawBp;
   params.speedMult *= 1 + bp / 10000;
 }
@@ -460,7 +375,7 @@ export function mallowPlayerMoveParams(
 export function mallowGemCollected(state: WorldState, player: Entity): void {
   const me1 = lv(state, Sk.earlyRepayment);
   if (me1 < 1) return;
-  const add = 2 + Math.floor(me1 / 2);
+  const add = earlyRepaymentTicks(me1);
   const next = Math.trunc(player.aux1) + add;
   player.aux1 = next > CUSHION_TICK_CAP ? CUSHION_TICK_CAP : next;
 }
@@ -494,11 +409,11 @@ export function mallowPlayerDamaged(state: WorldState, player: Entity, dmg: numb
   if (sq3 >= 1 && dmg > 0) {
     // 반환 배율 = 60 + 8×Lv %. 반올림은 이 게이트 **안**이다(규율 ③) — 접촉 피해는 엘리트
     // 배율이 섞여 소수일 수 있고, 밖으로 빼면 스킬 없는 런까지 바뀐다.
-    const back = Math.round((dmg * (60 + 8 * sq3)) / 100);
+    const back = Math.round((dmg * bodyRecoilPct(sq3)) / 100);
     if (back > 0) {
       // 탐색 반경 260 고정 · 대상 `kind === 'enemy'` 한정(설계서: 보스·guardian·구조물 제외).
       // 제곱 비교라 `Math.sqrt` 가 낄 자리가 없다(`nearestTarget` 과 동형).
-      const r2 = 260 * 260;
+      const r2 = BODY_RECOIL_RANGE * BODY_RECOIL_RANGE;
       let best: Entity | undefined;
       let bestD2 = r2;
       for (const e of state.entities) {
@@ -530,8 +445,8 @@ export function mallowPlayerDamaged(state: WorldState, player: Entity, dmg: numb
     const debt = Math.trunc(player.aux0);
     if (debt > 0) {
       // 기본 반경 70 + 6×Lv, 부채 비례 확장 = aux0 × 2 (확장분 상한 = 기본 반경의 2배).
-      const base = 70 + 6 * cu4;
-      const grow = debt * 2;
+      const base = recoilRinseRadius(cu4);
+      const grow = debt * RECOIL_RINSE_PER_DEBT;
       const cap = base * 2;
       clearEnemyBullets(state, player, base + (grow > cap ? cap : grow));
     }
@@ -632,7 +547,7 @@ export function mallowEnemyDamaged(
   const len = Math.sqrt(vx * vx + vy * vy);
   if (!(len > 0)) return;
   // 변위 = 12 + 3×Lv (sim 좌표). 엘리트(`pierce > 0` — `isElite` 와 같은 술어)는 반감.
-  let push = 12 + 3 * sq4;
+  let push = debtStampPush(sq4);
   if (target.pierce > 0) push = Math.round(push / 2);
   if (push <= 0) return;
   target.x += (vx / len) * push;
@@ -792,15 +707,15 @@ export function mallowCushionSettled(
   // --- SQ2 청산 폭발 — 갚은 만큼 되쏜다 ----------------------------------------
   const sq2 = lv(state, Sk.settlementBlast);
   if (sq2 >= 1 && hit > 0) {
-    const dmg = Math.round((hit * (80 + 6 * sq2)) / 100);
+    const dmg = Math.round((hit * settlementBlastPct(sq2)) / 100);
     // `blastDamage` 는 hp≤0 이 된 적을 `dead` 로 마킹하고(선결 과제 ⑨ 이후), 격추 **집계**는
     // 여전히 `compact()` 단일 수렴점이다 — 마킹은 수거 대상 표시일 뿐이다(SQ3 와 같은 규율).
-    if (dmg > 0) blastDamage(state, player, 180 + 10 * sq2, dmg);
+    if (dmg > 0) blastDamage(state, player, settlementBlastRadius(sq2), dmg);
   }
   // --- SQ5 탕감 장전 — 사라진 몫이 탄약이 된다 ---------------------------------
   const sq5 = lv(state, Sk.forgivenessLoader);
   if (sq5 >= 1 && recovered > 0) {
-    const add = Math.round((recovered * (50 + 5 * sq5)) / 100);
+    const add = Math.round((recovered * forgivenessLoadPct(sq5)) / 100);
     if (add > 0) {
       const rem = readSlot(state.skillStage, MallowStage.forgivenessLoad);
       writeSlot(state.skillStage, MallowStage.forgivenessLoad, rem + add);
@@ -826,7 +741,7 @@ export function mallowCushionSettled(
   // --- CU9 유예의 은총 — 갚는 순간의 무적 --------------------------------------
   const cu9 = lv(state, Sk.graceOfSettlement);
   if (cu9 >= 1) {
-    const grace = 20 + 4 * cu9;
+    const grace = graceOfSettlementTicks(cu9);
     // `max` 형태다 — 통상 피격 무적이 더 길게 남아 있으면 그것을 **깎으면 안 된다**.
     if (player.iframes < grace) player.iframes = grace;
   }
@@ -841,20 +756,22 @@ export function mallowCushionSettled(
   const sq10 = lv(state, Sk.maturityVolley);
   if (sq10 >= 1 && matured && settled > 0) {
     // 탄수 = 6 + ceil(정산액 / (30 − 20×Lv/(Lv+15))). 반올림·나눗셈은 이 게이트 안이다.
-    const count = 6 + Math.ceil(settled / maturityDivisor(sq10));
+    const count = MATURITY_VOLLEY_BASE + Math.ceil(settled / maturityDivisor(sq10));
     // ⚠️ 방향은 `player.angle`(조준각) 폴백이다. 설계서 3R-9 가 명시한 알려진 성질 —
     // 자동 조준이 실제 발사각을 정하는 sim 이라 **정지 상태 만기에서는 탄막이 허공으로 나갈 수
     // 있고 그것이 정상 동작**이다(액티브 `activeDirOf` 폴백 정본을 여기 복제하지 않는다).
     const dir = { x: cos(player.angle), y: sin(player.angle) };
     // 부채꼴 45° · pierce 2 — 설계서 「구현」 항(2R M1)이 「레벨 스케일」의 "관통 1 고정" 을
     // 뒤집은 값이다. 좁은 각 + 관통 예산 상향이 본체 문언("방향성 관통")을 실현한다.
-    fanStrike(state, player, count, 12 + 2 * sq10, 45, dir, { pierce: 2 });
+    fanStrike(state, player, count, maturityVolleyDamage(sq10), MATURITY_VOLLEY_ARC, dir, {
+      pierce: MATURITY_VOLLEY_PIERCE,
+    });
   }
   // --- CU10 영구 채무 자본화 — 갚아 본 빚이 몸집이 된다 ------------------------
   const cu10 = lv(state, Sk.perpetualCapitalization);
   if (cu10 >= 1 && recovered > 0) {
     let gain = Math.round((recovered * capitalizationPct(cu10)) / 100);
-    const per = 3 + cu10;
+    const per = capitalizationPerSettle(cu10);
     if (gain > per) gain = per;
     // ⚠️ `maxHp` 만 올리고 `hp` 는 올리지 않는다(설계서 명시) — 회복이 아니므로 불변식 1
     // 대상 밖이고, 파워업 `reinforced-hull` 의 "즉시 회복" 과 여기서 갈린다. ME4 **뒤**라
@@ -895,7 +812,7 @@ export function mallowVolleyParams(
   if (sq1 >= 1) {
     const debt = Math.trunc(player.aux0);
     if (debt > 0) {
-      const raw = debt * (4 + sq1);
+      const raw = debt * debtFuryPerDebtBp(sq1);
       const cap = debtFuryCapBp(sq1);
       bp += raw > cap ? Math.round(cap) : raw;
     }
@@ -905,7 +822,7 @@ export function mallowVolleyParams(
   if (sq8 >= 1) {
     const cum = readSlot(state.skillCarry, MallowCarry.scarApplied);
     if (cum > 0) {
-      const raw = cum * (6 + 2 * sq8);
+      const raw = cum * scarCannonPerDamageBp(sq8);
       const cap = scarCannonCapBp(sq8);
       bp += raw > cap ? Math.round(cap) : raw;
     }
@@ -919,7 +836,7 @@ export function mallowVolleyParams(
       // ⚠️ 하한 1 이 **종료 보장**이다. 설계서의 "정수 내림 · 0 도달 시 종료" 를 floor 만으로
       // 쓰면 잔량 3 이하에서 소진이 0 이 되어 **영영 안 비는 탄창**이 된다(잔량이 해시에
       // 접히므로 조용한 영구 발산이다).
-      let use = Math.floor((rem * 25) / 100);
+      let use = Math.floor((rem * FORGIVENESS_USE_PCT) / 100);
       if (use < 1) use = 1;
       if (use > rem) use = rem;
       writeSlot(state.skillStage, MallowStage.forgivenessLoad, rem - use);
@@ -953,8 +870,8 @@ export function mallowVolleyParams(
       if (dot > 0) {
         // 최대 보정(정방향 완전 일치): 탄속 +10% + 1%p/Lv · 피해 +4% + 1%p/Lv. 내적 비례.
         // bp 를 먼저 정수로 접는 것이 이 저장소 관용구다(정수 bp · 나눗셈 1회 · 반올림 1회).
-        const speedBp = Math.round((1000 + 100 * sq7) * dot);
-        const damageBp = Math.round((400 + 100 * sq7) * dot);
+        const speedBp = Math.round(momentumSpeedBp(sq7) * dot);
+        const damageBp = Math.round(momentumDamageBp(sq7) * dot);
         if (damageBp > 0) params.damage += Math.round((params.damage * damageBp) / 10000);
         if (speedBp > 0) params.speed = (params.speed * (10000 + speedBp)) / 10000;
       }
@@ -1159,9 +1076,9 @@ export function mallowInstantExchange(state: WorldState): InstantExchange | unde
   const sq6 = lv(state, Sk.instantExchange);
   if (sq6 < 1) return undefined;
   return {
-    per: Math.round(10 - (6 * sq6) / (sq6 + 8)),
-    pierce: 1,
-    damageBp: 1000 + 200 * sq6,
+    per: instantExchangePer(sq6),
+    pierce: INSTANT_EXCHANGE_PIERCE,
+    damageBp: instantExchangeDamageBp(sq6),
   };
 }
 
@@ -1179,7 +1096,7 @@ export function mallowInstantExchange(state: WorldState): InstantExchange | unde
 export function mallowBlinkRinse(state: WorldState, player: Entity): void {
   const me6 = lv(state, Sk.afterimageRinse);
   if (me6 < 1) return;
-  const r = 140 + 10 * me6;
+  const r = afterimageRinseRadius(me6);
   clearEnemyBullets(state, player, r);
   const r2 = r * r;
   for (const e of state.entities) {

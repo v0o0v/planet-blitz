@@ -61,6 +61,9 @@ const FLAT_SKILLS = new Set([
   'hatchling-egg-roll',
   'hatchling-shared-warmth',
   'hatchling-migration-instinct',
+  'phantom-silent-kill',
+  'phantom-ghost-trajectory',
+  'phantom-ghost-hull',
 ]);
 
 // ===========================================================================

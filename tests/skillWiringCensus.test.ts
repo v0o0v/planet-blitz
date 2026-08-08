@@ -113,11 +113,15 @@ const FILE_SHIP: Readonly<Record<string, string>> = {
   'hatchling.ts': 'hatchling',
   'hatchlingScaling.ts': 'hatchling',
   'mallow.ts': 'mallow',
+  // 앵커가 한 칸도 없는 **레벨 스케일 전용** 모듈('strikerScaling.ts' 항목과 같은 사유).
+  'mallowScaling.ts': 'mallow',
   // SQ9 의 **탕감** 두 경로만 여기 산다 — 만료 앵커가 `status.ts` 안이고 `mallow.ts` 는
   // 그 파일을 값으로 import 하므로 같은 파일에 두면 런타임 순환이 된다(그 파일 헤더가 근거).
   'mallowStatus.ts': 'mallow',
   'phantom.ts': 'phantom',
   'phantomEntry.ts': 'phantom',
+  // 앵커가 한 칸도 없는 **레벨 스케일 전용** 모듈('strikerScaling.ts' 항목과 같은 사유).
+  'phantomScaling.ts': 'phantom',
   'striker.ts': 'striker',
   // 앵커가 **한 칸도 없는** 파일이다 — 레벨 스케일 공식만 담은 순수 모듈이라
   // (`const enum Sk` 도 없다) 이 인구조사에는 0건으로 잡힌다. 그래도 표에 적는 이유는

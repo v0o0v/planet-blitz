@@ -43,6 +43,8 @@ import { skillLv } from '../../items/skills.js';
  * 않는 것은 그 파일이 `status.ts` 를 값으로 당기기 때문이다(위 헤더) — `const enum` 이라도
  * 모듈 간선이 서는 것을 피한다.
  */
+import { interestBurnForgive } from './mallowScaling.js';
+
 const enum Sk {
   /** SQ9 이자 소각 */ interestBurn = 8,
 }
@@ -57,10 +59,6 @@ function lv(state: WorldState, flat: Sk): number {
   );
 }
 
-/** SQ9 의 만료·사망 1회당 부채 탕감량 = 3 + floor(Lv/2) (2레벨 폭 정수 계단). */
-function interestBurnForgive(level: number): number {
-  return 3 + Math.floor(level / 2);
-}
 
 /**
  * **적 상태이상 만료 앵커** — SQ9 이자 소각의 **탕감 경로 ①**.
