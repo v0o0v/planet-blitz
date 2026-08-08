@@ -55,6 +55,8 @@ const FLAT_SKILLS = new Set([
   'bruiser-dash-loading',
   'bruiser-unmoved-accretion',
   'bruiser-crush-cadence',
+  'bubble-signal-drift',
+  'bubble-purge-burst',
 ]);
 
 // ===========================================================================

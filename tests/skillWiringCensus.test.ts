@@ -109,6 +109,7 @@ const FILE_SHIP: Readonly<Record<string, string>> = {
   'bruiser.ts': 'bruiser',
   'bruiserScaling.ts': 'bruiser',
   'bubble.ts': 'bubble',
+  'bubbleScaling.ts': 'bubble',
   'hatchling.ts': 'hatchling',
   'mallow.ts': 'mallow',
   // SQ9 의 **탕감** 두 경로만 여기 산다 — 만료 앵커가 `status.ts` 안이고 `mallow.ts` 는
