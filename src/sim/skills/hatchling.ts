@@ -169,6 +169,43 @@ import { skillLv } from '../../items/skills.js';
 // [chain, barrage, barrier] 다 — 설계서의 서술 순서를 믿지 말고 언제나 `data/ships/{ship}.ts`
 // 의 `trees` 배열을 보라. 해츨링은 서술 순서(부화→양육→둥지)와 데이터가 일치한다.
 
+import {
+  BROOD_MAX_DRONES,
+  VETERAN_SHOT_CAP,
+  HATCH_THRESHOLD_FLOOR,
+  earlyHatchCut,
+  twinHatchPeriod,
+  farewellVolleyCount,
+  farewellVolleyDamage,
+  targetShareBonus,
+  volleyResonanceCut,
+  hatchShockwaveRadius,
+  hatchShockwaveDamage,
+  veteranPerShot,
+  overcrowdCut,
+  matriarchDamagePerDeficit,
+  matriarchLifePerDeficit,
+  gemFetchRadius,
+  eggshellGemCount,
+  piggybackHalfWidth,
+  nestRecallCut,
+  expeditionRange,
+  nestBeaconRadius,
+  eggBankCap,
+  sacrificeAbsorb,
+  crisisScatterDash,
+  crisisScatterClear,
+  warmthPeriodTicks,
+  broodingRadius,
+  alarmChirpExtraTicks,
+  eggMembraneIframes,
+  rebirthHpPerChick,
+  rebirthCapBp,
+  featherBulwarkCost,
+  fledgeNestHp,
+  expandedNestPenalty,
+} from './hatchlingScaling.js';
+
 const enum Sk {
   /** BD1 조기 부화 */ earlyHatch = 0,
   /** BD2 쌍둥이 부화 */ twinHatch = 1,
@@ -238,7 +275,6 @@ function lv(state: WorldState, flat: Sk): number {
  * ✅ **2026-08-07(W-해츨링)이 그 헬퍼를 세웠다** — {@link broodMaxDrones} 다. 이 리터럴은
  * 이제 **기본항 4** 이고, 실효 상한을 읽는 쪽은 앵커 ㉓ 도 SH3 도 전부 그 함수를 통한다.
  */
-const BROOD_MAX_DRONES = 4;
 
 /**
  * **실효 병아리 상한** — 위 상수의 유일한 소비 지점이다. 앵커 ㉓ 의 `params.maxDrones` 와
@@ -303,19 +339,10 @@ function countChicks(state: WorldState): number {
 // (SH1·SH7 은 피격 틱, SH3 은 `tick % 주기 === 0` 인 틱뿐)이라 sim 루프의 상시 나눗셈이 아니다.
 
 /** SH1 흡수량 = round(8 + 60×Lv/(Lv+18)) (Lv1 ≈ 11, Lv20 ≈ 40, 점근 68). */
-function sacrificeAbsorb(level: number): number {
-  return Math.round(8 + (60 * level) / (level + 18));
-}
 
 /** SH3 회복 주기 = 60 + 4800/(Lv+20) 틱 (Lv1 ≈ 288, Lv20 = 180, 점근 60 — 0 교차 없음). */
-function warmthPeriodTicks(level: number): number {
-  return 60 + Math.floor(4800 / (level + 20));
-}
 
 /** SH7 소멸 1기당 잔존 HP = 4 + round(16×Lv/(Lv+12)) (Lv1 ≈ 5, Lv20 = 14, 점근 20). */
-function rebirthHpPerChick(level: number): number {
-  return 4 + Math.round((16 * level) / (level + 12));
-}
 
 // ---------------------------------------------------------------------------
 // 앵커 ① — 주무기 볼리 발사가 확정된 지점
@@ -335,7 +362,7 @@ export function hatchlingVolleyFired(state: WorldState, player: Entity): void {
   void player;
   const bd5 = lv(state, Sk.volleyResonance);
   if (bd5 < 1) return;
-  const cut = 1 + Math.floor(bd5 / 5);
+  const cut = volleyResonanceCut(bd5);
   for (const e of state.entities) {
     if (!isChick(e)) continue;
     if (e.cooldown <= 0) continue;
@@ -473,7 +500,7 @@ function hatchlingPiggyback(
   const travel = state.config.dashSpeed * DT;
   const ax = player.x + dirX * travel;
   const ay = player.y + dirY * travel;
-  const halfWidth = 90 + 8 * nu3;
+  const halfWidth = piggybackHalfWidth(nu3);
   const half2 = halfWidth * halfWidth;
 
   const abx = ax - player.x;
@@ -549,7 +576,7 @@ export function hatchlingDamageChain(state: WorldState, player: Entity, dmg: num
     if (n > 0) {
       // 기당 잔존 합과 **총량 상한(maxHp 의 30% + 1%p/Lv)** 의 min — 대형 피해 평준화 방지.
       const perChick = rebirthHpPerChick(sh7) * n;
-      const cap = Math.round((player.maxHp * (3000 + 100 * sh7)) / 10000);
+      const cap = Math.round((player.maxHp * rebirthCapBp(sh7)) / 10000);
       const remain = perChick < cap ? perChick : cap;
       // hp − out = remain 이 되도록 피해를 깎는다. remain 은 1 이상이라 반드시 생존한다.
       const left = remain > 0 ? remain : 1;
@@ -603,7 +630,6 @@ function killChick(state: WorldState, e: Entity): void {
 /** NU9 표식의 접촉 트리거 반경. `chunks.ts` 의 `EVENT_TRIGGER_RADIUS`(=70) 지역 사본이다 —
  *  그 파일을 런타임 import 하면 지형 생성기가 스킬 leaf 에 딸려 들어온다(`BROOD_MAX_DRONES`
  *  와 같은 선례·같은 대가: 값이 바뀌면 두 곳을 함께 고쳐야 한다). */
-const NU9_BEACON_RADIUS = 70;
 
 /** SH9 둥지벽 반폭·반높이. 병아리 반경(44)보다 **작게** 둔다 — 크게 잡으면 출격 자리
  *  (플레이어 ±60)에 벽이 서서 스크롤 모드에서 플레이어를 가둘 수 있다. */
@@ -631,7 +657,7 @@ function chickDespawned(state: WorldState, chick: Entity): void {
     const dir = nearestHostileDir(state, chick);
     if (dir !== undefined) {
       // 탄 수 = 3 + floor(Lv/4), 발당 피해 = 6 + 2×Lv, 폭 50°.
-      fanStrike(state, chick, 3 + Math.floor(bd3 / 4), 6 + 2 * bd3, 50, dir);
+      fanStrike(state, chick, farewellVolleyCount(bd3), farewellVolleyDamage(bd3), 50, dir);
     }
   }
 
@@ -642,7 +668,7 @@ function chickDespawned(state: WorldState, chick: Entity): void {
   //    소비되고 나머지가 자리에 남아 "쌓이는 표식" 이 된다.
   const nu9 = lv(state, Sk.nestBeacon);
   if (nu9 >= 1) {
-    spawnEventObject(state, 'magnetEmitter', chick.x, chick.y, NU9_BEACON_RADIUS + 4 * nu9);
+    spawnEventObject(state, 'magnetEmitter', chick.x, chick.y, nestBeaconRadius(nu9));
   }
 }
 
@@ -711,7 +737,7 @@ export function hatchlingSignatureStep(state: WorldState, player: Entity): void 
     const seen = readSlot(state.skillStage, HatchlingStage.launchAux0Seen);
     const cur = Math.trunc(player.aux0);
     if (cur > seen) {
-      const iframes = 20 + 3 * sh6;
+      const iframes = eggMembraneIframes(sh6);
       if (player.iframes < iframes) player.iframes = iframes;
     }
     writeSlot(state.skillStage, HatchlingStage.launchAux0Seen, cur);
@@ -818,7 +844,7 @@ export function hatchlingEnemyDamaged(
   const sh5 = lv(state, Sk.alarmChirp);
   if (sh5 >= 1 && source !== undefined && source.ownerId === BROOD_MARK) {
     if (target.kind === 'enemy' && !target.dead) {
-      applySlow(target, COLD_DURATION + 6 * sh5);
+      applySlow(target, COLD_DURATION + alarmChirpExtraTicks(sh5));
     }
   }
 
@@ -874,15 +900,15 @@ export function hatchlingBroodLaunchParams(
   params.maxDrones = broodMaxDrones(state);
   const sh10 = lv(state, Sk.expandedNest);
   if (sh10 >= 1) {
-    const penalty = 6 - Math.floor(sh10 / 4);
+    const penalty = expandedNestPenalty(sh10);
     if (penalty > 0) params.threshold += penalty;
   }
 
   // ── BD1 조기 부화 — 요구치 −(1 + floor(Lv/5)), **하한 6**(기본항 12 의 절반).
   const bd1 = lv(state, Sk.earlyHatch);
   if (bd1 >= 1) {
-    const t = params.threshold - (1 + Math.floor(bd1 / 5));
-    params.threshold = t > 6 ? t : 6;
+    const t = params.threshold - earlyHatchCut(bd1);
+    params.threshold = t > HATCH_THRESHOLD_FLOOR ? t : HATCH_THRESHOLD_FLOOR;
   }
 
   const bd2 = lv(state, Sk.twinHatch);
@@ -912,7 +938,7 @@ export function hatchlingBroodLaunchParams(
       // 만석 보류 중 — 이 틱에 늘어난 처치를 적립한다. 상한 = round(8 + 40×Lv/(Lv+16)).
       const gained = kills - seen;
       if (gained > 0) {
-        const cap = Math.round(8 + (40 * nu10) / (nu10 + 16));
+        const cap = eggBankCap(nu10);
         bank += gained;
         if (bank > cap) bank = cap;
       }
@@ -924,7 +950,7 @@ export function hatchlingBroodLaunchParams(
   // ── BD2 쌍둥이 부화 — N번째 **사건**마다 2기. N = 2 + round(18/(Lv+2)) (Lv1 = 8, Lv20 = 3).
   //    상한·보류 규율은 world 루프가 이미 지킨다(자리가 1칸이면 1기만 나가고 보류 유지).
   if (bd2 >= 1 && willLaunch) {
-    const n = 2 + Math.round(18 / (bd2 + 2));
+    const n = twinHatchPeriod(bd2);
     const count = readSlot(state.skillStage, HatchlingStage.twinLaunchCount) + 1;
     writeSlot(state.skillStage, HatchlingStage.twinLaunchCount, count);
     if (count % n === 0) params.launchCount = 2;
@@ -981,14 +1007,14 @@ export function hatchlingBroodLaunched(state: WorldState, player: Entity, chick:
   const bd10 = lv(state, Sk.matriarchLaunch);
   if (bd10 >= 1) {
     const deficit = broodDeficit(state);
-    if (deficit > 0) chick.life += deficit * (60 + 10 * bd10);
+    if (deficit > 0) chick.life += deficit * matriarchLifePerDeficit(bd10);
   }
 
   // ── NU7 원정 부화 — 허용 거리(400 + 40×Lv) 안의 **최근접 젬** 좌표에서 부화한다.
   //    젬이 없거나 전부 거리 밖이면 아무것도 하지 않는다 = world 의 기본 4방향 폴백.
   const nu7 = lv(state, Sk.expeditionHatch);
   if (nu7 >= 1) {
-    const maxDist = 400 + 40 * nu7;
+    const maxDist = expeditionRange(nu7);
     const max2 = maxDist * maxDist;
     let bestX = 0;
     let bestY = 0;
@@ -1021,15 +1047,15 @@ export function hatchlingBroodLaunched(state: WorldState, player: Entity, chick:
   //    넘겨 발생지를 출격 좌표로 만든다. 병아리는 `enemy`/`boss` 가 아니라 자해가 없다.
   const bd6 = lv(state, Sk.hatchShockwave);
   if (bd6 >= 1) {
-    const radius = 110 + 9 * bd6;
-    blastDamage(state, chick, radius, 12 + 3 * bd6);
+    const radius = hatchShockwaveRadius(bd6);
+    blastDamage(state, chick, radius, hatchShockwaveDamage(bd6));
     clearEnemyBullets(state, chick, radius);
   }
 
   // ── NU2 알껍질 영양 — 출격 좌표에 소형 XP 젬 `2 + floor(Lv/5)` 개(고정 오프셋).
   const nu2 = lv(state, Sk.eggshellNutrients);
   if (nu2 >= 1) {
-    const count = 2 + Math.floor(nu2 / 5);
+    const count = eggshellGemCount(nu2);
     for (let i = 0; i < count; i++) {
       const k = i % 8;
       spawnGem(
@@ -1052,7 +1078,6 @@ export function hatchlingBroodLaunched(state: WorldState, player: Entity, chick:
  * NU6(수명 감소 절반)·BD10(수명 가산)이 붙은 런에서 한 개체의 발사 수가 두 배 이상으로
  * 늘어나 곱이 발산하기 때문이다.
  */
-const BD7_SHOT_CAP = 40;
 
 /**
  * **BD10 여왕 사출(탄 피해 축) · BD7 노병 병아리(누적 강화 축).**
@@ -1098,8 +1123,8 @@ export function hatchlingTurretShotParams(
   const bd7 = lv(state, Sk.veteranChick);
   if (bd7 >= 1) {
     const shots = Math.trunc(turret.aux0);
-    const n = shots < BD7_SHOT_CAP ? shots : BD7_SHOT_CAP;
-    params.damage *= 1 + n * (0.02 + 0.002 * bd7);
+    const n = shots < VETERAN_SHOT_CAP ? shots : VETERAN_SHOT_CAP;
+    params.damage *= 1 + n * veteranPerShot(bd7);
     turret.aux0 = shots + 1;
   }
 
@@ -1113,7 +1138,7 @@ export function hatchlingTurretShotParams(
     const hitTick = readSlot(state.skillStage, HatchlingStage.shareHitTick);
     if (hitTick > 0 && state.tick - hitTick <= 30) {
       if (sharedTargetFor(state, turret) !== undefined) {
-        params.damage *= 1 + (0.15 + 0.02 * bd4);
+        params.damage *= 1 + targetShareBonus(bd4);
       }
     }
   }
@@ -1123,7 +1148,7 @@ export function hatchlingTurretShotParams(
   if (bd10 < 1) return;
   const deficit = broodDeficit(state);
   if (deficit <= 0) return; // SH10 동시 투자로 결손을 되산 런 — 설계상 강화 0.
-  params.damage *= 1 + deficit * (0.3 + 0.03 * bd10);
+  params.damage *= 1 + deficit * matriarchDamagePerDeficit(bd10);
 }
 
 // ---------------------------------------------------------------------------
@@ -1205,7 +1230,7 @@ export function hatchlingTurretCadence(
   // ── BD9 과밀 본능 — 만석인 동안 간격 −(2 + floor(Lv/4)) 틱.
   const bd9 = lv(state, Sk.overcrowdInstinct);
   if (bd9 >= 1 && countChicks(state) >= broodMaxDrones(state)) {
-    cut += 2 + Math.floor(bd9 / 4);
+    cut += overcrowdCut(bd9);
   }
 
   // ── NU4 둥지 소집(연사 창) — 창이 열려 있는 동안 간격 −(3 + floor(Lv/5)) 틱.
@@ -1213,7 +1238,7 @@ export function hatchlingTurretCadence(
   //    앵커 ⑨ 다. 여기는 **읽기만** 한다 — 포탑 기당 깎으면 대수에 반비례해 짧아진다.
   const nu4 = lv(state, Sk.nestRecall);
   if (nu4 >= 1 && readSlot(state.skillStage, HatchlingStage.nestRecallTicks) > 0) {
-    cut += 3 + Math.floor(nu4 / 5);
+    cut += nestRecallCut(nu4);
   }
 
   if (cut <= 0) return;
@@ -1262,7 +1287,7 @@ export function hatchlingTurretExpired(state: WorldState, turret: Entity): void 
       turret.y,
       SH9_NEST_WALL_HALF,
       SH9_NEST_WALL_HALF,
-      8 + 2 * sh9,
+      fledgeNestHp(sh9),
     );
   }
 }
@@ -1294,7 +1319,7 @@ export function hatchlingTurretExpired(state: WorldState, turret: Entity): void 
 export function hatchlingEnemyBulletMoved(state: WorldState, bullet: Entity): boolean {
   const sh8 = lv(state, Sk.featherBulwark);
   if (sh8 < 1) return false;
-  const dec = Math.max(1, 12 - Math.floor(sh8 / 2));
+  const dec = featherBulwarkCost(sh8);
   for (const e of state.entities) {
     if (!isChick(e)) continue;
     const dx = e.x - bullet.x;
@@ -1350,8 +1375,8 @@ export function hatchlingPlayerDamaged(
   const ux = rx / d;
   const uy = ry / d;
 
-  const dash = 90 + 6 * sh2;
-  const clearR = 70 + 4 * sh2;
+  const dash = crisisScatterDash(sh2);
+  const clearR = crisisScatterClear(sh2);
   const spread = dash / 2;
 
   let i = 0;
@@ -1472,7 +1497,7 @@ const SH4_UNIT_OY = [0, 0, 1, -1, 0.7071, 0.7071, -0.7071, -0.7071] as const;
 export function hatchlingShelterSustain(state: WorldState, player: Entity): void {
   const sh4 = lv(state, Sk.broodingFormation);
   if (sh4 < 1) return;
-  const radius = 60 + 5 * sh4;
+  const radius = broodingRadius(sh4);
   let i = 0;
   for (const e of state.entities) {
     if (!isChick(e)) continue;
@@ -1513,5 +1538,5 @@ export function hatchlingShelterSustain(state: WorldState, player: Entity): void
 export function hatchlingGemMagnetParams(state: WorldState, params: GemMagnetParams): void {
   const nu1 = lv(state, Sk.gemFetch);
   if (nu1 < 1) return;
-  params.broodRadius = 100 + 10 * nu1;
+  params.broodRadius = gemFetchRadius(nu1);
 }

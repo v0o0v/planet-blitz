@@ -57,6 +57,10 @@ const FLAT_SKILLS = new Set([
   'bruiser-crush-cadence',
   'bubble-signal-drift',
   'bubble-purge-burst',
+  'hatchling-brood-assault',
+  'hatchling-egg-roll',
+  'hatchling-shared-warmth',
+  'hatchling-migration-instinct',
 ]);
 
 // ===========================================================================
