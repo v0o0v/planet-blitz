@@ -2163,9 +2163,10 @@ async function main(): Promise<void> {
           // 둘 다 순수 리더라 sim 무수정이고, OR 라서 에코 단독 런의 거동은 그대로다.
           echoStabilized: echoStabilizedOf(w) || encounterShardOf(w),
           storyMetricDeltas: runStoryMetrics(w),
-          // 행성 인기 배율 관통(ADR-0038): 정산이 ① XP 30% 하한을 **감쇠×배율 합성**에 다시
-          // 걸고 ② 특산 설계도 동반 확률을 역수 보정하는 데 쓴다. 침공·오프라인 런은 config 에
-          // 필드가 없어 undefined → 중립(구 경로 산술 동일).
+          // 행성 인기 배율 관통(ADR-0038): 정산이 XP 30% 하한을 **감쇠×배율 합성**에 다시 거는
+          // 데 쓴다. 침공·오프라인 런은 config 에 필드가 없어 undefined → 중립(구 경로 산술 동일).
+          // ⚠️ 2026-08-08 까지는 소비처가 하나 더 있었다(특산 설계도 동반 확률 역수 보정).
+          // 설계도가 런 단위 3% 게이트로 바뀌며 그 보정이 사라져 **지금은 XP 축 하나**다.
           ...(w.config.planetMultCenti !== undefined
             ? { planetMultCenti: w.config.planetMultCenti }
             : {}),

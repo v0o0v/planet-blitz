@@ -61,6 +61,23 @@ function commissionCode(): string {
 }
 
 /**
+ * 함수의 **최신 정의를 담은 파일 전문**(주석만 제거, 본문 절단 없음).
+ *
+ * ⚠️ `effectiveFunctionBody` 는 `create or replace` ~ `$$;` 사이만 잘라 준다. 그래서
+ * `revoke all on function …` 처럼 **본문 뒤에 오는 문장**은 그 반환값에 없다. 그리고
+ * `commissionCode()` 는 원본 파일(`20260803000000`) 하나만 읽으므로, 뒤따르는 재정의가
+ * 회수를 빠뜨려도 원본에 남은 회수를 보고 초록이 된다 — **실제 도는 정의는 최신 것**이라
+ * 그 초록은 거짓이다. 2026-08-08 발령 확률 레인이 정확히 이 형태로 회수 4줄을 떨어뜨렸고
+ * 리뷰가 잡아냈다(권한 축이라 증상이 아예 없다). 그 뒤로 권한 단언은 이 헬퍼를 쓴다.
+ */
+function effectiveDefinitionFile(name: string): string {
+  const { file } = effectiveFunctionBody(name);
+  const hit = migrationsInOrder().find((m) => m.file === file);
+  if (hit === undefined) throw new Error(`${file} 을 다시 찾지 못했습니다`);
+  return stripLineComments(hit.sql);
+}
+
+/**
  * 정규식 캡처 그룹을 **문자열로 확정해서** 돌려준다.
  *
  * `noUncheckedIndexedAccess` 아래에서 `m[1]` 은 `string | undefined` 다. `!` 로 눌러 두면 타입만
@@ -182,7 +199,8 @@ describe('의뢰서 원장 — 발령 경로 (AC-I3 · AC-I5 · AC-I6 · AC-I9)'
   });
 
   it('issue_commission_for_run 이 어떤 role 에도 EXECUTE 가 없다 (AC-I6)', () => {
-    const code = commissionCode();
+    // ⚠️ **최신 정의 파일**을 읽는다(`commissionCode()` 아님). 근거는 effectiveDefinitionFile 주석.
+    const code = effectiveDefinitionFile('issue_commission_for_run');
     for (const role of ['public', 'anon', 'authenticated', 'service_role']) {
       expect(code).toContain(
         `revoke all on function public.issue_commission_for_run(uuid, uuid, jsonb) from ${role}`,

@@ -45,6 +45,27 @@ alter table public.commission_issues
   add constraint commission_issues_skip_reason_check
   check (skip_reason in ('not-victory','stock','rate','cooldown','roll'));
 
+-- ⚠️ **조용한 실패를 시끄럽게 만든다.** 위 `drop … if exists` 는 PG 기본 생성명을 가정한다.
+--    어느 환경에서 그 제약이 **다른 이름**으로 존재하면 drop 이 no-op 하고 새 제약이 *추가*되어
+--    둘이 공존한다 → 옛 제약이 'roll' 을 거부해 4b 의 update 가 항상 터지고, 함수의 fail-closed
+--    핸들러가 앵커까지 지운 뒤 warning 하나만 남긴다(= 발령률 0%, 화면은 조용). 배포 시점에
+--    깨뜨리는 편이 낫다.
+do $$
+declare v_n int;
+begin
+  select count(*) into v_n
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+   where n.nspname = 'public'
+     and t.relname = 'commission_issues'
+     and c.contype = 'c'
+     and pg_get_constraintdef(c.oid) like '%skip_reason%';
+  if v_n <> 1 then
+    raise exception 'commission_issues.skip_reason check 제약이 %개다(1이어야 한다) — 옛 제약이 다른 이름으로 남아 있으면 발령률이 조용히 0%% 가 된다', v_n;
+  end if;
+end $$;
+
 create or replace function public.issue_commission_for_run(
   p_pve_run_id uuid,
   p_profile_id uuid,
@@ -222,3 +243,17 @@ begin
   end;
 end;
 $$;
+
+-- `create or replace` 는 기존 권한을 보존하지만, 원본과 같은 회수를 한 번 더 건다(멱등).
+--
+-- ⚠️ **재정의마다 반드시 다시 걸어야 한다.** 순서대로 적용된 DB 에서는 ACL 이 보존되므로
+--    빠뜨려도 아무 증상이 없다 — 위험은 **함수가 선재하지 않는 경로**다(baseline 스쿼시,
+--    `drop function` 후 부분 재적용). 그때 `security definer` 함수가 `EXECUTE to PUBLIC`
+--    기본값으로 새로 생기고, 임의 `authenticated` 가 `p_profile_id`·`p_summary` 를 직접 넣어
+--    **남의 프로필에 의뢰서를 발령**할 수 있다. 리포에 남는 정본이 회수 없는 정의면 이후
+--    모든 재적용이 그 위험을 물려받으므로, 회수는 함수 본문과 한 몸으로 취급한다.
+--    대조: tests/commissionLedgerContract.test.ts AC-I6 (**최신 정의 파일**을 읽는다).
+revoke all on function public.issue_commission_for_run(uuid, uuid, jsonb) from public;
+revoke all on function public.issue_commission_for_run(uuid, uuid, jsonb) from anon;
+revoke all on function public.issue_commission_for_run(uuid, uuid, jsonb) from authenticated;
+revoke all on function public.issue_commission_for_run(uuid, uuid, jsonb) from service_role;

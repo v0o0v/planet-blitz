@@ -100,18 +100,51 @@ describe('M7b 통합 — 정산 → 설계도 파생', () => {
     }
   });
 
+/**
+ * 순수 파생이 **실제로 히트하는** 런의 loot 를 찾는다. 못 찾으면 던진다.
+ *
+ * ⚠️ 이 헬퍼가 생긴 이유: 런 단위 3% 게이트 도입 직후 아래 두 테스트가 고정 픽스처
+ * (`lootSweep(1, 40)` — fold 잔여 9531)를 그대로 써서 **`[]` 와 `[]` 를 비교**하고 있었다.
+ * "정산 결과 = 순수 파생"이라는 이 파일의 유일한 등식 단언이 공허해졌고, `settleRun` 이
+ * `blueprintDropsFromLoot` 호출을 통째로 잃어버려도 초록이었다. 리뷰에서 잡혔다.
+ */
+function hittingLoot(planet: number, maxRuns = 2000): LootRecord[] {
+  for (let run = 0; run < maxRuns; run++) {
+    const loot = lootSweep(planet, 3, run);
+    if (blueprintDropsFromLoot(loot, true).length > 0) return loot;
+  }
+  throw new Error(`행성 ${planet}: ${maxRuns}런 안에 설계도 히트가 없다 — 게이트가 죽었다`);
+}
+
   it('정산이 내놓는 목록은 순수 파생과 정확히 같다(두 진실 금지)', () => {
-    const profile = loadProfile();
-    const loot = lootSweep(1, 40);
-    const out = settleRun(profile, { victory: true, loot, xpTotal: 0, resources: 0, planet: 1, stage: 1 });
-    expect(out.blueprintsGained).toEqual(blueprintDropsFromLoot(loot, 1, true));
+    const loot = hittingLoot(1);
+    const expected = blueprintDropsFromLoot(loot, true);
+    expect(expected.length).toBeGreaterThan(0); // 등식이 공허해지는 것을 못 박는다.
+    const out = settleRun(loadProfile(), {
+      victory: true,
+      loot,
+      xpTotal: 0,
+      resources: 0,
+      planet: 1,
+      stage: 1,
+    });
+    expect(out.blueprintsGained).toEqual(expected);
   });
 
   it('같은 런을 두 번 정산하면 같은 설계도가 나온다(결정론 — RNG 미소비)', () => {
-    const loot = lootSweep(3, 40);
-    const a = settleRun(loadProfile(), { victory: true, loot, xpTotal: 0, resources: 0, planet: 3, stage: 1 });
-    const b = settleRun(loadProfile(), { victory: true, loot, xpTotal: 0, resources: 0, planet: 3, stage: 1 });
-    expect(a.blueprintsGained).toEqual(b.blueprintsGained);
+    const loot = hittingLoot(3);
+    const run = () =>
+      settleRun(loadProfile(), {
+        victory: true,
+        loot,
+        xpTotal: 0,
+        resources: 0,
+        planet: 3,
+        stage: 1,
+      });
+    const a = run();
+    expect(a.blueprintsGained.length).toBeGreaterThan(0); // 공허 재발 방지.
+    expect(a.blueprintsGained).toEqual(run().blueprintsGained);
   });
 
   it('설계도는 프로필에 담기지 않는다 — 보유량은 서버가 진실이다', () => {

@@ -215,7 +215,7 @@ function sampleRuns(
   mk: (run: number) => LootLike[],
 ): ReturnType<typeof blueprintDropsFromLoot> {
   const out: ReturnType<typeof blueprintDropsFromLoot> = [];
-  for (let run = 0; run < runs; run++) out.push(...blueprintDropsFromLoot(mk(run), 1, true));
+  for (let run = 0; run < runs; run++) out.push(...blueprintDropsFromLoot(mk(run), true));
   return out;
 }
 
@@ -233,13 +233,18 @@ describe('정산 입력(blueprintDropsFromLoot)', () => {
     // 지시 첫 줄 "의뢰서와 설계도는 클리어 할때만 먹을 수 있게 한다"의 클라 측 관문.
     // ⚠️ 기본값이 false 다 — settlement.ts 가 victory 를 넘기는 배선이 지워지면 축 전체가
     //    조용히 죽는다. 그래서 "0이다"만 재는 것으로는 부족하고 아래 짝 단언이 함께 선다.
-    const loot: LootLike[] = [];
-    for (let seed = 1; seed <= 200; seed++) loot.push({ seed, rarity: RARITY_UNIQUE, planet: 3 });
-    expect(blueprintDropsFromLoot(loot, 1, false)).toEqual([]);
-    // 같은 입력이 클리어면 표본에서 반드시 나온다(위 0 이 게이트 때문임을 증명).
-    expect(sampleRuns(600, (run) => [
+    // ⚠️ **단일 런으로 재면 안 된다.** 게이트를 지워도 그 한 런이 3% 를 못 뚫으면 통과한다
+    //    (뮤테이션 실험에서 실제로 통과했다). 클리어 표본과 **같은 런 집합**을 false 로 돌려
+    //    양쪽을 비교해야 "0 인 이유가 게이트"임이 증명된다.
+    const mk = (run: number): LootLike[] => [
       { seed: (run * 0x9e3779b1 + 7) >>> 0, rarity: RARITY_UNIQUE, planet: 3 },
-    ]).length).toBeGreaterThan(0);
+    ];
+    const RUNS = 600;
+    let lost = 0;
+    for (let run = 0; run < RUNS; run++) lost += blueprintDropsFromLoot(mk(run), false).length;
+    expect(lost).toBe(0);
+    // 짝: 같은 런 집합이 클리어면 반드시 나온다 → 위 0 이 "축이 죽어서"가 아님을 증명.
+    expect(sampleRuns(RUNS, mk).length).toBeGreaterThan(0);
   });
 
   it('런당 획득률이 약 3% 이고 드랍 건수에 불변이다', () => {
@@ -273,7 +278,7 @@ describe('정산 입력(blueprintDropsFromLoot)', () => {
         rarity: RARITY_UNIQUE,
         planet: 3,
       }));
-      const total = blueprintDropsFromLoot(loot, 1, true).reduce((s, g) => s + g.count, 0);
+      const total = blueprintDropsFromLoot(loot, true).reduce((s, g) => s + g.count, 0);
       expect(total).toBeLessThanOrEqual(1);
     }
   });
@@ -302,12 +307,23 @@ describe('정산 입력(blueprintDropsFromLoot)', () => {
   });
 
   it('같은 런 입력이면 항상 같은 지급 목록', () => {
-    const loot: LootLike[] = [
-      { seed: 11, rarity: RARITY_RARE, planet: 0 },
-      { seed: 22, rarity: RARITY_UNIQUE, planet: 2 },
-      { seed: 33, rarity: RARITY_RARE, planet: 3 },
+    // ⚠️ 옛 픽스처는 고정 3레코드(시드 11·22·33)였다. 게이트 도입 후 그 시드의 fold 잔여가
+    //    1836(>300) 이라 **`[]` 와 `[]` 를 비교하는 공허한 단언**이 됐고 리뷰에서 잡혔다.
+    //    지금은 **히트가 실제로 나는 런을 찾아서** 그 런으로 대조한다 — 못 찾으면 실패한다.
+    const mk = (run: number): LootLike[] => [
+      { seed: (run * 0x9e3779b1 + 11) >>> 0, rarity: RARITY_RARE, planet: 0 },
+      { seed: (run * 0x85ebca6b + 22) >>> 0, rarity: RARITY_UNIQUE, planet: 2 },
+      { seed: (run * 0xc2b2ae35 + 33) >>> 0, rarity: RARITY_RARE, planet: 3 },
     ];
-    expect(blueprintDropsFromLoot(loot, 1, true)).toEqual(blueprintDropsFromLoot(loot, 1, true));
+    let hitRun = -1;
+    for (let run = 0; run < 2000 && hitRun < 0; run++) {
+      if (blueprintDropsFromLoot(mk(run), true).length > 0) hitRun = run;
+    }
+    expect(hitRun, '2000런 안에 히트가 없다 — 게이트가 죽었거나 확률이 오타다').toBeGreaterThanOrEqual(0);
+    const loot = mk(hitRun);
+    const a = blueprintDropsFromLoot(loot, true);
+    expect(a.length).toBeGreaterThan(0); // 비지 않음을 못 박아 공허 재발을 막는다.
+    expect(blueprintDropsFromLoot(loot, true)).toEqual(a);
   });
 
   it('레코드 순서가 바뀌면 결과가 바뀔 수 있다(fold 순서 계약)', () => {
@@ -321,8 +337,8 @@ describe('정산 입력(blueprintDropsFromLoot)', () => {
       }));
     let differs = 0;
     for (let n = 0; n < 400; n++) {
-      const fwd = JSON.stringify(blueprintDropsFromLoot(mk(n), 1, true));
-      const rev = JSON.stringify(blueprintDropsFromLoot([...mk(n)].reverse(), 1, true));
+      const fwd = JSON.stringify(blueprintDropsFromLoot(mk(n), true));
+      const rev = JSON.stringify(blueprintDropsFromLoot([...mk(n)].reverse(), true));
       if (fwd !== rev) differs++;
     }
     expect(differs).toBeGreaterThan(0);
