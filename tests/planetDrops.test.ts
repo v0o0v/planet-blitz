@@ -86,8 +86,8 @@ describe('① 설계도 드랍 결정론', () => {
           planet: i % PLANETS.length,
         });
       }
-      const a = JSON.stringify(blueprintDropsFromLoot(loot, 1, true));
-      const b = JSON.stringify(blueprintDropsFromLoot(loot, 1, true));
+      const a = JSON.stringify(blueprintDropsFromLoot(loot, true));
+      const b = JSON.stringify(blueprintDropsFromLoot(loot, true));
       expect(b).toBe(a);
       if (a.length > 2) nonEmpty++;
     }
@@ -348,7 +348,7 @@ describe('⑥ 정규 경로 통합(createWorld → stepWorld → 정산 입력)'
     const state = runForLoot(0xc6fd, BOSS_PLANET);
     expect(state.loot.length).toBeGreaterThan(0);
     for (const rec of state.loot) expect(rec.planet).toBe(BOSS_PLANET);
-    const grants = blueprintDropsFromLoot(state.loot, 1, true);
+    const grants = blueprintDropsFromLoot(state.loot, true);
     const allowed = supplySets(PLANET_BLUEPRINTS)[BOSS_PLANET]!;
     for (const g of grants) {
       expect(allowed.has(key(g)), `행성 밖 설계도 ${key(g)}`).toBe(true);
@@ -365,7 +365,7 @@ describe('⑥ 정규 경로 통합(createWorld → stepWorld → 정산 입력)'
         seed: (r.seed + run * 0x9e3779b1) >>> 0,
         rarity: RARITY_UNIQUE,
       }));
-      hits += blueprintDropsFromLoot(loot, 1, true).length;
+      hits += blueprintDropsFromLoot(loot, true).length;
     }
     expect(hits).toBeGreaterThan(0);
   });
@@ -374,8 +374,8 @@ describe('⑥ 정규 경로 통합(createWorld → stepWorld → 정산 입력)'
     const a = runForLoot(0xc6d2, 1);
     const b = runForLoot(0xc6d2, 1);
     expect(JSON.stringify(b.loot)).toBe(JSON.stringify(a.loot));
-    expect(JSON.stringify(blueprintDropsFromLoot(b.loot, 1, true))).toBe(
-      JSON.stringify(blueprintDropsFromLoot(a.loot, 1, true)),
+    expect(JSON.stringify(blueprintDropsFromLoot(b.loot, true))).toBe(
+      JSON.stringify(blueprintDropsFromLoot(a.loot, true)),
     );
   });
 });
