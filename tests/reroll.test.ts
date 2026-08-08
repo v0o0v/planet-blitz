@@ -77,7 +77,10 @@ describe('rerollAffixes — refinery reforge (AC3, plan A4)', () => {
   });
 
   it('a zero-affix item rerolls to an identical copy', () => {
-    const normal = rollItem(10, 'normal', SRC);
+    // Build the zero-affix fixture explicitly. It used to come from
+    // `rollItem(_, 'normal')`, but normal now rolls 1 affix (2026-08-08) — see
+    // `roll.ts` affixCountFor. The invariant still holds; only the source moves.
+    const normal = { ...rollItem(10, 'normal', SRC), affixes: [] };
     expect(normal.affixes).toHaveLength(0);
     const out = rerollAffixes(normal, 5);
     expect(out.affixes).toEqual([]);

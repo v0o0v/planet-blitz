@@ -38,6 +38,15 @@ import type { EntitySnapshot } from '../sim/snapshot.js';
 import { xpToNext } from '../sim/world.js';
 import { spawnLoot } from '../sim/entities.js';
 import { SEGMENTS, LEVEL_CAP } from '../../data/waves.js';
+// 표준 빌드 조립 — **계측(`bench/nominalPower.ts`·`bench/runCurve.ts`)과 같은 함수**를 쓴다.
+// 사람이 앉은 빌드와 표가 잰 빌드가 갈리면 "사람 플레이로 명목표를 교정한다"가 성립하지 않는다.
+// 이 파일은 DEV 전용(`import.meta.env.DEV` 블록에서만 생성)이라 프로덕션 번들에 남지 않는다.
+import {
+  standardEquipped,
+  standardSkillInvest,
+  standardStage,
+  STANDARD_BUILD_SEED,
+} from '../bench/standardBuild.js';
 import { PLANETS } from '../../data/planets/index.js';
 import { makeElite, ELITE_AFFIX_COUNT, isElite } from '../sim/elite.js';
 import { rollItem } from '../items/roll.js';
@@ -318,6 +327,16 @@ const STYLE = `
 #pb-cheat .pb-c-hint { color:#ffc96a; font-size:11px; min-height:13px; margin-top:4px; }
 #pb-cheat .pb-c-evt { font-size:11px; color:#a7b6da; padding:1px 0; }
 `;
+
+/**
+ * 표준 빌드 점프 버튼이 제공하는 레벨 지점(출시 전 밸런스 기준 A·1).
+ *
+ * **Lv1 과 Lv5 는 둘 다 필요하다.** Lv1 은 장착 칸이 0 인 진짜 맨몸(요구 레벨 게이트가 단계 1
+ * 장비를 Lv1 조종사에게 거부한다 — ADR-0030)이고, 설계 밴드 1 의 목표치(8칸 · magic 1 · rare 7)는
+ * **Lv5 에서 실현**된다(`BAND_LEVELS` 의 대표 레벨이 `[5,10,…]`). 초반 이탈은 그 둘 사이 구간에서
+ * 일어나므로 한쪽만 보면 못 잡는다.
+ */
+const STANDARD_BUILD_LEVELS = [1, 5, 50, 100] as const;
 
 /** 지정한 슬롯 종류·희귀도의 아이템을 결정론적으로 뽑는다(presets.ts와 동일 전략). */
 function rollItemForSlot(startSeed: number, slotKind: SlotKind, rarity: Rarity): Item {
@@ -660,6 +679,54 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     host.refreshScreen();
     harness.cheat(() => {});
     setHint(`${SLOT_LABEL[slotId]} · ${rarity} 장착 (활성 기체)`);
+  }
+
+  /**
+   * 활성 기체를 **표준 빌드**(ADR-0035 표준 장비 세트 + 표준 스킬 투자)로 한 번에 세운다.
+   *
+   * ## 왜 이 버튼이 필요한가 — 출시 전 밸런스의 전제 조건이다
+   *
+   * 출시 전 밸런스 패스의 기준 1("Lv50/Lv100 에서 그 레벨에 예상되는 장비·스킬로 단계 10/20 을
+   * 적절한 난이도로 플레이할 수 있는가")은 **사람이 앉아야만** 답이 나온다 — 봇은 답을 못 낸다
+   * (ADR-0051: 피격 피해 2배 이후 무입력 파일럿이 런을 완주하지 못한다).
+   *
+   * 그런데 그 지점을 손으로 만들려면 레벨업 버튼을 100번 누르고 8칸을 하나씩 채워야 했다.
+   * `standardGearSetForBand` 는 이미 `src/bench/standardBuild.ts` 에 있었고 곡선 스윕이 쓰고
+   * 있었는데 **하네스에서만 닿을 수 없었다.** 여기서 그 배선을 잇는다.
+   *
+   * ⚠️ 계측과 **같은 조립 함수**를 쓴다(`standardEquipped`·`standardSkillInvest`). 손으로
+   * 비슷한 세트를 만들면 사람이 앉은 빌드와 명목표가 잰 빌드가 갈려, 사람 플레이로 표를
+   * 교정한다는 이 레인의 설계 자체가 무너진다.
+   *
+   * 기존 장착분은 인벤토리로 반환한다({@link grantItem} 과 같은 규칙).
+   */
+  function applyStandardBuild(level: number): void {
+    host.activateHarnessProfile();
+    const profile = host.getProfile();
+    const ship = activeShip(profile);
+    const lv = Math.max(1, Math.min(LEVEL_CAP, Math.floor(level)));
+    for (const it of Object.values(ship.equipped)) {
+      if (it !== undefined) profile.inventory.push(it);
+    }
+    ship.level = lv;
+    ship.xp = 0;
+    ship.equipped = standardEquipped(lv, STANDARD_BUILD_SEED, planetIdx);
+    ship.skillInvest = standardSkillInvest(ship.typeId, lv);
+    host.saveProfile();
+    host.refreshScreen();
+    harness.cheat(() => {});
+    const filled = Object.keys(ship.equipped).length;
+    const pts = ship.skillInvest.reduce((a, b) => a + b, 0);
+    setHint(`표준 빌드 Lv${lv} 적용 — 장비 ${filled}칸 · 스킬 ${pts}pt (단계 ${standardStage(lv)} 권장)`);
+  }
+
+  /** 표준 빌드를 세우고 곧바로 그 레벨의 표준 단계로 런을 시작한다(기준 1 의 3지점 점프). */
+  function sceneStandardBuildRun(level: number): void {
+    applyStandardBuild(level);
+    stageValue = standardStage(level);
+    stageRun();
+    handOver();
+    setHint(`표준 빌드 Lv${level} · ${PLANET_NAMES[planetIdx] ?? planetIdx} / 단계 ${stageValue}`);
   }
 
   function toggleInvincible(): void {
@@ -1027,6 +1094,26 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         btn('튜토리얼', sceneTutorial, '정식 튜토리얼(고정 시드 + 힌트 오버레이)', 'play'),
       );
       s.appendChild(playRow);
+
+      // 출시 전 밸런스 기준 A·1 의 3지점. 계측(`pnpm bench:nominal`)과 **같은 조립 함수·같은
+      // 시드**를 쓰므로, 여기서 앉아 본 체감이 그대로 명목표의 절대 원점이 된다.
+      s.appendChild(subLabel('표준 빌드 점프 (그 레벨의 표준 장비·스킬 + 표준 단계로 런 시작)'));
+      const stdRow = document.createElement('div');
+      stdRow.className = 'pb-c-row';
+      for (const lv of STANDARD_BUILD_LEVELS) {
+        stdRow.appendChild(
+          btn(
+            `Lv${lv} → 단계 ${standardStage(lv)}`,
+            () => sceneStandardBuildRun(lv),
+            `활성 기체를 Lv${lv} 표준 빌드(장비 8칸 + 스킬 투자)로 세우고 단계 ${standardStage(lv)} 런 시작`,
+            'play',
+          ),
+        );
+      }
+      stdRow.appendChild(
+        btn('빌드만 적용', () => applyStandardBuild(stageValue * 5), '런을 시작하지 않고 현재 단계에 대응하는 표준 빌드만 장착'),
+      );
+      s.appendChild(stdRow);
 
       s.appendChild(subLabel('세그먼트 점프 (풀 힐 후 시작 · 오염)'));
       const segRow = document.createElement('div');

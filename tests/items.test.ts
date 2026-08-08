@@ -16,12 +16,15 @@ describe('rollItem — pure item roller (AC1)', () => {
     }
   });
 
-  it('rolls the spec affix counts per rarity (magic 1..2, rare 3..6, normal 0)', () => {
+  // 2026-08-08 개정: normal 0 -> 1 · magic 1..2 -> 2..3 (`roll.ts` affixCountFor 주석이 사유의
+  // 정본). 최저 등급이 어픽스 0개면 "입으나 마나인 등급"이 되고, 실제로 스타터 킷이 그것을
+  // 피하려고 magic 을 쓰고 있었다.
+  it('rolls the spec affix counts per rarity (normal 1, magic 2..3, rare 3..6)', () => {
     for (let seed = 1; seed <= 300; seed++) {
-      expect(rollItem(seed, 'normal', SRC).affixes.length).toBe(0);
+      expect(rollItem(seed, 'normal', SRC).affixes.length).toBe(1);
       const magic = rollItem(seed, 'magic', SRC).affixes.length;
-      expect(magic).toBeGreaterThanOrEqual(1);
-      expect(magic).toBeLessThanOrEqual(2);
+      expect(magic).toBeGreaterThanOrEqual(2);
+      expect(magic).toBeLessThanOrEqual(3);
       const rare = rollItem(seed, 'rare', SRC).affixes.length;
       expect(rare).toBeGreaterThanOrEqual(3);
       expect(rare).toBeLessThanOrEqual(6);

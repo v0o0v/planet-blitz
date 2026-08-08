@@ -203,7 +203,11 @@ describe('reforgeAffixes — 정련 공정 재단조 (ADR-0040)', () => {
   });
 
   it('어픽스 0개 아이템은 어떤 옵션에서도 동일한 복사본', () => {
-    const normal = rollItem(10, 'normal', SRC);
+    // ⚠️ 0개 아이템을 **명시적으로 만든다.** 예전에는 `rollItem(_, 'normal')` 이 우연히 0개를
+    // 돌려줘서 그것을 픽스처로 썼는데, 2026-08-08 에 normal 이 어픽스 1개를 갖게 되자 이 테스트가
+    // 잴 것을 잃었다. 불변식(빈 배열 경로)은 여전히 유효하므로 출처만 바꾼다 — 등급 의미가
+    // 또 움직여도 이 테스트가 조용히 공허해지지 않는다.
+    const normal = { ...rollItem(10, 'normal', SRC), affixes: [] };
     expect(normal.affixes).toHaveLength(0);
     const out = reforgeAffixes(normal, 5, { fastened: [0, 1], band: 1 });
     expect(out.affixes).toEqual([]);

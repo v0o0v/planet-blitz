@@ -60,6 +60,20 @@ export const BAND_LEVELS: readonly number[] = Array.from(
   (_, i) => (i + 1) * LEVEL_PER_STAGE,
 );
 
+/**
+ * 표준 빌드 조립 시드의 **정본**.
+ *
+ * 표준 세트는 `(level, seed)` 로 결정론 조립되므로 시드가 갈리면 다른 아이템이 나온다.
+ * 출시 전 밸런스 패스는 *"사람이 앉아 본 빌드"*(하네스 치트 패널)와 *"명목표가 잰 빌드"*
+ * (`bench/nominalPower.ts`)가 **같은 아이템**이라는 전제 위에 서 있다 — 사람 체감으로 표의
+ * 절대 원점을 찍기 때문이다. 두 곳이 각자 리터럴을 들고 있으면 그 전제가 조용히 깨지므로
+ * 여기 한 곳에서만 선언한다.
+ *
+ * ⚠️ 값을 바꾸면 명목표 전체가 움직인다(다른 어픽스 롤이 나온다). 비교하려는 두 측정이
+ * 같은 시드를 썼는지 먼저 확인하라.
+ */
+export const STANDARD_BUILD_SEED = 0x5eed;
+
 /** 레벨이 속한 설계 밴드(= 표준 단계와 동일 정의). */
 export function standardBand(level: number): number {
   return standardStage(level);
@@ -110,7 +124,8 @@ export interface BandGearDesign {
 /**
  * 등급이 정하는 어픽스 개수 — **밴드 축이 아니다**(사용자 결정 2, 2026-07-27).
  *
- * 값은 각 등급의 **롤 상한**이다(`src/items/roll.ts` `affixCountFor`: magic 1\~2 · rare/unique 3\~6).
+ * 값은 각 등급의 **롤 상한**이다(`src/items/roll.ts` `affixCountFor`: normal 1 · magic 2\~3 ·
+ * rare/unique 3\~6 — 2026-08-08 개정, 그 함수 주석이 사유의 정본이다).
  * 밴드당 30개가 들어오고 슬롯당 기대 2\~4개가 쌓이므로 플레이어는 같은 등급 안에서 곧바로
  * 최고 롤로 갈아탄다 — 즉 어픽스 개수는 등급이 정해지는 순간 사실상 상한에 붙는다.
  *
@@ -120,8 +135,8 @@ export interface BandGearDesign {
  * 이 레인에서 다루지 않는다** — 발견 사실로만 기록하고 별도 레인 큐에 남긴다.
  */
 export const AFFIX_BY_RARITY: Readonly<Record<Rarity, number>> = {
-  normal: 0,
-  magic: 2,
+  normal: 1,
+  magic: 3,
   rare: 6,
   unique: 6,
 };
