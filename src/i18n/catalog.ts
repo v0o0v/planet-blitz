@@ -2174,6 +2174,10 @@ export const EN = {
   'def3.cmd.inv.bpEmpty': 'No blueprints yet.',
   'def3.cmd.inv.craft': 'Craft',
   'def3.cmd.inv.count': 'x{n}',
+  // 설계도 행이 예전에는 이름·장수뿐이라 **얼마가 드는지도, 무엇이 나오는지도** 화면에
+  // 없었다(사용자 신고 2026-08-08) — [제작]을 눌러 실패해야만 비용을 알 수 있었다.
+  'def3.cmd.inv.bpCost': 'Cost',
+  'def3.cmd.inv.bpShort': '(short)',
   'def3.cmd.unit.level': 'Lv {n}',
   'def3.cmd.unit.ascension': 'Ascension {n}',
   'def3.cmd.unit.power': 'Power {p}%',
@@ -2197,6 +2201,35 @@ export const EN = {
   'def3.cmd.err.failed': 'Server rejected the request.',
   'def3.cmd.err.offline': 'Not connected.',
   'def3.cmd.ok.upgrade': 'Upgraded.',
+
+  // 서버 거부 코드 → 사람이 읽는 문구. ⚠️ 예전에는 `result.code` 를 **그대로** 좌하단에
+  // 찍어 `insufficient-funds` 같은 raw 영문 슬러그가 한글 화면에 나왔다(사용자 신고
+  // 2026-08-08). 코드마다 **무엇이 막혔고 무엇을 하면 되는지**를 말한다.
+  'def3.cmd.err.unknown': 'Server rejected the request ({code}).',
+  'def3.cmd.err.need': 'Needs {need} — you have {have}.',
+  'def3.cmd.err.code.insufficient-funds': 'Not enough minerals to craft.',
+  'def3.cmd.err.code.insufficient-minerals': 'Not enough minerals.',
+  'def3.cmd.err.code.insufficient-credits': 'Not enough credits.',
+  'def3.cmd.err.code.insufficient-blueprints': 'Not enough blueprints.',
+  'def3.cmd.err.code.storage-full': 'Storage is full. Dismantle a unit first.',
+  'def3.cmd.err.code.bad-catalog': 'Unknown blueprint. It may be from a newer build.',
+  'def3.cmd.err.code.not-owned': 'You no longer own that unit.',
+  'def3.cmd.err.code.max-level': 'Already at max level.',
+  'def3.cmd.err.code.max-ascension': 'Already fully ascended.',
+  'def3.cmd.err.code.max-rarity': 'Already at the highest rarity.',
+  'def3.cmd.err.code.no-affix-slots': 'No affix slot left to reroll.',
+  'def3.cmd.err.code.need-three': 'Rarity-up consumes three units of the same rarity.',
+  'def3.cmd.err.code.rarity-mismatch': 'All three fodder units must share one rarity.',
+  'def3.cmd.err.code.dup-ids': 'The same unit was submitted twice.',
+  'def3.cmd.err.code.too-many': 'Too many units submitted at once.',
+  'def3.cmd.err.code.bad-input': 'The request was malformed.',
+  'def3.cmd.err.code.no-auth': 'Sign in first.',
+  'def3.cmd.err.code.no-profile': 'No profile on the server yet.',
+
+  // 비용 표기 — 예전에는 `12 min / 1 bp` 라는 raw 영문 약어였다(같은 신고).
+  'def3.cmd.cost.credits': '{n} credits',
+  'def3.cmd.cost.minerals': '{n} minerals',
+  'def3.cmd.cost.blueprints': '{n} blueprints',
 
   // 방어 사령부 도움말(사용자 요청 2026-08-05) — 이 화면은 레이어 셋·획득 경로·강화 3축·풍화·
   // 코어 모듈·초안 저장 규약이 한 화면에 겹쳐 있어 처음 오는 사람이 무엇부터 볼지 알 수 없다.
@@ -4537,6 +4570,8 @@ export const KO: Record<MessageKey, string> = {
   'def3.cmd.inv.bpEmpty': '보유 설계도가 없습니다.',
   'def3.cmd.inv.craft': '제작',
   'def3.cmd.inv.count': '{n}장',
+  'def3.cmd.inv.bpCost': '제작 비용',
+  'def3.cmd.inv.bpShort': '(부족)',
   'def3.cmd.unit.level': 'Lv {n}',
   'def3.cmd.unit.ascension': '승격 {n}',
   'def3.cmd.unit.power': '전투력 {p}%',
@@ -4560,6 +4595,31 @@ export const KO: Record<MessageKey, string> = {
   'def3.cmd.err.failed': '서버가 요청을 거부했습니다.',
   'def3.cmd.err.offline': '서버에 연결돼 있지 않습니다.',
   'def3.cmd.ok.upgrade': '강화했습니다.',
+
+  'def3.cmd.err.unknown': '서버가 요청을 거부했습니다 ({code}).',
+  'def3.cmd.err.need': '필요 {need} · 보유 {have}',
+  'def3.cmd.err.code.insufficient-funds': '제작에 필요한 광물이 모자랍니다.',
+  'def3.cmd.err.code.insufficient-minerals': '광물이 모자랍니다.',
+  'def3.cmd.err.code.insufficient-credits': '크레딧이 모자랍니다.',
+  'def3.cmd.err.code.insufficient-blueprints': '설계도가 모자랍니다.',
+  'def3.cmd.err.code.storage-full': '보관함이 가득 찼습니다. 방어체를 하나 정리한 뒤 다시 제작하세요.',
+  'def3.cmd.err.code.bad-catalog': '알 수 없는 설계도입니다. 더 새 빌드의 항목일 수 있습니다.',
+  'def3.cmd.err.code.not-owned': '더 이상 보유하지 않은 방어체입니다.',
+  'def3.cmd.err.code.max-level': '이미 최고 레벨입니다.',
+  'def3.cmd.err.code.max-ascension': '이미 승격을 전부 마쳤습니다.',
+  'def3.cmd.err.code.max-rarity': '이미 최고 등급입니다.',
+  'def3.cmd.err.code.no-affix-slots': '다시 굴릴 어픽스 자리가 없습니다.',
+  'def3.cmd.err.code.need-three': '등급 승급은 같은 등급 방어체 3기를 재료로 씁니다.',
+  'def3.cmd.err.code.rarity-mismatch': '재료 3기의 등급이 서로 다릅니다 — 전부 같은 등급이어야 합니다.',
+  'def3.cmd.err.code.dup-ids': '같은 방어체를 두 번 재료로 넣었습니다.',
+  'def3.cmd.err.code.too-many': '한 번에 너무 많은 방어체를 넘겼습니다.',
+  'def3.cmd.err.code.bad-input': '요청 형식이 잘못됐습니다.',
+  'def3.cmd.err.code.no-auth': '먼저 로그인하세요.',
+  'def3.cmd.err.code.no-profile': '서버에 아직 프로필이 없습니다.',
+
+  'def3.cmd.cost.credits': '크레딧 {n}',
+  'def3.cmd.cost.minerals': '광물 {n}',
+  'def3.cmd.cost.blueprints': '설계도 {n}장',
 
   // 방어 사령부 도움말(사용자 요청 2026-08-05 — "처음 오는 사람이 전체 내용을 다 알 수 있게").
   // ⚠️ 용어는 이 파일 KO 선언부의 정본표를 따른다 — `편대`(웨이브 ✗) · `설비`(포탑 ✗) ·

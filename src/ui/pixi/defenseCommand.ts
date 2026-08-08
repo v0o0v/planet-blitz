@@ -144,7 +144,9 @@ import {
   CATALOG_MAP,
   catalogEntry,
   def3NameKey,
+  def3DescKey,
 } from '../../../data/invasion/catalog.js';
+import { craftMineralCost, CRAFT_BLUEPRINT_COST } from '../../../data/planets/blueprints.js';
 import { guardianBonusBp, guardianMilestones } from '../../../data/lineage.js';
 import {
   defenseUnitPowerBp,
@@ -574,14 +576,104 @@ export function unitAffixLine(unit: DefenseUnitInstance): string {
   return parts.length === 0 ? tCmd('def3.cmd.unit.affix.none') : parts.join(' · ');
 }
 
-/** 비용 한 줄(0 인 항목은 생략 — "0 설계도"는 읽는 사람을 헷갈리게 한다). */
-export function costLine(cost: { credits: number; minerals: number; blueprints: number } | null): string {
+/** 재화 3종 묶음(비용·보유 양쪽에 쓴다). */
+export interface DefenseCost {
+  readonly credits: number;
+  readonly minerals: number;
+  readonly blueprints: number;
+}
+
+/**
+ * 비용 한 줄(0 인 항목은 생략 — "0 설계도"는 읽는 사람을 헷갈리게 한다).
+ *
+ * ⚠️ 단위는 **번역을 탄다.** 예전에는 `12 min / 1 bp` 라는 raw 영문 약어였다 — 한글 화면에서
+ * `min` 이 분(minute)인지 광물(mineral)인지 알 수 없었다(사용자 신고 2026-08-08).
+ */
+export function costLine(cost: DefenseCost | null): string {
   if (cost === null) return tCmd('def3.cmd.unit.max');
   const parts: string[] = [];
-  if (cost.credits > 0) parts.push(`${cost.credits} cr`);
-  if (cost.minerals > 0) parts.push(`${cost.minerals} min`);
-  if (cost.blueprints > 0) parts.push(`${cost.blueprints} bp`);
-  return parts.length === 0 ? '-' : parts.join(' / ');
+  if (cost.credits > 0) parts.push(tCmd('def3.cmd.cost.credits', { n: cost.credits }));
+  if (cost.minerals > 0) parts.push(tCmd('def3.cmd.cost.minerals', { n: cost.minerals }));
+  if (cost.blueprints > 0) parts.push(tCmd('def3.cmd.cost.blueprints', { n: cost.blueprints }));
+  return parts.length === 0 ? '-' : parts.join(' · ');
+}
+
+/**
+ * 설계도 1장으로 방어체를 제작할 때 드는 재화.
+ *
+ * ⚠️ 값을 여기서 **짓지 않는다** — `data/planets/blueprints.ts` 가 정본이고 그쪽이
+ * `supabase/migrations/…_m7b_blueprint_drops.sql` 의 `craft_defense_unit` 과 미러다.
+ * 표기용 산식을 따로 두면 화면이 말한 값과 실제 차감이 갈린다(방어체 스탯 표기와 같은 규율).
+ */
+export function blueprintCraftCost(kind: number): DefenseCost {
+  return { credits: 0, minerals: craftMineralCost(kind), blueprints: CRAFT_BLUEPRINT_COST };
+}
+
+/** 보유가 비용에 미달하는 항목이 하나라도 있는가. */
+export function costShortfall(need: DefenseCost, have: DefenseCost): boolean {
+  return (
+    (need.credits > 0 && have.credits < need.credits) ||
+    (need.minerals > 0 && have.minerals < need.minerals) ||
+    (need.blueprints > 0 && have.blueprints < need.blueprints)
+  );
+}
+
+/** 설계도가 만들어 내는 방어체의 설명문(카탈로그 정본의 `def3.<id>.desc`). */
+export function blueprintDesc(kind: number, catalogId: number): string {
+  const entry = catalogEntry(kind, catalogId);
+  if (entry === undefined) return '';
+  return tCmd(def3DescKey(entry.i18nId));
+}
+
+/**
+ * 서버 거부 코드 → **사람이 읽는 문구**.
+ *
+ * ## ⚠️ 예전에는 코드를 그대로 찍었다 (2026-08-08 실제 신고)
+ * `runUpgrade` 가 `result.code` 를 `msgText` 에 **그대로** 넣어, 한글 화면 좌하단에
+ * `insufficient-funds` 라는 raw 영문 슬러그가 떴다. 코드는 서버·SQL·하네스 모의가 공유하는
+ * 내부 식별자지 사용자 문구가 아니다.
+ *
+ * `need`(이번 동작이 요구한 재화)와 `have`(현재 보유)가 주어지면 **모자란 항목만 골라**
+ * "필요 X · 보유 Y" 를 덧붙인다 — "왜 안 되는지"까지 한 줄에서 끝난다. 미지 코드는 삼키지
+ * 않고 `def3.cmd.err.unknown` 으로 코드를 괄호에 남긴다(제보 가능해야 한다).
+ */
+export function upgradeErrorMessage(
+  code: string | undefined,
+  need?: DefenseCost | null,
+  have?: DefenseCost | null,
+): string {
+  if (code === undefined || code === '') return tCmd('def3.cmd.err.failed');
+  const key = `def3.cmd.err.code.${code}`;
+  const head = tCmd(key);
+  // t() 는 미등록 키를 키 그대로 돌려준다 — 그 경우가 미지 코드다.
+  const base = head === key ? tCmd('def3.cmd.err.unknown', { code }) : head;
+  if (need == null || have == null) return base;
+
+  const lack = (n: number, h: number): boolean => n > 0 && h < n;
+  const parts: { need: string; have: string }[] = [];
+  if (lack(need.credits, have.credits)) {
+    parts.push({
+      need: tCmd('def3.cmd.cost.credits', { n: need.credits }),
+      have: tCmd('def3.cmd.cost.credits', { n: have.credits }),
+    });
+  }
+  if (lack(need.minerals, have.minerals)) {
+    parts.push({
+      need: tCmd('def3.cmd.cost.minerals', { n: need.minerals }),
+      have: tCmd('def3.cmd.cost.minerals', { n: have.minerals }),
+    });
+  }
+  if (lack(need.blueprints, have.blueprints)) {
+    parts.push({
+      need: tCmd('def3.cmd.cost.blueprints', { n: need.blueprints }),
+      have: tCmd('def3.cmd.cost.blueprints', { n: have.blueprints }),
+    });
+  }
+  if (parts.length === 0) return base;
+  const detail = parts
+    .map((p) => tCmd('def3.cmd.err.need', { need: p.need, have: p.have }))
+    .join(' · ');
+  return `${base} ${detail}`;
 }
 
 // ===========================================================================
@@ -698,8 +790,19 @@ const ROW_PAD = 16;
  */
 const SLOT_ROW_MAX_H = 132;
 const UNIT_ROW_MAX_H = 120;
-const BP_ROW_H = 76;
-const BP_ROW_MAX_H = 96;
+/**
+ * 설계도 행 — 이름·장수 / 제작 비용 / 방어체 설명 **3단**이다.
+ *
+ * 예전에는 76px 한 줄(이름·장수)뿐이라 얼마가 드는지도, 무엇이 나오는지도 화면에 없었다
+ * (사용자 신고 2026-08-08). 세 줄이 들어갈 만큼 키우되 상한도 같이 올린다 — 상한이
+ * 자연 높이보다 낮으면 내용이 판 밖으로 나간다(`fillRowHeights` 주석의 그 결함).
+ */
+const BP_NAME_Y = 14;
+const BP_COST_Y = 42;
+const BP_DESC_Y = 66;
+/** 설명문 2줄 + 아래 여백까지 — `BP_DESC_Y + 14px 2줄(36) + 12`. */
+const BP_ROW_H = 114;
+const BP_ROW_MAX_H = 136;
 /** 꼬리 챔버를 그릴 최소 잔여(이보다 작으면 그냥 여백이다). */
 const TAIL_WELL_MIN_H = 72;
 
@@ -1366,8 +1469,17 @@ export class DefenseCommandScreen {
     return null;
   }
 
-  /** 강화 RPC 공통 처리(성공 → 잔액 pull + 보관함 재조회). */
-  private async runUpgrade(fn: () => Promise<DefenseUnitUpgradeResult | null>): Promise<void> {
+  /**
+   * 강화 RPC 공통 처리(성공 → 잔액 pull + 보관함 재조회).
+   *
+   * `need`/`have` 를 주면 거부 문구에 **모자란 항목의 필요·보유**가 붙는다. 안 주면 코드에
+   * 대응하는 문장만 나온다(강화 3축은 서버가 값을 정하므로 클라가 지어내면 안 된다).
+   */
+  private async runUpgrade(
+    fn: () => Promise<DefenseUnitUpgradeResult | null>,
+    need: DefenseCost | null = null,
+    have: DefenseCost | null = null,
+  ): Promise<void> {
     if (this.busy || !this.online) {
       if (!this.online) this.msgText = tCmd('def3.cmd.err.offline');
       this.refresh();
@@ -1384,7 +1496,7 @@ export class DefenseCommandScreen {
     }
     if (!this.visible) return;
     if (result === null || !result.ok) {
-      this.msgText = result?.code !== undefined ? result.code : tCmd('def3.cmd.err.failed');
+      this.msgText = upgradeErrorMessage(result?.code, need, have);
     } else {
       this.pullServerCurrency(result);
       this.msgText = tCmd('def3.cmd.ok.upgrade');
@@ -2410,12 +2522,35 @@ export class DefenseCommandScreen {
     const rows = this.blueprints.map((bp, i) => {
       const h = hs[i] ?? BP_ROW_H;
       const row = new Container();
+      const textW = BOX_R.w - 150 - ROW_PAD * 2 - 12;
       const name = `${catalogName(bp.kind, bp.catalogId)} ${tCmd('def3.cmd.inv.count', { n: bp.count })}`;
       row.addChild(rowPlate(BOX_R.w, h, false));
-      const head = this.label(name, 19, COLOR.cream, '800', BOX_R.w - 150 - ROW_PAD * 2 - 12);
-      head.anchor.set(0, 0.5);
-      head.position.set(ROW_PAD, h / 2);
+
+      const head = this.label(name, 19, COLOR.cream, '800', textW);
+      head.position.set(ROW_PAD, BP_NAME_Y);
       row.addChild(head);
+
+      // 비용과 보유를 **행에서** 말한다 — 예전에는 [제작]을 눌러 실패해야만 얼마가 드는지
+      // 알 수 있었다(사용자 신고 2026-08-08). 모자라면 색으로도 갈라 준다.
+      const need = blueprintCraftCost(bp.kind);
+      const have: DefenseCost = {
+        credits: this.profile.credits,
+        minerals: this.profile.minerals,
+        blueprints: bp.count,
+      };
+      const short = costShortfall(need, have);
+      const costText =
+        `${tCmd('def3.cmd.inv.bpCost')}  ${costLine(need)}` +
+        (short ? `  ${tCmd('def3.cmd.inv.bpShort')}` : '');
+      const cost = this.label(costText, 15, short ? WARN_COLOR : COLOR.gold, '700', textW);
+      cost.position.set(ROW_PAD, BP_COST_Y);
+      row.addChild(cost);
+
+      // 무엇이 나오는지 — 카탈로그 정본이 이미 갖고 있는 설명문(`def3.<id>.desc`).
+      const desc = this.wrapped(blueprintDesc(bp.kind, bp.catalogId), 14, COLOR.muted, textW);
+      desc.position.set(ROW_PAD, BP_DESC_Y);
+      row.addChild(desc);
+
       const craft = this.chromeButton({
         tone: 'gold',
         width: 150,
@@ -2423,7 +2558,7 @@ export class DefenseCommandScreen {
         fontSize: 18,
         label: tCmd('def3.cmd.inv.craft'),
         enabled: !this.busy && bp.count > 0,
-        onClick: () => void this.runUpgrade(() => craftDefenseUnit(bp.kind, bp.catalogId)),
+        onClick: () => void this.runUpgrade(() => craftDefenseUnit(bp.kind, bp.catalogId), need, have),
       });
       craft.container.position.set(BOX_R.w - 150 - ROW_PAD, Math.round((h - 44) / 2));
       stopRowPropagation(craft.container);
