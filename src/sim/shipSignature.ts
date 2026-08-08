@@ -246,6 +246,52 @@ export function cloakBreakDamage(damage: number): number {
  */
 export const BROOD_MARK = 0xb400d5;
 
+/**
+ * 병아리 1발의 피해 = **플레이어 주무기 발당 피해의 이 비율**(basis-point). 20% .
+ *
+ * ## ⚠️ 예전에는 `events.ts` 의 `TURRET_BULLET_DAMAGE = 10` 고정이었다 (2026-08-08 개정)
+ *
+ * 고정 화력은 **플레이어의 성장과 무관한 절대량**이라, 저레벨에서는 압도하고 만렙에서는
+ * 희석된다. 무장비 명목표에서 해츨링이 +56 DPS(기준 DPS 79.8 의 70%)로 나머지를 1.80배
+ * 압도하고 표준장비에서는 1.04배로 사라지던 것이 그 증상이다 — **기준이 바뀔 때마다 이
+ * 기체의 값이 통째로 달라졌다.**
+ *
+ * ## 그리고 그 상수는 **공유물이었다**
+ * `TURRET_BULLET_DAMAGE` 는 유니크 ④ 자율 드론 베이·보조무기 ③ 센트리도 쓴다. 병아리만
+ * 비례시키려면 출처를 갈라야 하고, 그 분리의 선례가 `BROOD_MARK`(↔ `DRONE_MARK`)다. 여기서도
+ * 같은 방식으로 **`ownerId === BROOD_MARK` 인 포탑에만** 이 비율을 건다(`world.ts`
+ * `fireTurretShot`).
+ *
+ * ## 크기의 근거
+ * 병아리는 `TURRET_FIRE_COOLDOWN`(10틱) 주기라 초당 6발이고, 동시 생존 기대치는 명목 가정치
+ * (초당 처치 3.0 · 누적 300)에서 0.94기다. 20% 면 무장비 기준 `0.94 × 7.6 × 0.2 × 6 ≈ 8.6`
+ * DPS 가산 = 실효 공격 배율 약 **1.11** 로 나머지 시그니처(정조준 1.042 · 과충전 1.056 ·
+ * 은신 1.009)와 같은 자릿수다. 그리고 가산분이 플레이어 피해에 비례하므로 **장비를 입혀도
+ * 배율이 거의 그대로다** — 그것이 이 개정의 목적이다.
+ */
+export const BROOD_DAMAGE_BP = 2000;
+
+/**
+ * 피해의 **소수 2자리 눈금**. `world.ts` 가 `weapon.damage` 에 쓰는 `Math.round(x * 100) / 100`
+ * 관용구의 그 100 이다. 제수를 리터럴이 아니라 이름 있는 정수 상수로 두는 것은 이 모듈의
+ * 규약이고(선례: `HATCH_SCALE_KILLS`·`FILM_PUSH_SCALE`), `tests/shipSignature.test.ts` 의
+ * 결정론 산술 게이트가 그것을 강제한다.
+ */
+export const DAMAGE_CENTI_SCALE = 100;
+
+/**
+ * 플레이어 주무기 발당 피해 → 병아리 1발의 피해. 눈금은 `world.ts` 의 `weapon.damage` 와 같은
+ * **소수 2자리**다 — 두 축의 눈금이 갈리면 같은 값을 두 곳에서 다르게 자르게 된다.
+ *
+ * 0 이하 입력은 0 을 낸다(피해가 없으면 병아리도 피해가 없다 — 하한 1 을 억지로 주지 않는다).
+ */
+export function broodBulletDamage(playerDamage: number): number {
+  if (!(playerDamage > 0)) return 0;
+  // 반올림 1회. 두 나눗셈의 제수는 각각 10000(bp)과 이름 있는 정수 눈금이다.
+  const centi = Math.round((playerDamage * DAMAGE_CENTI_SCALE * BROOD_DAMAGE_BP) / 10000);
+  return centi / DAMAGE_CENTI_SCALE;
+}
+
 /** 첫 출격에 필요한 처치 수. */
 export const HATCH_BASE_KILLS = 12;
 /** 스케일 구간을 하나 넘길 때마다 늘어나는 요구 처치 수. */
@@ -398,8 +444,48 @@ export function cushionSettled(
 // --- ⑥ 버블: 방막(주기적 흡수 + 파열 밀어내기) --------------------------------
 /** 막이 다시 생기기까지의 틱(60fps 기준 7초). */
 export const FILM_PERIOD_TICKS = 420;
-/** 막 1장이 흡수하는 피해 총량(정수 HP 단위 — 배율이 아니라 흡수량이다). */
-export const FILM_ABSORB_FLAT = 60;
+/**
+ * 막 1장의 내구 = **최대 HP 의 이 비율**(basis-point). 25% .
+ *
+ * ## ⚠️ 이 값은 예전에 고정 상수 `FILM_ABSORB_FLAT = 60` 이었다 (2026-08-08 개정)
+ *
+ * 고정 흡수량은 **런과 무관한 절대 임계**를 만든다. 막은 {@link FILM_PERIOD_TICKS}(7초)마다
+ * 다시 서므로 흡수량 60 은 *"초당 8.57 피해를 무조건 상쇄한다"* 와 같고, 실효체력을
+ * `EHP = hp / (1 − 상쇄DPS / 받는DPS)` 로 풀면 **받는 피해가 8.57 미만인 순간 분모가 0 이하가
+ * 되어 버블이 문자 그대로 죽지 않는다.** 그리고 그 임계는 성장과 무관하게 고정이라, 기체
+ * 균형 판정이 "지금 적이 얼마나 세게 때리는가" 에 통째로 매달렸다 — 무장비 명목표에서 버블이
+ * 나머지를 **9.52배**로 압도하고 표준장비에서는 4.17배로 반토막 나던 것이 그 증상이다.
+ *
+ * ## 실측이 정한 크기 (`bench/incomingDps.ts`, 2026-08-08)
+ * 스트라이커·행성 0·무장비·시드 6개·5400틱(90초) 창에서 **선체가 잃는 초당 HP**:
+ *
+ *     Lv5(단계1)  중앙값 39.80  (35.56 ~ 52.09)
+ *     Lv50(단계10) 중앙값 40.53  (37.47 ~ 46.81)
+ *     Lv100(단계20) 중앙값 39.24  (32.98 ~ 49.07)
+ *
+ * 즉 판정 기준 모드(무장비)에서 받는 피해는 **레벨과 무관하게 약 40 DPS** 로 평평하다.
+ * 이 비율(25%)이면 기본 HP 100 기준 내구 25 · 상쇄 3.57 DPS = 받는 피해의 **약 9%** 이고,
+ * 실효 방어 배율이 `1/(1−0.09) ≈ 1.10` 으로 나머지 시그니처(장갑 1.111 · 은신 1.132 ·
+ * 완충 1.092)와 같은 자릿수에 들어온다. 임계까지의 여유는 11배다.
+ *
+ * ## ⚠️ 이것은 상수가 아니라 **런 단위 파생값의 계수**다
+ * 실제 상한의 정본은 `WorldState.filmCapacity`(`createWorld` 가 `config.playerHp` 에서 1회
+ * 확정)다. `ARMOR_MAX_STACKS` → `WorldState.armorMaxStacks` 와 **정확히 같은 패턴**이고 같은
+ * 규율이 걸린다: 상한을 그 자리에서 따로 해석하는 코드를 만들지 마라.
+ */
+export const FILM_ABSORB_HP_BP = 2500;
+
+/**
+ * 최대 HP → 막 1장의 내구(정수). 나눗셈 1회. 0 이하 HP 는 0 을 낸다.
+ *
+ * 하한 1 을 두지 **않는다** — HP 가 0 이하인 런은 막이 설 자리 자체가 없고, 억지로 1 을 주면
+ * `aux0 === 0` 파열 판정이 영영 성립하지 않는 유령 막이 된다({@link filmAbsorbed} §유령 막).
+ */
+export function filmCapacityFor(maxHp: number): number {
+  const hp = Math.trunc(maxHp);
+  if (hp <= 0) return 0;
+  return Math.round((hp * FILM_ABSORB_HP_BP) / 10000);
+}
 /** 막이 터질 때 밀어내는 반경(sim 좌표). */
 export const FILM_BURST_RADIUS = 220;
 /** 막이 터질 때 주변 적에게 실리는 밀어내기 속도(sim 좌표/틱 × 100, 정수 유지용 눈금). */

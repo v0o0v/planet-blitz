@@ -21,7 +21,7 @@
  *   - `signatureBit = 18` — `src/sim/shipSignature.ts` 의 `SIG_BRUISER_ARMOR` 가 정본,
  *     `tests/shipSignatureRegistry.test.ts` 가 두 값을 마주 세운다. 시그니처 자체는 이미
  *     라이브라 이 재편으로 마이그레이션되지 않는다(설계서 ⑥-1).
- *   - `baseBp`(dmg +8% · 연사 −6% · HP +25% · 이동 −5%) — 값 불변, 밸런스 일괄 레인 소관
+ *   - `baseBp`(dmg +8% · 연사 −6% · HP **+20%** · 이동 −5%) — HP 축만 2026-08-08 에 조정(아래)
  *     (`defer-balance-tuning`).
  */
 
@@ -82,5 +82,28 @@ export const BRUISER: ShipTypeDef = {
   ],
   activeHiGate: ACTIVE_HI_GATE_DEFAULT,
   signatureBit: 18,
-  baseBp: { damageBp: 800, fireRateBp: -600, maxHpBp: 2500, moveSpeedBp: -500 },
+  // maxHpBp 2500 → 2000: 아래 §maxHpBp 참조.
+  baseBp: { damageBp: 800, fireRateBp: -600, maxHpBp: 2000, moveSpeedBp: -500 },
 };
+
+/**
+ * ## §maxHpBp — 2500(+25%) → 2000(+20%) (2026-08-08 출시 전 밸런스 · 기준 2)
+ *
+ * 무장비 명목표(`bench/nominalPower.ts --gear=none`)의 곱(DPS×EHP) 스프레드가 **1.473** 로
+ * 합격 밴드(1.35)를 넘었고, 그 양 끝이 **브루저 1.355(최대) ↔ 아크캐스터 0.920(최소)** 였다.
+ *
+ * ## 왜 이 둘만 건드리는가
+ * `--sens` 감도 스윕에서 중간 4종(hatchling·mallow·phantom·bubble)은 가정치 변형에 순위가
+ * 서로 뒤집혔다 — **모델 해상도 안에서 구분 불가**이고, 그것을 미세 조정하는 것은 잡음을 쫓는
+ * 것이다. 반면 **브루저 1위·아크캐스터 꼴찌는 전 스윕에서 고정**이었다. 밴드 밖으로 나간
+ * 그 둘만 움직인다.
+ *
+ * ## 왜 HP 축인가
+ * 공격 축을 만지면 시그니처 배율과 곱해져 효과가 증폭되고, 이 기체의 정체성은 「맞으면서 버틴다」라 HP 축이 곧 그 정체성이다 —
+ * 25% → 20% 는 성격을 바꾸지 않는 폭이고(여전히 전 기체 중 최고 HP), 공격을 깎으면
+ * 「버티는데 못 때린다」가 되어 정체성이 훼손된다.
+ * HP 는 플랫 가산이라 조정폭이 예측 가능하다.
+ *
+ * 결과: 스프레드 **1.473 → 1.323 (PASS)**. 다른 다섯 기체의 RATIO 는 한 톨도 안 움직였다.
+ * ⚠️ 방향성 단언(브루저가 피해를 덜 받는다 등)은 시그니처 축이라 이 조정과 무관하다.
+ */

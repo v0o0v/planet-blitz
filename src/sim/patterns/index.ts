@@ -11,12 +11,14 @@ import type { WorldState } from '../world.js';
 import { playerCloaked } from '../cloak.js';
 import type { Entity } from '../entities.js';
 import type { EnemyDef } from './types.js';
-import { HAZARD_MORTAR, HAZARD_LAVA } from './types.js';
+import { HAZARD_MORTAR, HAZARD_LAVA, MID_CLASH_LEADER_MARK, MID_CLASH_LEADER_SPEED } from './types.js';
 import { spawnEnemyBullet, spawnHazard } from '../entities.js';
 import { cos, sin, atan2, length, TWO_PI, HALF_PI } from '../math.js';
 import { DT, HAZARD_LINE_SPAN } from '../constants.js';
 import { slideCircleWalls } from '../los.js';
 import { stageParams } from '../../../data/waves.js';
+// 밀도 패스 계수(2026-08-08 사용자 결정) — 사유·짝 관계는 그 모듈 헤더가 정본이다.
+import { ENEMY_DAMAGE_MULT, scaledFireCooldown } from '../enemyScale.js';
 import { applyBehavior, curveBehavior, accelBehavior } from '../bullets.js';
 
 /**
@@ -44,25 +46,30 @@ export function updateEnemy(state: WorldState, e: Entity, def: EnemyDef, player:
   // `playerCloaked` 는 시그니처 미보유 런에서 즉시 false 라 조건식이 원래와 동일 경로다.
   if (def.attack.kind !== 'fragments' && e.cooldown <= 0 && !playerCloaked(state, player)) {
     runAttack(state, e, def, player);
-    e.cooldown = def.fireCooldown;
+    e.cooldown = scaledFireCooldown(def.fireCooldown, def.attack.kind);
   }
 }
 
 function applyMovement(state: WorldState, e: Entity, def: EnemyDef, player: Entity): void {
+  // 격전 리더만 이동 속도를 덮어쓴다 — 사유·실측은 `MID_CLASH_LEADER_SPEED` 주석이 정본이다.
+  // 마커가 없는 적은 `def.speed` 그대로라 **기존 런의 거동·해시가 비트 동일**이다.
+  const speed = e.aux1 === MID_CLASH_LEADER_MARK ? MID_CLASH_LEADER_SPEED : def.speed;
   switch (def.movement) {
     case 'chargeStraight':
-      moveCharge(state, e, def, player);
+      moveCharge(state, e, def, player, speed);
       break;
     case 'stationary':
+      // ⚠️ 정지형이 리더가 되는 경우(카르곤 `elites[1]`)에도 여기는 덮지 않는다 — 정지형은
+      //    `speed` 를 안 읽는다. 지금 6행성의 리더는 전부 `standoff` 라 도달하지 않는 분기다.
       e.vx = 0;
       e.vy = 0;
       break;
     case 'standoff':
-      moveStandoff(e, def, player);
+      moveStandoff(e, player, speed);
       integrate(state, e);
       break;
     case 'seekWounded':
-      moveSeekWounded(state, e, def, player);
+      moveSeekWounded(state, e, player, speed);
       integrate(state, e);
       break;
   }
@@ -79,10 +86,16 @@ function applyMovement(state: WorldState, e: Entity, def: EnemyDef, player: Enti
  *     the player after overshooting, to circle back and re-engage.
  * Purely position/timer driven — no RNG — so replays stay bit-identical.
  */
-function moveCharge(state: WorldState, e: Entity, def: EnemyDef, player: Entity): void {
+function moveCharge(
+  state: WorldState,
+  e: Entity,
+  def: EnemyDef,
+  player: Entity,
+  speed: number,
+): void {
   // Establish heading on the first tick after spawn (velocity still zero).
   if (e.vx === 0 && e.vy === 0) {
-    aimAt(e, def.speed, player.x, player.y);
+    aimAt(e, speed, player.x, player.y);
   }
   e.x += e.vx * DT;
   e.y += e.vy * DT;
@@ -108,15 +121,15 @@ function moveCharge(state: WorldState, e: Entity, def: EnemyDef, player: Entity)
   // 쿨다운이 0 에 머물러 은신이 풀린 첫 틱에 즉시 분출한다.
   if (def.attack.kind === 'fragments' && e.cooldown <= 0 && !playerCloaked(state, player)) {
     sprayFragments(state, e, def.attack);
-    e.cooldown = def.fireCooldown;
-    aimAt(e, def.speed, player.x, player.y);
+    e.cooldown = scaledFireCooldown(def.fireCooldown, def.attack.kind);
+    aimAt(e, speed, player.x, player.y);
   } else {
     // Between bursts, re-aim once the charger has overshot the player so it turns
     // back instead of receding forever (heading points away from the target).
     const dx = player.x - e.x;
     const dy = player.y - e.y;
     if (e.vx * dx + e.vy * dy < 0) {
-      aimAt(e, def.speed, player.x, player.y);
+      aimAt(e, speed, player.x, player.y);
     }
   }
   e.angle = atan2(e.vy, e.vx);
@@ -135,32 +148,39 @@ export function chargerHitWall(state: WorldState, e: Entity, def: EnemyDef, play
   // 반응이고, 여기서 막으면 은신 중 돌격형이 벽에 박혀 미는 미정의 상태가 된다.
   if (def.attack.kind === 'fragments' && e.cooldown <= 0 && !playerCloaked(state, player)) {
     sprayFragments(state, e, def.attack);
-    e.cooldown = def.fireCooldown;
+    e.cooldown = scaledFireCooldown(def.fireCooldown, def.attack.kind);
   }
-  aimAt(e, def.speed, player.x, player.y);
+  aimAt(
+    e,
+    e.aux1 === MID_CLASH_LEADER_MARK ? MID_CLASH_LEADER_SPEED : def.speed,
+    player.x,
+    player.y,
+  );
 }
 
-function moveStandoff(e: Entity, def: EnemyDef, player: Entity): void {
+/** `def` 를 안 받는다 — 이 이동은 유효 속도만 쓴다(리더 덮어쓰기는 호출부가 결정한다). */
+function moveStandoff(e: Entity, player: Entity, speed: number): void {
   const dx = player.x - e.x;
   const dy = player.y - e.y;
   const dist = length(dx, dy);
   const preferred = 380;
   const ang = atan2(dy, dx);
   if (dist > preferred + 40) {
-    e.vx = cos(ang) * def.speed;
-    e.vy = sin(ang) * def.speed;
+    e.vx = cos(ang) * speed;
+    e.vy = sin(ang) * speed;
   } else if (dist < preferred - 40) {
-    e.vx = -cos(ang) * def.speed;
-    e.vy = -sin(ang) * def.speed;
+    e.vx = -cos(ang) * speed;
+    e.vy = -sin(ang) * speed;
   } else {
     // Hold range with a slow perpendicular strafe.
-    e.vx = cos(ang + HALF_PI) * def.speed * 0.5;
-    e.vy = sin(ang + HALF_PI) * def.speed * 0.5;
+    e.vx = cos(ang + HALF_PI) * speed * 0.5;
+    e.vy = sin(ang + HALF_PI) * speed * 0.5;
   }
   e.angle = ang;
 }
 
-function moveSeekWounded(state: WorldState, e: Entity, def: EnemyDef, player: Entity): void {
+/** `def` 를 안 받는다 — 사유는 {@link moveStandoff} 와 같다. */
+function moveSeekWounded(state: WorldState, e: Entity, player: Entity, speed: number): void {
   const ally = nearestWoundedAlly(state, e);
   const tx = ally?.x ?? player.x;
   const ty = ally?.y ?? player.y;
@@ -170,8 +190,8 @@ function moveSeekWounded(state: WorldState, e: Entity, def: EnemyDef, player: En
   const ang = atan2(dy, dx);
   // Approach the target but stop ~120u short so it hovers alongside to heal.
   if (dist > 120) {
-    e.vx = cos(ang) * def.speed;
-    e.vy = sin(ang) * def.speed;
+    e.vx = cos(ang) * speed;
+    e.vy = sin(ang) * speed;
   } else {
     e.vx = 0;
     e.vy = 0;
@@ -191,7 +211,7 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
         def.attack.radius,
         def.attack.windup,
         8, // short burst window
-        def.attack.damage,
+        def.attack.damage * ENEMY_DAMAGE_MULT,
         false,
         e.id,
       );
@@ -199,7 +219,7 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
       // 밴드0/1(단계1..20)은 subBullets 0이라 no-op(거동 불변).
       const sub = stageParams(state.config.stage ?? 1).subBullets;
       const shardSpeed = 460;
-      const shardDamage = Math.max(4, Math.round(def.attack.damage * 0.5));
+      const shardDamage = Math.max(4, Math.round(def.attack.damage * 0.5 * ENEMY_DAMAGE_MULT));
       for (let i = 0; i < sub; i++) {
         if (state.enemyBulletCount >= state.bulletCap) break;
         const ang = (i * TWO_PI) / sub;
@@ -237,7 +257,7 @@ function runAttack(state: WorldState, e: Entity, def: EnemyDef, player: Entity):
           a.radius,
           a.windup,
           a.activeTicks,
-          a.damage,
+          a.damage * ENEMY_DAMAGE_MULT,
           true,
           e.id,
         );
@@ -285,7 +305,7 @@ function sprayFragments(
       cos(ang) * atk.speed,
       sin(ang) * atk.speed,
       ang,
-      atk.damage,
+      atk.damage * ENEMY_DAMAGE_MULT,
       atk.bulletRadius,
       atk.bulletLife,
       e.id,

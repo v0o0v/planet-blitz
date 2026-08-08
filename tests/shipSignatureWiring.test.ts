@@ -58,7 +58,7 @@ import {
   ARMOR_MAX_STACKS,
   OVERCHARGE_STILL_TICKS,
   CLOAK_UNHIT_TICKS,
-  FILM_ABSORB_FLAT,
+  filmCapacityFor,
   BROOD_MARK,
 } from '../src/sim/shipSignature.js';
 import { DRONE_MARK } from '../src/sim/uniques.js';
@@ -71,6 +71,17 @@ import { shipTypeDef, zeroSkillInvest } from '../data/ships/index.js';
 const NEUTRAL: InputFrame = { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0 };
 /** 런이 조기 종료되지 않게 버티는 무대 상수(프로필 파생값이 아니다). */
 const DURABLE_HP = 100_000_000;
+
+/**
+ * 관측 런의 **막 만재 내구**(버블). 생존용 {@link DURABLE_HP} 와 분리한다.
+ *
+ * 내구는 2026-08-08 개정으로 **최대 HP 비율**이 됐다(`FILM_ABSORB_HP_BP`). `DURABLE_HP` 를
+ * 그대로 두면 막 1장이 2천5백만이 되어 **한 번도 소진되지 않고**, 그러면 이 스위트가 재려는
+ * 배선(막이 서고·닳고·터지는가)이 통째로 관측 불가가 된다. 이 스위트가 재는 것은 *배선이
+ * 사는가*이지 *내구가 얼마인가*가 아니므로 관측용 내구를 기본 HP(100) 기준값으로 고정한다.
+ * 크기 축은 `bench/nominalPower.ts` 소관이다.
+ */
+const OBSERVE_FILM_CAP = filmCapacityFor(100);
 
 /** `typeId` 기체 하나를 가진 프로필(무투자). 앱의 기체 교체 결과와 같은 모양. */
 function profileWithType(typeId: number): Profile {
@@ -147,6 +158,20 @@ interface Observed {
   entityCount: number;
   /** 병아리 — `ownerId === BROOD_MARK` 인 살아 있는 엔티티(해츨링 시그니처 전용 마커). */
   droneCount: number;
+  /**
+   * 런 **전체**에서 동시에 살아 있던 병아리 최대 수.
+   *
+   * ## 왜 종료 시점 수(`droneCount`)로는 부족한가
+   * 병아리는 `TURRET_LIFE_TICKS`(600) 만에 만료된다. 그래서 종료 시점 수는 *"출격했는가"* 가
+   * 아니라 *"마지막 출격이 끝에서 600틱 안이었는가"* 를 재고, 그 타이밍은 처치 속도가 조금만
+   * 달라져도 흔들린다 — 이 파일이 이미 두 번 seed 를 갈아 끼운 이유가 그것이다(구 주석의
+   * 3331 → 3313 재선정). 2026-08-08 에 병아리 탄 피해가 플레이어 피해 비율이 되면서
+   * (`BROOD_DAMAGE_BP`) 처치 속도가 또 달라져 같은 자리가 다시 깨졌다.
+   *
+   * 최대치는 그 타이밍에 무관하게 **"한 기라도 태어났는가"** 를 직접 재므로 seed 재선정
+   * 사이클을 끊는다. 종료 시점 수는 무대 오염 검사(대조군 0)용으로 남긴다.
+   */
+  maxDroneCount: number;
   /** 유니크 ④ 드론 베이·보조무기 ③ 센트리가 띄운 드론(`DRONE_MARK`) — 병아리 상한과 분리됐다. */
   legacyDroneCount: number;
   /** 살아 있는 적 hp 총합(피해 산술 변화가 처치 수를 못 바꿔도 여기선 보인다). */
@@ -201,7 +226,10 @@ function observe(
   // Lane6 에서 chase 로 배정돼 무적 포식자가 정지·저속 플레이어를 접촉 즉사시키므로(MED-1 수정 후
   // 치명적), planetMode 를 vampire 로 덮어 장시간 관측 런이 조기 종료되지 않게 한다(로스터 유지·chase만 끔).
   const state = createWorld(seed, { ...cfg, planetMode: PLANET_MODE.vampire, playerHp: DURABLE_HP });
+  // 막 내구는 생존용 HP 와 분리한다 — 사유는 `OBSERVE_FILM_CAP` 주석이 정본이다.
+  state.filmCapacity = OBSERVE_FILM_CAP;
   let maxAux0 = 0;
+  let maxDroneCount = 0;
   let maxAux1 = 0;
   let cloakedTicks = 0;
   let enemyFireWhileCloaked = 0;
@@ -251,6 +279,10 @@ function observe(
     prevPierce = boss?.pierce ?? -1;
     if (p.aux0 > maxAux0) maxAux0 = p.aux0;
     if (p.aux1 > maxAux1) maxAux1 = p.aux1;
+    // 병아리 동시 생존 최대치 — 만료 타이밍에 무관한 "출격했는가" 의 직접 증거(위 필드 doc).
+    let aliveBrood = 0;
+    for (const e of state.entities) if (!e.dead && e.ownerId === BROOD_MARK) aliveBrood++;
+    if (aliveBrood > maxDroneCount) maxDroneCount = aliveBrood;
   }
   let droneCount = 0;
   let legacyDroneCount = 0;
@@ -266,6 +298,7 @@ function observe(
     kills: state.kills,
     entityCount: state.entities.length,
     droneCount,
+    maxDroneCount,
     legacyDroneCount,
     enemyHpSum,
     cloakedTicks,
@@ -282,6 +315,8 @@ function observe(
 function runHashes(seed: number, cfg: WorldConfig, ticks: number): number[] {
   // observe 와 동일: 시그니처 해시 관측을 중립 vampire 아레나로 통일한다(planet 2 chase 조기 종료 회피).
   const state = createWorld(seed, { ...cfg, planetMode: PLANET_MODE.vampire, playerHp: DURABLE_HP });
+  // 막 내구는 생존용 HP 와 분리한다 — 사유는 `OBSERVE_FILM_CAP` 주석이 정본이다.
+  state.filmCapacity = OBSERVE_FILM_CAP;
   const out: number[] = [];
   for (let i = 0; i < ticks; i++) {
     stepWorld(state, NEUTRAL);
@@ -337,7 +372,7 @@ interface Case {
  *   브루저     k=13 · hpLost **419 < 515** · aux0 8 (≤ ARMOR_MAX_STACKS 8)
  *   아크캐스터 k=22 · hpLost **289 < 318** · aux0 600 (> OVERCHARGE_STILL_TICKS) · ehp 8264 ≠ 8345
  *   말로우     k=12 · hpLost **399 < 612** · aux0 213
- *   버블       k=18 · hpLost **464 < 554** · aux0 60 (= FILM_ABSORB_FLAT) · aux1 419
+ *   버블       k=18 · hpLost **464 < 554** · aux0 60 (= 당시 고정 흡수량) · aux1 419
  * 네 건 모두 대조군 `kills > 0` 도 성립한다(공허 런 가드 양쪽 충족).
  *
  * ⚠️ 아크캐스터의 구 실패는 별개 증상이었다 — 단계 21 에서 live·ctrl 의 `hpLost` 가 **446.4 로
@@ -425,7 +460,19 @@ const CASES: Case[] = [
     // 넉넉했고, 그중 여유가 가장 큰 축인 113 을 골랐다(은신 유지 240틱 = 완주 창 2회 ·
     // 무피격 최대 359틱 · 처치 40). 무대·틱·단언은 불변이고 증인만 다시 골랐다.
     // (seed 6 은 아래 'phantom-suppression' 이 쓰고 있어 후보에서 제외했다.)
-    seed: 113,
+    //
+    // ⚠️ SEED 재선정 2026-08-08(113 → 4, 출시 전 밸런스 확정 레인 — 플레이어 피해 8 → 18.24 ·
+    // HP 100 → 151 · 적 수 ×1.3 · 적 발사 빈도 ×1.3). 압박·처치 속도가 함께 움직여 seed 113 은
+    // live 와 굶긴 대조군의 **핵심 관측이 완전히 같아졌다**(§② 공통 가드가 먼저 빨개진다 =
+    // 이 케이스가 아무것도 못 재는 상태). 1..200 연속 스캔에서 이 절의 단언 전부를 만족하는
+    // 시드가 **107개**로 여전히 넉넉하다 — 이 축은 구조적 상한이 아니라 표본 문제라서 증인
+    // 재선정이 유효한 처방이다(대조 사례: `shipSignaturePhantom.test.ts` §TRAJ 의 은신 진입
+    // 빈도 축은 1..1200 에서 통과 0개라 그쪽은 단언 형태 자체를 바꿔야 했다 — 두 축을 같은
+    // 처방으로 다루지 마라).
+    // seed 4: 은신 139틱 · 무피격 최대 359틱 · 처치 82 · 적 hp 총합 876.16(live) vs
+    // 1483.12(ctrl, **1.7배**) — 이 절의 고유 단언(enemyHpSum 갈림)에서 마진이 가장 크다.
+    // 후보 여유분: seed 18(552.04 vs 817.42 · 은신 360틱) · 17(397.06 vs 451.14 · 은신 480틱).
+    seed: 4,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
       // 은신은 **적 AI 가 읽는 술어**(playerCloaked)로 관측한다 — 이것이 배선 게이트 자체다.
@@ -458,7 +505,15 @@ const CASES: Case[] = [
     // 같아졌다**(= 이 케이스가 아무것도 못 재는 상태). 1..300 스캔에서 이 절의 단언 전부를
     // 만족하는 시드가 여럿 나왔고(1·6·7·9·11), 그중 여유가 가장 큰 6 을 골랐다
     // (은신 유지 240틱 · 가시 구간 잡몹 사격 779회 — 두 계량 모두 vacuous 와 멀다).
-    seed: 6,
+    //
+    // ⚠️ SEED 재선정 2026-08-08(6 → 15, 출시 전 밸런스 확정 레인 — 위 'phantom' 케이스와 같은
+    // 사유). seed 6 은 은신은 계속 서는데 `hpLost` 가 live·ctrl 둘 다 **270 으로 동타**가 됐다
+    // (= "은신이 전개를 바꿨다" 를 못 잰다). 1..200 스캔에서 이 절의 단언 전부를 만족하는 시드가
+    // **112개**다 — 여기도 표본 문제이지 구조적 상한이 아니다.
+    // seed 15: 은신 249틱 · 가시 구간 잡몹 사격 **649회**(vacuous 가드 마진이 후보 중 최대) ·
+    // hpLost 398(live) vs 498(ctrl). 후보 여유분: seed 25(300회 · 906 vs 1062) ·
+    // 4(276회 · 534 vs 530, 단 hpLost 마진이 4 로 좁다).
+    seed: 15,
     ticks: 3600,
     signatureEffect: (live, ctrl) => {
       expect(live.cloakedTicks, '팬텀: 은신이 서지 않았다').toBeGreaterThan(100);
@@ -499,7 +554,7 @@ const CASES: Case[] = [
     signatureEffect: (live, ctrl) => {
       // 부화 = 누적 처치 임계마다 병아리 출격. 대조군에는 드론 소환원이 없다(유니크 미장착).
       expect(ctrl.droneCount, '해츨링: 대조군에 드론이 있다(무대 오염)').toBe(0);
-      expect(live.droneCount, '해츨링: 병아리가 한 기도 출격하지 않았다').toBeGreaterThan(0);
+      expect(live.maxDroneCount, '해츨링: 병아리가 한 기도 출격하지 않았다').toBeGreaterThan(0);
       // 병아리가 실제로 싸운다 — 같은 시드에서 처치 수가 늘어난다.
       expect(live.kills, '해츨링: 병아리가 전투에 기여하지 않았다').toBeGreaterThan(ctrl.kills);
       // aux0 = 마지막 출격 시점의 state.kills 스냅샷.
@@ -546,10 +601,10 @@ const CASES: Case[] = [
     seed: 3311,
     ticks: 1800,
     signatureEffect: (live, ctrl) => {
-      // 방막 = 420틱마다 재생성되는 정액 흡수막(60) + 소진 시 반경 파열 밀어내기.
+      // 방막 = 420틱마다 재생성되는 흡수막(내구 = 최대 HP 비율) + 소진 시 반경 파열 밀어내기.
       expect(live.hpLost, '버블: 방막이 피해를 흡수하지 못했다').toBeLessThan(ctrl.hpLost);
-      // aux0 = 남은 막 내구. 막이 실제로 서면 정확히 FILM_ABSORB_FLAT 까지 오른다.
-      expect(live.maxAux0, '버블: 막이 한 번도 서지 않았다').toBe(FILM_ABSORB_FLAT);
+      // aux0 = 남은 막 내구. 막이 실제로 서면 정확히 이 런의 상한까지 오른다.
+      expect(live.maxAux0, '버블: 막이 한 번도 서지 않았다').toBe(OBSERVE_FILM_CAP);
       // aux1 = 마지막 파열 이후 경과 틱 — 재생 주기를 실제로 돈다.
       expect(live.maxAux1, '버블: 재생 타이머가 돌지 않았다').toBeGreaterThan(0);
     },
@@ -907,6 +962,6 @@ describe('⑦ 런당 시그니처는 정확히 하나 (aux 별칭 봉인)', () =
     for (const bit of SIGNATURE_BITS) mask = (mask & ~(1 << bit)) >>> 0;
     const typeAxis: WorldConfig = { ...base, loadout: { ...loadout, uniqueMask: mask } };
     const obs = observe(3311, typeAxis, 1800);
-    expect(obs.maxAux0, '타입 축만으로는 버블 막이 서지 않았다').toBe(FILM_ABSORB_FLAT);
+    expect(obs.maxAux0, '타입 축만으로는 버블 막이 서지 않았다').toBe(OBSERVE_FILM_CAP);
   });
 });

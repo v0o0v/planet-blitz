@@ -24,6 +24,14 @@ import {
 // `waves.js` 를 값으로 끌면 순환이라, 그쪽은 적 수를 직접 센다(그 파일 §주석에 근거).
 import { enlightenmentRushStepMult } from './catalyst/growth.js';
 import { blankEntity, addEntity } from './entities.js';
+// 밀도 패스 계수(2026-08-08 사용자 결정) — 사유·짝 관계는 그 모듈 헤더가 정본이다.
+import {
+  ENEMY_BULLET_CAP_MULT,
+  ENEMY_COUNT_MULT,
+  ENEMY_DAMAGE_MULT,
+  ENEMY_HP_MULT,
+  scaledFireCooldown,
+} from './enemyScale.js';
 import type { EnemyDef } from './patterns/types.js';
 import { ENEMY_BY_TYPE } from '../../data/enemies.js';
 import {
@@ -295,7 +303,9 @@ export function updateWaves(state: WorldState, player: Entity): void {
     w.done = true;
     return;
   }
-  state.bulletCap = seg.bulletCap;
+  // 밀도 패스(2026-08-08): 탄 유입이 `적 수 × 발사 빈도` 로 늘므로 상한도 같은 배수로 올린다.
+  // 이 줄이 없으면 늘어난 탄이 상한에서 **조용히 잘린다**(`ENEMY_BULLET_CAP_MULT` 주석 참조).
+  state.bulletCap = Math.round(seg.bulletCap * ENEMY_BULLET_CAP_MULT);
 
   // 정예 소집령(ADR-0043): 잡몹 대신 정예를 겹쳐 내려보내는 **스포너**다. 세그먼트 게이트가
   // 아니라 여기(스폰 층)에 붙는 이유는, 이 주문이 바꾸는 것이 "구간을 언제 넘는가"가 아니라
@@ -347,8 +357,13 @@ export function updateWaves(state: WorldState, player: Entity): void {
   // catalystMods.enemyCount 는 촉매 무주입 시 1(무연산 → 바이트 불변).
   const tp = stageParams(state.config.stage ?? 1);
   // PVE_DENSITY_MULT: 상한 축. 짝인 유입 축은 spawnCard 안에 있다(둘은 함께 움직인다).
+  // ENEMY_COUNT_MULT: 밀도 패스(2026-08-08) — `PVE_DENSITY_MULT` 위에 곱한다(출처가 다르다).
   const maxEnemies = Math.round(
-    (seg.maxEnemies + rushEnemyBonus) * state.catalystMods.enemyCount * tp.densityMult * PVE_DENSITY_MULT,
+    (seg.maxEnemies + rushEnemyBonus) *
+      state.catalystMods.enemyCount *
+      tp.densityMult *
+      PVE_DENSITY_MULT *
+      ENEMY_COUNT_MULT,
   );
   // 수축은 유입 케이던스를 늘린다(위 `waveIntervalScale` 주석 — 그 무대에서만 적이 진행
   // 게이트다). 하한(`RUSH_MIN_INTERVAL`)에도 같은 배율을 걸어야 급행 램프가 최고조일 때 계수가
@@ -532,7 +547,8 @@ function spawnCard(state: WorldState, card: WaveCard, maxEnemies: number, player
     const def = 'elite' in s ? planet.elites[s.elite] : planet.roster[s.role];
     if (def === undefined) continue; // 정의되지 않은 정예 인덱스는 무시(안전).
     // PVE_DENSITY_MULT: 유입 축. 짝인 상한 축은 updateWaves 의 maxEnemies 에 있다.
-    for (let i = 0; i < s.count * PVE_DENSITY_MULT; i++) defs.push(def);
+    // ENEMY_COUNT_MULT: 밀도 패스 — 짝인 상한 축(위 maxEnemies)과 **같은 배수**여야 한다.
+    for (let i = 0; i < s.count * PVE_DENSITY_MULT * ENEMY_COUNT_MULT; i++) defs.push(def);
   }
   const positions = formationPositions(state, card.formation, defs.length, player);
   const room = maxEnemies - countEnemies(state);
@@ -611,17 +627,19 @@ function spawnEnemy(state: WorldState, def: EnemyDef, x: number, y: number): Ent
   e.y = y;
   e.radius = def.radius;
   // 촉매 적 HP 페널티 × 침략 단계 HP 배율. 단계1·촉매 무주입 ×1(불변), 연속 상향(밴드 대표 1/2.2/4.5).
+  // ENEMY_HP_MULT: 밀도 패스의 짝 축 — 적 수 ×1.3 의 정확한 역수라 **총 적 HP 풀이 보존**된다.
   const hp = Math.round(
-    def.hp * state.catalystMods.enemyHp * stageParams(state.config.stage ?? 1).hpMult,
+    def.hp * state.catalystMods.enemyHp * stageParams(state.config.stage ?? 1).hpMult * ENEMY_HP_MULT,
   );
   e.hp = hp;
   e.maxHp = hp;
   // 촉매 적 피해 페널티 — 접촉 피해에 곱한다(무주입 ×1 → 불변). 적탄 피해는 def.attack 파생이라
   // 여기서 건드리지 않는다(patterns 소관).
-  e.damage = def.contactDamage * state.catalystMods.enemyDamage;
+  // ENEMY_DAMAGE_MULT: 밀도 패스의 짝 축(실측값 — 그 상수 주석이 정본).
+  e.damage = def.contactDamage * state.catalystMods.enemyDamage * ENEMY_DAMAGE_MULT;
   e.enemyType = def.typeIndex;
   // Stagger first fire so a freshly spawned pack does not volley in lockstep.
-  e.cooldown = def.fireCooldown + state.waveRng.int(0, 30);
+  e.cooldown = scaledFireCooldown(def.fireCooldown, def.attack.kind) + state.waveRng.int(0, 30);
   return addEntity(state, e);
 }
 
@@ -640,14 +658,30 @@ export function summonEnemy(state: WorldState, def: EnemyDef, x: number, y: numb
   e.x = x;
   e.y = y;
   e.radius = def.radius;
+  // ⚠️ **여기에는 `ENEMY_HP_MULT` 를 걸지 않는다 — 짝이 없기 때문이다.**
+  // 밀도 패스(`enemyScale.ts`)의 계약은 «적 수 ×1.3 ↔ 적 HP ×1/1.3» **한 쌍**이고, 그 수 배수는
+  // 웨이브 경로에만 있다(`ENEMY_COUNT_MULT` 소비 지점 둘 — 온스크린 상한과 청크 유입, 둘 다
+  // `spawnEnemy` 쪽이다). 이 함수의 호출자는 **개수를 자기가 정한다**: 침공 드론 스포너·침공
+  // 편대·보스 무리·중반 격전·촉매 소환·조우 수호. 그쪽에 HP 짝만 걸면 늘어난 적 없이 HP 만
+  // 깎이는 **보상 없는 순수 23% 약화**가 된다.
+  //
+  // 밀도 패스 초판이 실제로 그 상태였고 `tests/invasionFacility.test.ts` 가 잡았다 — 드론
+  // 내구도가 로스터 기본값 75 가 아니라 57 = `round(75 / 1.3)` 로 나왔다. 그 누수는
+  // `enemyScale.ts` 헤더의 자기 선언(*"침공은 절차 생성 웨이브를 안 돌리므로 무관"*)과도
+  // 정면으로 갈려 있었다. 짝을 깨는 곳은 계수를 거는 자리가 아니라 **거는 것을 멈추는 자리**다.
+  //
+  // 발사 쿨다운은 반대로 그대로 건다 — 탄 축은 애초에 짝을 안 걸었으므로(`ENEMY_FIRE_RATE_MULT`
+  // 주석의 실측 결론) 소환 적에 걸어도 깨질 짝이 없고, *"화면 탄이 30% 더"* 라는 요청 축과도 맞는다.
   const hp = Math.round(
     def.hp * state.catalystMods.enemyHp * stageParams(state.config.stage ?? 1).hpMult,
   );
   e.hp = hp;
   e.maxHp = hp;
-  e.damage = def.contactDamage * state.catalystMods.enemyDamage;
+  // ENEMY_DAMAGE_MULT: 밀도 패스의 짝 축(실측값 — 그 상수 주석이 정본). 지금 1.0 이라 무영향이지만
+  // 피해 축은 짝이 아니라 **모든 적에 균일**이 계약이라 소환 경로에도 그대로 건다.
+  e.damage = def.contactDamage * state.catalystMods.enemyDamage * ENEMY_DAMAGE_MULT;
   e.enemyType = def.typeIndex;
-  e.cooldown = def.fireCooldown; // 고정 쿨다운(결정론, RNG 미소비)
+  e.cooldown = scaledFireCooldown(def.fireCooldown, def.attack.kind); // 고정 쿨다운(결정론, RNG 미소비)
   return addEntity(state, e);
 }
 

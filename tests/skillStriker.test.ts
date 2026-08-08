@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from '../src/sim/world.js';
+import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG, DEFAULT_WEAPON } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
 import { blankEntity, addEntity } from '../src/sim/entities.js';
@@ -1646,8 +1646,10 @@ describe('⑱-M8 도약 사격 (액티브 핸들러 as_striker_mobility_hi)', ()
     const shots = vault([[M8, 1]]);
     expect(shots).toHaveLength(1); // vaults=2 라 「사이」는 정확히 한 번뿐이다
     expect(shots[0]?.aux0).toBe(1); // mark=1 — 정조준탄 연계가 걸린다
-    // 자동 볼리 피해 = round(기본 피해 8 × (60%+3%)) = round(8 × 0.63) = 5.
-    expect(shots[0]?.damage).toBe(5);
+    // 자동 볼리 피해 = round(기본 피해 × (60% + 레벨당 3%)).
+    // ⚠️ 기본 피해를 리터럴로 박지 마라 — 밸런스를 만질 때마다 여기가 빨개진다(2026-08-08 에
+    //    8 → 18.24 로 오르며 실제로 그랬다). 재는 것은 **비율 배선**이지 그 곱의 결과값이 아니다.
+    expect(shots[0]?.damage).toBe(Math.round(DEFAULT_WEAPON.damage * (0.6 + 0.03)));
   });
 
   it('레벨이 오르면 자동 볼리 피해가 오른다 (하한 짝)', () => {

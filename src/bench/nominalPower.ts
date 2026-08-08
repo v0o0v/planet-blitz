@@ -61,7 +61,10 @@ import {
   CUSHION_DEFER_BP,
   CUSHION_RECOVER_BP,
   FILM_PERIOD_TICKS,
-  FILM_ABSORB_FLAT,
+  FILM_ABSORB_HP_BP,
+  filmCapacityFor,
+  BROOD_DAMAGE_BP,
+  broodBulletDamage,
   MARKSMAN_CYCLE_SHOTS,
   MARKSMAN_BONUS_BP,
 } from '../sim/shipSignature.js';
@@ -77,16 +80,26 @@ import {
  * sim 을 값으로 import 하지 않는 측정 계층 규율(`standardBuild.ts` 머리말과 같은 사유) 때문에
  * 재선언하되, `tests/nominalPower.test.ts` 의 드리프트 가드가 두 축이 갈라지면 잡는다.
  */
-export const BASE_DAMAGE = 8;
+export const BASE_DAMAGE = 18.24;
 /** 무기 기준 발사 간격(틱). `world.ts` `DEFAULT_WEAPON.fireCooldownQ = 6 * FIRE_CD_Q`. */
 export const BASE_FIRE_CD_TICKS = 6;
 /** 발사 간격 하한(틱). `constants.ts` `FIRE_CD_MIN_Q = 2 * FIRE_CD_Q`. */
 export const MIN_FIRE_CD_TICKS = 2;
 /** 플레이어 기준 HP. `world.ts` `DEFAULT_CONFIG.playerHp`(= `guardian.ts` `PLAYER_BASE_HP`). */
-export const BASE_PLAYER_HP = 100;
+export const BASE_PLAYER_HP = 151;
 
-/** 병아리 드론 1기의 DPS — `events.ts` `TURRET_BULLET_DAMAGE 10` × (60틱 ÷ `TURRET_FIRE_COOLDOWN 10`). */
-export const BROOD_DRONE_DPS = 10 * (TICK_RATE / 10);
+/** 병아리 드론 1기의 초당 발사 수 — `events.ts` `TURRET_FIRE_COOLDOWN 10` 기준(60틱 ÷ 10). */
+export const BROOD_DRONE_SHOTS_PER_SEC = TICK_RATE / 10;
+
+/**
+ * 병아리 드론 1기의 DPS. **플레이어 발당 피해에 비례한다**(2026-08-08 개정 —
+ * `shipSignature.ts` 의 `BROOD_DAMAGE_BP` 주석이 사유의 정본). 구값은 `TURRET_BULLET_DAMAGE`
+ * 10 고정이라 레벨·장비와 무관한 절대량이었고, 그래서 이 시그니처의 실효 배율이 기준이 바뀔
+ * 때마다 통째로 달라졌다.
+ */
+export function broodDroneDps(playerDamage: number): number {
+  return broodBulletDamage(playerDamage) * BROOD_DRONE_SHOTS_PER_SEC;
+}
 /** 병아리 드론 수명(초). `events.ts` `TURRET_LIFE_TICKS 600`. */
 export const BROOD_DRONE_LIFE_SEC = 600 / TICK_RATE;
 /** 병아리 동시 생존 상한. `world.ts` `BROOD_MAX_DRONES`. */
@@ -135,10 +148,24 @@ export interface NominalAssumptions {
    */
   cushionRecoverRate: number;
   /**
-   * 노출 시간(초) — **플랫 효과를 누적하는 창**이다. 막 흡수(60/7초)와 부화체 DPS 는 시간에
-   * 비례해 쌓이므로 창이 없으면 값이 정의되지 않는다. 기본 {@link RUN_SECONDS_PAR}.
+   * **선체가 초당 잃는 HP** — 버블 막의 실효 방어 배율을 정하는 유일한 분모다.
+   *
+   * ## ⚠️ 이 모델에서 유일하게 **실측이 필요한** 가정치다
+   * 나머지 가정치는 sim 규칙에서 상한·주기로 유도되지만, 이것은 무대(적 밀도·화력·파일럿
+   * 회피)의 산물이라 sim 을 돌려야 나온다. `bench/incomingDps.ts` 가 재고, 기본값
+   * {@link MEASURED_INCOMING_DPS} 가 그 실측치다.
+   *
+   * ## 왜 초판에는 없었는가 — 그리고 왜 돌아왔는가
+   * 초판은 이 값을 **가정**으로 두고 플랫 효과를 비율로 환산했고, 그 형식이 발산해 버블이
+   * 파워 10배로 튀었다(모듈 헤더 §초판이 여기서 틀렸다). 그래서 플랫을 가산으로 바꾸며 이
+   * 가정치를 통째로 지웠다.
+   *
+   * 지금은 상황이 다르다. 막 내구가 **최대 HP 비율**이 되면서(`FILM_ABSORB_HP_BP`) 상쇄
+   * DPS 도 비율이 됐고, 그래서 이 분모는 *"플랫을 비율로 억지로 바꾸는 환산기"* 가 아니라
+   * **장갑·완충·은신이 이미 쓰고 있는 것과 같은 형식**(`1/(1−감소율)`)의 정직한 입력이다.
+   * 그리고 발산은 클램프로 가리지 않고 **큰 소리로 실패**시킨다({@link sigEffect} 버블 절).
    */
-  runSeconds: number;
+  incomingDps: number;
 }
 
 /**
@@ -150,6 +177,23 @@ export interface NominalAssumptions {
  */
 export const RUN_SECONDS_PAR = 95;
 
+/**
+ * **실측 초당 피격량**(`bench/incomingDps.ts`, 2026-08-08). 스트라이커·행성 0·무장비·시드
+ * 6개·5400틱(90초) 창의 시드 중앙값을 세 레벨에서 반올림한 값이다:
+ *
+ *     Lv5(단계1)   39.80   (35.56 ~ 52.09)
+ *     Lv50(단계10)  40.53   (37.47 ~ 46.81)
+ *     Lv100(단계20) 39.24   (32.98 ~ 49.07)
+ *
+ * **판정 기준 모드(무장비)에서 레벨과 무관하게 평평하다** — 그래서 단일 상수로 둘 수 있다.
+ * (표준 장비를 입히면 Lv100 에서 봇이 사실상 안 맞아 0 으로 내려간다. 그것은 봇 회피의
+ * 산물이지 무대의 성질이 아니므로 이 상수의 근거로 쓰지 않는다 — 무장비 값이 정본이다.)
+ *
+ * ⚠️ 적 축을 만지면 이 값이 움직인다. 그때는 `bench/incomingDps.ts` 를 다시 돌리고 여기와
+ * 위 표를 함께 고쳐라 — 값만 고치고 근거표를 남겨 두면 다음 사람이 재현할 수 없다.
+ */
+export const MEASURED_INCOMING_DPS = 40;
+
 /** 중립 기본 가정치. 어느 기체에도 유리하게 기울이지 않도록 잡았다. */
 export const DEFAULT_ASSUMPTIONS: NominalAssumptions = {
   armorAvgStacks: 4,
@@ -159,7 +203,7 @@ export const DEFAULT_ASSUMPTIONS: NominalAssumptions = {
   killsPerSec: 3.0,
   cumulativeKills: 300,
   cushionRecoverRate: 0.4,
-  runSeconds: RUN_SECONDS_PAR,
+  incomingDps: MEASURED_INCOMING_DPS,
 };
 
 // ---------------------------------------------------------------------------
@@ -234,11 +278,17 @@ export function rawStats(
  * 삼키는 계산기는 계측기가 아니다.
  *
  * 올바른 형식은 성질을 보존하는 것이다:
- *  · **플랫**(흡수량·부화체 화력) → 노출 시간만큼 쌓아 **가산**한다. 발산하지 않는다.
+ *  · **플랫** → 노출 시간만큼 쌓아 **가산**한다. 발산하지 않는다.
  *  · **비율**(장갑 감소·과충전·완충) → **곱셈**한다.
  *
- * 부수 효과로 초판의 가장 취약한 가정치(`incomingDps` — 초당 받는 피해)가 모델에서 통째로
- * 사라졌다. 플랫을 비율로 바꿀 때만 필요했던 분모였다.
+ * ## 그 뒤 — 플랫 두 개를 **sim 쪽에서** 없앴다 (2026-08-08)
+ * 위 형식은 계산의 발산을 막았을 뿐, *"이 두 시그니처만 기준이 바뀔 때마다 값이 통째로
+ * 달라진다"* 는 성질 자체는 그대로였다(무장비 버블 9.52배 ↔ 표준장비 4.17배). 그래서
+ * 2026-08-08 밸런스 패스가 **sim 상수 두 개를 비율로 재설계**했다:
+ *  · 버블 막 내구 → 최대 HP 의 25%(`FILM_ABSORB_HP_BP`)
+ *  · 부화체 탄 피해 → 플레이어 발당 피해의 20%(`BROOD_DAMAGE_BP`)
+ * 그래서 지금 이 레코드의 `atkFlat`·`defFlat` 칸은 **아무도 쓰지 않는다.** 칸을 지우지 않는
+ * 것은 형식 계약(플랫은 가산 · 비율은 곱셈)이 앞으로 생길 플랫 효과에도 걸리기 때문이다.
  */
 export interface SigEffect {
   /** 공격 비율 배율(1 = 무영향). */
@@ -255,12 +305,21 @@ export interface SigEffect {
 
 const NEUTRAL: Omit<SigEffect, 'note'> = { atkMult: 1, atkFlat: 0, defMult: 1, defFlat: 0 };
 
+/** 막 재생 주기(초). `FILM_PERIOD_TICKS` 를 초로 환산한 값. */
+export const FILM_PERIOD_SEC = FILM_PERIOD_TICKS / TICK_RATE;
+
 /**
- * 버블 막이 **무조건 상쇄하는 초당 피해**(= 흡수량 ÷ 재생 주기). 받는 피해가 이 값 미만이면
- * 막이 소모보다 빨리 재생돼 버블은 죽지 않는다 — {@link sigEffect} 의 버블 절 참조.
+ * 버블 막이 **무조건 상쇄하는 초당 피해**(= 막 1장의 내구 ÷ 재생 주기).
+ *
+ * 받는 피해가 이 값 미만이면 막이 소모보다 빨리 재생돼 버블은 **문자 그대로 죽지 않는다**.
+ * 구값(내구 60 고정)에서는 이것이 8.57 **절대 상수**였고, 그래서 임계가 성장과 무관하게
+ * 고정이었다. 이제 내구가 최대 HP 비율이라 상쇄도 HP 에 비례한다 — 임계가 절대량이 아니라
+ * 플레이어 규모에 붙는다.
+ *
+ * @param maxHp 이 런의 최대 HP. `WorldState.filmCapacity` 와 **같은 함수**로 내구를 낸다.
  */
-export function filmDenyDps(): number {
-  return FILM_ABSORB_FLAT / (FILM_PERIOD_TICKS / TICK_RATE);
+export function filmDenyDps(maxHp: number): number {
+  return filmCapacityFor(maxHp) / FILM_PERIOD_SEC;
 }
 
 /**
@@ -268,11 +327,17 @@ export function filmDenyDps(): number {
  *
  * `shotsPerSec` 를 받는 이유: 은신 해제 첫 타(2.5배 **1발**)는 주기당 1회라 초당 발사 수로
  * 나눠야 배율이 된다. 이것은 플랫→비율 환산이 아니라 **주기 정규화**이므로 발산하지 않는다.
+ *
+ * `raw` 를 받는 이유: 비율화된 두 시그니처(버블 막 = 최대 HP 비율 · 부화체 탄 = 발당 피해
+ * 비율)는 **자기 배율을 내려면 그 기준값이 필요하다.** sim 이 실제로 그 두 값에서 파생하므로
+ * (`WorldState.filmCapacity` ← `config.playerHp`, `broodBulletDamage` ← `state.weapon.damage`)
+ * 모델도 같은 입력을 받아야 두 축이 갈리지 않는다.
  */
 export function sigEffect(
   bit: number,
   a: NominalAssumptions,
   shotsPerSec: number,
+  raw: { damage: number; hp: number },
 ): SigEffect {
   switch (bit) {
     case SIG_STRIKER_MARKSMAN: {
@@ -317,17 +382,25 @@ export function sigEffect(
       };
     }
     case SIG_HATCHLING_BROOD: {
-      // 부화체 DPS 는 **장비와 무관한 60 고정**이다 → 가산. 저레벨에 크고 만렙에 희석된다.
+      // 부화체 화력은 이제 **플레이어 발당 피해의 20%**(`BROOD_DAMAGE_BP`)라 장비·레벨과 함께
+      // 자란다 → 순수 비율. 구값(60 DPS 고정)이 저레벨에 크고 만렙에 희석되던 축이 사라졌다.
       const threshold = hatchThreshold(a.cumulativeKills);
       const avgAlive = Math.min(
         BROOD_MAX_DRONES,
         (a.killsPerSec / threshold) * BROOD_DRONE_LIFE_SEC,
       );
-      const addDps = avgAlive * BROOD_DRONE_DPS;
+      const droneDps = broodDroneDps(raw.damage);
+      const addDps = avgAlive * droneDps;
+      // 플레이어 초당공격력 대비 비로 환산한다 — `baseDps` 를 여기서 다시 계산하지 않고
+      // 호출부가 넘긴 원시 스탯으로 낸다(볼리당 탄 수는 호출부만 안다 → 아래 주의).
+      const playerDps = raw.damage * shotsPerSec;
+      const atkMult = playerDps > 0 ? 1 + addDps / playerDps : 1;
       return {
         ...NEUTRAL,
-        atkFlat: addDps,
-        note: `부화 ${avgAlive.toFixed(2)}기 x ${BROOD_DRONE_DPS}DPS = +${addDps.toFixed(0)} DPS (가산)`,
+        atkMult,
+        note:
+          `부화 ${avgAlive.toFixed(2)}기 x ${droneDps.toFixed(1)}DPS(발당 ${BROOD_DAMAGE_BP / 100}%) ` +
+          `= +${addDps.toFixed(1)} DPS (비율)`,
       };
     }
     case SIG_MALLOW_CUSHION: {
@@ -340,24 +413,35 @@ export function sigEffect(
       };
     }
     case SIG_BUBBLE_FILM: {
-      // 막 흡수는 **플랫**이다(60 / 7초) → 노출 시간만큼 쌓아 실효체력에 가산한다.
+      // 막 내구가 **최대 HP 의 25%**(`FILM_ABSORB_HP_BP`)가 되면서, 상쇄 DPS 도 HP 에 비례하는
+      // 값이 됐다. 그래서 EHP 를 "죽기까지 넣어야 하는 피해" 로 정직하게 풀 수 있다:
       //
-      // ⚠️ 이 시그니처에는 **불사 임계**가 있다. EHP 를 "죽기까지 넣어야 하는 피해" 로 풀면
-      //     EHP = hp + (EHP / 받는DPS / 주기초) x 흡수량  =>  EHP = hp / (1 - 상쇄DPS/받는DPS)
-      // 라 받는 피해가 {@link filmDenyDps}(= 60/7초 = 8.57) **미만이면 분모가 0 이하**가 되어
-      // 버블은 문자 그대로 죽지 않는다. 초판이 이 자리에서 발산했고 클램프가 그것을 가렸다 —
-      // 발산은 버그가 아니라 **관측**이었다.
+      //     EHP = hp + (EHP / 받는DPS / 주기초) x 내구  =>  EHP = hp / (1 - 상쇄DPS/받는DPS)
       //
-      // 여기서는 발산하지 않는 가산 형식(노출 시간 동안 흡수하는 총량)을 쓰되, 임계를 설명에
-      // 남긴다. 임계 위/아래 어느 쪽인지는 사람 플레이가 「초당 피격량」을 재 오면 확정된다.
-      const films = a.runSeconds / (FILM_PERIOD_TICKS / TICK_RATE);
-      const absorbed = films * FILM_ABSORB_FLAT;
+      // 이것은 장갑·완충·은신이 이미 쓰는 것과 **같은 형식**이라, 노출 창(구 `runSeconds`)이라는
+      // 임의의 눈금이 필요 없다. 구 가산 형식은 발산은 막았지만 *"버블만 런 길이에 비례해
+      // 커진다"* 는 다른 왜곡을 남기고 있었다(나머지 여섯은 전부 한 목숨분 비율이었다).
+      //
+      // ## ⚠️ 발산은 클램프하지 않고 **큰 소리로 실패**시킨다
+      // 상쇄 DPS 가 받는 피해 이상이면 버블은 문자 그대로 죽지 않는다. 그 상태는 밸런스가
+      // 아니라 **설계 결함**이므로 표에 1.00 이나 클램프된 수를 찍어 가리면 안 된다 —
+      // 초판이 정확히 그렇게 해서 10배 발산을 0.9 클램프가 삼켰다.
+      const deny = filmDenyDps(raw.hp);
+      if (!(a.incomingDps > deny)) {
+        throw new Error(
+          `nominalPower: 버블 막 상쇄 ${deny.toFixed(2)} DPS 가 받는 피해 ` +
+            `${a.incomingDps.toFixed(2)} DPS 이상이다 — 이 조건에서 버블은 불사이고 명목 파워가 ` +
+            '정의되지 않는다. FILM_ABSORB_HP_BP 를 낮추거나 incomingDps 실측을 갱신하라 ' +
+            '(bench/incomingDps.ts).',
+        );
+      }
+      const frac = deny / a.incomingDps;
       return {
         ...NEUTRAL,
-        defFlat: absorbed,
+        defMult: 1 / (1 - frac),
         note:
-          `막 ${films.toFixed(1)}장 x ${FILM_ABSORB_FLAT} = +${absorbed.toFixed(0)} EHP (가산, ${a.runSeconds}초) ` +
-          `** 피격 ${filmDenyDps().toFixed(2)} DPS 미만이면 불사 **`,
+          `막 내구 ${filmCapacityFor(raw.hp)}(HP의 ${FILM_ABSORB_HP_BP / 100}%) / ${FILM_PERIOD_SEC.toFixed(0)}초 ` +
+          `= ${deny.toFixed(2)} DPS 상쇄 ÷ 피격 ${a.incomingDps.toFixed(1)} DPS -> -${(frac * 100).toFixed(1)}% (비율)`,
       };
     }
     default:
@@ -430,7 +514,7 @@ export function nominalFor(
   const raw = rawStats(equipped, typeId);
   const shotsPerSec = TICK_RATE / raw.fireCdTicks;
   const baseDps = raw.damage * raw.bulletCount * shotsPerSec;
-  const sig = sigEffect(def.signatureBit, a, shotsPerSec);
+  const sig = sigEffect(def.signatureBit, a, shotsPerSec, { damage: raw.damage, hp: raw.hp });
   // 순서 계약: **가산 먼저, 곱셈 나중.** 한 기체가 둘 다 갖는 경우는 지금 없지만(시그니처마다
   // 한 성질만 쓴다), 순서를 못 박아 두지 않으면 나중에 겹칠 때 조용히 갈린다.
   const dps = (baseDps + sig.atkFlat) * sig.atkMult;

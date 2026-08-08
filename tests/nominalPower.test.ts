@@ -22,7 +22,8 @@ import {
   BASE_FIRE_CD_TICKS,
   MIN_FIRE_CD_TICKS,
   BASE_PLAYER_HP,
-  BROOD_DRONE_DPS,
+  broodDroneDps,
+  BROOD_DRONE_SHOTS_PER_SEC,
   BROOD_DRONE_LIFE_SEC,
   BROOD_MAX_DRONES as MODEL_BROOD_MAX,
   RUN_SECONDS_PAR as MODEL_RUN_PAR,
@@ -33,6 +34,8 @@ import {
   relativeToStriker,
   sigEffect,
   filmDenyDps,
+  FILM_PERIOD_SEC,
+  MEASURED_INCOMING_DPS,
   NOMINAL_GEAR_SEED,
 } from '../src/bench/nominalPower.js';
 import {
@@ -52,7 +55,7 @@ import {
 } from '../src/sim/events.js';
 import { RUN_SECONDS_PAR } from '../src/save/progressionPath.js';
 import { SHIP_TYPES } from '../data/ships/index.js';
-import { SIGNATURE_BITS } from '../src/sim/shipSignature.js';
+import { SIGNATURE_BITS, broodBulletDamage, filmCapacityFor } from '../src/sim/shipSignature.js';
 
 describe('명목 파워 — sim 상수 드리프트 가드', () => {
   it('무기 기준 피해·발사 간격이 DEFAULT_WEAPON 과 같다', () => {
@@ -69,7 +72,17 @@ describe('명목 파워 — sim 상수 드리프트 가드', () => {
   });
 
   it('부화체 화력·수명·상한이 sim 정본과 같다', () => {
-    expect(BROOD_DRONE_DPS).toBe(TURRET_BULLET_DAMAGE * (TICK_RATE / TURRET_FIRE_COOLDOWN));
+    // 연사는 여전히 sim 상수 파생이다.
+    expect(BROOD_DRONE_SHOTS_PER_SEC).toBe(TICK_RATE / TURRET_FIRE_COOLDOWN);
+    // ⚠️ 발당 피해는 **더 이상 `TURRET_BULLET_DAMAGE` 가 아니다**(2026-08-08 · `BROOD_DAMAGE_BP`).
+    // 모델이 sim 의 `broodBulletDamage` 를 그대로 호출하는지를 못 박는다 — 모델이 자기 산식을
+    // 따로 들면 두 축이 조용히 갈린다(이 파일의 나머지 드리프트 가드와 같은 취지).
+    expect(broodDroneDps(BASE_DAMAGE)).toBe(
+      broodBulletDamage(BASE_DAMAGE) * BROOD_DRONE_SHOTS_PER_SEC,
+    );
+    // 공유 상수는 병아리가 아닌 포탑(센트리·드론 베이)의 것으로 그대로 살아 있다.
+    expect(TURRET_BULLET_DAMAGE).toBe(10);
+    expect(broodBulletDamage(BASE_DAMAGE)).toBeLessThan(TURRET_BULLET_DAMAGE);
     expect(BROOD_DRONE_LIFE_SEC).toBe(TURRET_LIFE_TICKS / TICK_RATE);
     expect(MODEL_BROOD_MAX).toBe(BROOD_MAX_DRONES);
   });
@@ -83,13 +96,19 @@ describe('명목 파워 — 발산 금지 계약', () => {
   /**
    * 초판은 플랫 효과를 가정된 분모로 나눠 `1/(1-감소율)` 로 접었고, 감소율이 1 을 넘자
    * 발산했다. 그 발산을 **0.9 클램프가 가렸다** — 나쁜 입력을 조용히 삼키는 계산기는
-   * 계측기가 아니다. 이제 플랫은 가산이라 원리적으로 발산하지 않는다. 극단 가정치로 실증한다.
+   * 계측기가 아니다.
+   *
+   * ## 2026-08-08 이후 — 버블은 다시 `1/(1-x)` 형식이지만 **삼키지 않는다**
+   * 막 내구가 최대 HP 비율이 되면서 상쇄 DPS 도 비율이 됐고, 그래서 버블도 장갑·완충과 같은
+   * 형식을 쓴다(모델 헤더 참조). 발산 가능성은 **남아 있고 그것이 의도다** — `x >= 1` 이면
+   * 클램프가 아니라 **예외를 던진다**(아래 별도 케이스가 그것을 못 박는다). 여기 극단 가정치는
+   * 그 발산 구간을 밟지 않는 범위로 잡는다.
    */
   const EXTREMES: NominalAssumptions[] = [
     { ...DEFAULT_ASSUMPTIONS, armorAvgStacks: 999, cloakCycleRate: 1, cushionRecoverRate: 1 },
     { ...DEFAULT_ASSUMPTIONS, armorAvgStacks: -5, cloakCycleRate: 0, cushionRecoverRate: 0 },
-    { ...DEFAULT_ASSUMPTIONS, killsPerSec: 1e6, runSeconds: 1e6 },
-    { ...DEFAULT_ASSUMPTIONS, killsPerSec: 0, runSeconds: 0, overchargeUptime: 0 },
+    { ...DEFAULT_ASSUMPTIONS, killsPerSec: 1e6, incomingDps: 1e6 },
+    { ...DEFAULT_ASSUMPTIONS, killsPerSec: 0, overchargeUptime: 0 },
   ];
 
   for (const [i, a] of EXTREMES.entries()) {
@@ -108,8 +127,9 @@ describe('명목 파워 — 발산 금지 계약', () => {
   it('장갑 스택은 상한으로 클램프되지만 그 사실이 값에 드러난다(조용한 삼킴 금지)', () => {
     // 999 스택과 상한 8 스택이 같은 값을 내는 것은 의도된 클램프다. 다만 그 클램프가
     // **설명 문자열에 실제 사용값을 찍어** 읽는 사람이 삼킴을 알아볼 수 있어야 한다.
-    const huge = sigEffect(SIGNATURE_BITS[0], { ...DEFAULT_ASSUMPTIONS, armorAvgStacks: 999 }, 10);
-    const cap = sigEffect(SIGNATURE_BITS[0], { ...DEFAULT_ASSUMPTIONS, armorAvgStacks: 8 }, 10);
+    const RAW = { damage: 8, hp: 100 };
+    const huge = sigEffect(SIGNATURE_BITS[0], { ...DEFAULT_ASSUMPTIONS, armorAvgStacks: 999 }, 10, RAW);
+    const cap = sigEffect(SIGNATURE_BITS[0], { ...DEFAULT_ASSUMPTIONS, armorAvgStacks: 8 }, 10, RAW);
     expect(huge.defMult).toBe(cap.defMult);
     expect(huge.note).toContain('8.0');
   });
@@ -131,7 +151,7 @@ describe('명목 파워 — 기준점 계약', () => {
       killsPerSec: 50,
       cushionRecoverRate: 1,
       overchargeUptime: 1,
-      runSeconds: 500,
+      incomingDps: 500,
     };
     expect(nominalFor(0, 50, a).row.power).toBe(nominalFor(0, 50).row.power);
   });
@@ -258,17 +278,60 @@ describe('명목 파워 — 버블 막 불사 임계', () => {
    * 무조건 흡수하므로, 받는 피해가 이 값 미만이면 소모보다 재생이 빨라 **죽지 않는다**.
    * 값 자체가 조정 대상이므로 리터럴로 고정하지 않고 **정의가 유지되는지**만 못 박는다.
    */
-  it('상쇄 DPS = 흡수량 ÷ 재생 주기(초)', () => {
-    const deny = filmDenyDps();
+  it('상쇄 DPS = 막 내구 ÷ 재생 주기(초) — 그리고 **최대 HP 에 비례한다**', () => {
+    const deny = filmDenyDps(BASE_PLAYER_HP);
     expect(deny).toBeGreaterThan(0);
     expect(Number.isFinite(deny)).toBe(true);
+    expect(deny).toBe(filmCapacityFor(BASE_PLAYER_HP) / FILM_PERIOD_SEC);
+    // 비율화의 핵심: HP 가 두 배면 상쇄도 두 배다. 구값(고정 60)에서는 HP 와 무관한 절대
+    // 상수였고, 그 절대성이 이 레인이 없앤 결함이다.
+    //
+    // ⚠️ 기준값을 `BASE_PLAYER_HP` 로 쓰지 **않는다.** 내구는 정수로 반올림되므로(`filmCapacityFor`)
+    // 25% 가 정수로 안 떨어지는 HP 에서는 두 배 관계가 반올림만큼 어긋난다(실제로 기본 HP 가
+    // 126 이 되자 이 단언이 깨졌다 — 32/7 vs 63/7). 이 케이스가 재는 것은 **함수의 비례성**이지
+    // 현재 기본 HP 가 아니므로, 25% 가 정수로 떨어지는 값을 명시해 밸런스 튜닝과 분리한다.
+    expect(filmDenyDps(200)).toBe(filmDenyDps(100) * 2);
   });
 
-  it('버블 시그니처는 가산이지 비율이 아니다(발산원 봉인)', () => {
+  it('실측 임계 여유 — 기본 가정치에서 상쇄가 받는 피해보다 한참 작다', () => {
+    // `MEASURED_INCOMING_DPS` 는 `bench/incomingDps.ts` 실측치다. 이 부등식이 깨지면 버블은
+    // 문자 그대로 불사이고, 그때 모델은 값을 내는 대신 **터진다**(아래 케이스).
     const bubble = SHIP_TYPES.find((d) => d.slug === 'bubble');
     expect(bubble).toBeDefined();
-    const sig = sigEffect(bubble!.signatureBit, DEFAULT_ASSUMPTIONS, 10);
-    expect(sig.defMult).toBe(1);
-    expect(sig.defFlat).toBeGreaterThan(0);
+    const { row } = nominalFor(bubble!.id ?? 6, 50);
+    const deny = filmDenyDps(row.hp);
+    expect(deny).toBeLessThan(MEASURED_INCOMING_DPS / 4); // 여유 4배 이상
+  });
+
+  it('불사 조건에서는 클램프가 아니라 **예외를 던진다**(조용한 삼킴 금지)', () => {
+    const bubble = SHIP_TYPES.find((d) => d.slug === 'bubble');
+    expect(bubble).toBeDefined();
+    // 받는 피해를 상쇄 아래로 내리면 EHP 가 정의되지 않는다. 초판은 여기서 0.9 클램프로
+    // 삼켰고 그 삼킴이 10배 발산을 가렸다 — 이제는 큰 소리로 실패한다.
+    expect(() =>
+      sigEffect(bubble!.signatureBit, { ...DEFAULT_ASSUMPTIONS, incomingDps: 0.01 }, 10, {
+        damage: 8,
+        hp: 100,
+      }),
+    ).toThrow(/불사/);
+  });
+
+  it('버블 시그니처는 **비율**이다 — 가산 칸을 쓰지 않는다(런 길이 의존 봉인)', () => {
+    const bubble = SHIP_TYPES.find((d) => d.slug === 'bubble');
+    expect(bubble).toBeDefined();
+    const sig = sigEffect(bubble!.signatureBit, DEFAULT_ASSUMPTIONS, 10, { damage: 8, hp: 86 });
+    expect(sig.defFlat).toBe(0);
+    expect(sig.defMult).toBeGreaterThan(1);
+  });
+
+  it('해츨링 시그니처도 **비율**이다 — 가산 칸을 쓰지 않는다', () => {
+    const hatch = SHIP_TYPES.find((d) => d.slug === 'hatchling');
+    expect(hatch).toBeDefined();
+    const sig = sigEffect(hatch!.signatureBit, DEFAULT_ASSUMPTIONS, 10, { damage: 8, hp: 110 });
+    expect(sig.atkFlat).toBe(0);
+    expect(sig.atkMult).toBeGreaterThan(1);
+    // 피해가 두 배면 가산 DPS 도 두 배 — 즉 장비·레벨과 함께 자란다(비율화의 정의).
+    const dbl = sigEffect(hatch!.signatureBit, DEFAULT_ASSUMPTIONS, 10, { damage: 16, hp: 110 });
+    expect(dbl.atkMult).toBeCloseTo(sig.atkMult, 6);
   });
 });

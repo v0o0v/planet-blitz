@@ -55,7 +55,12 @@ import { planetContent } from '../../../data/planets/index.js';
  * 0xc0f7a1·COUNTER_DEVICE 0xc07e5d)과 전부 다르다. 그 마커들은 전부 `ownerId` 를 쓰고 이
  * 값만 `aux1` 을 쓰므로 필드 자체가 겹치지 않지만, 값도 겹치지 않게 둔다(로그·디버깅 혼동 방지).
  */
-export const MID_CLASH_LEADER_MARK = 0xc1a58e;
+// 2026-08-08: 선언 자체는 `patterns/types.ts`(leaf)로 내렸다 — 패턴 엔진이 이동 단계에서
+// 이 마커를 읽어야 하는데, 거기서 이 파일을 import 하면 `midClash -> waves` 순환에 패턴
+// 엔진이 끌려 들어가기 때문이다. 값·사유의 정본은 위 헤더 주석 그대로이고 여기서는
+// **재수출만** 한다(기존 import 경로가 그대로 선다).
+export { MID_CLASH_LEADER_MARK, MID_CLASH_LEADER_SPEED } from '../patterns/types.js';
+import { MID_CLASH_LEADER_MARK } from '../patterns/types.js';
 
 // --- 플레이스홀더 계수 (TODO(밸런스): 출시 전 일괄 튜닝, 구조만 고정) ---
 /** 리더 HP 배율(기반 정의 HP 대비). 엘리트급이지 보스급이 아니다 — 보스 미리보기가 되면 안 된다. TODO(밸런스). */

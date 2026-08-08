@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createWorld, stepWorld, emptyInput } from '../src/sim/world.js';
+import { createWorld, stepWorld, emptyInput, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldState, Entity, InputFrame } from '../src/sim/world.js';
 import { slideCircleWalls } from '../src/sim/los.js';
 import { blankEntity } from '../src/sim/entities.js';
@@ -194,7 +194,11 @@ describe('④ 정규 경로 회귀 — 블록격파에서 한 틱 순간이동�
     // 정지한 플레이어에게서 서서히 멀어진다. 순수 압사(파괴가능 벽에 끼임)는 벽이 도달해야
     // 시작되고 이 시드에서는 그게 약 160틱이다(실측). 창을 넉넉히 잡아 **압사 자체**를 본다.
     const { hp } = parkedRelTrace(240);
-    expect(hp).toBeLessThan(100);
+    // ⚠️ 기준선은 **정본 최대 HP**다 — 리터럴 100 은 옛 `playerHp` 였고 2026-08-08 에 151 이
+    //    되면서 «피해를 입었다» 와 «HP 가 100 미만» 이 갈렸다(실측 hp 145 = 6 만큼 압사 중인데
+    //    빨갛게 떴다). 이 테스트가 재는 것은 «압사 피해가 0 이 아니다 · 즉사도 아니다» 이지
+    //    절대 HP 값이 아니다.
+    expect(hp).toBeLessThan(DEFAULT_CONFIG.playerHp);
     expect(hp).toBeGreaterThan(0);
   });
 });
