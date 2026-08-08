@@ -21,12 +21,14 @@ import {
   summaryRowCapacity,
   summaryShownRows,
   SUMMARY_METRICS,
+  CELL_ROW_METRICS,
   PANEL_EDGE_PAD,
   PANEL_TITLE_BAND_H,
   PANEL_CONTENT_GAP,
 } from '../src/ui/pixi/catalystPicker.js';
 import { makeCinematicPanel } from '../src/ui/pixi/cinematicPanel.js';
 import { CATALYSTS } from '../src/data/catalysts.js';
+import { catalystRule } from '../src/ui/catalystText.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../src/render/app.js';
 
 interface Rect {
@@ -142,6 +144,65 @@ describe('픽커 레이아웃 불변식', () => {
     expect(SRC).not.toContain('clampToRows');
     // 마지막으로 보이는 행이 실제로 잘려야 그 신호가 산다(정확히 나누어떨어지면 안 된다).
     expect(g.h % (g.cellH + 12)).not.toBe(0);
+  });
+
+  // ⚠️ 여기 두 건이 2026-08-08 실제 신고("촉매 태그가 다른 텍스트와 겹쳐 보임")를 잠근다.
+  // 그때 셀 안 y 가 전부 상수(124/150/176)였고 그 격자는 규칙문을 **3줄**로 가정했다.
+  // 실제 문구는 48종 중 42종이 4줄 이상이라 넘친 줄이 태그 칩·상한 줄 위에 겹쳐 찍혔는데,
+  // 좌표가 상수라 이 파일을 포함해 **아무 테스트도 그걸 못 봤다**.
+  it('⚠️ 셀 안 다섯 줄이 순서대로 놓이고 서로 겹치지 않는다', () => {
+    const m = CELL_ROW_METRICS;
+    const rows = [
+      { id: '규칙문', y: m.ruleTop, h: m.ruleBudgetH },
+      { id: '태그 칩', y: m.tagY, h: m.tagH },
+      { id: '상한', y: m.capY, h: m.capH },
+      { id: '상태', y: m.statusY, h: m.statusH },
+      { id: '버튼', y: m.btnY, h: m.btnH },
+    ];
+    for (let i = 1; i < rows.length; i++) {
+      const prev = rows[i - 1]!;
+      const cur = rows[i]!;
+      expect(cur.y, `${cur.id} 이 ${prev.id} 위로 올라왔다`).toBeGreaterThanOrEqual(prev.y + prev.h);
+    }
+    const last = rows[rows.length - 1]!;
+    expect(last.y + last.h, '버튼 행이 셀 바닥을 뚫는다').toBeLessThanOrEqual(m.cellH);
+  });
+
+  it('⚠️ 규칙문 예산이 촉매 48종 문구를 전부 감당한다(넘치면 태그 칩과 겹친다)', () => {
+    // 폭 근사: 한글·한자·전각은 fontSize 와 같은 폭(14), 그 외는 넉넉히 8.2 로 잡아
+    // 실제보다 **넓게** 센다 — 이 방향이라야 놓치는 쪽이 아니라 잡는 쪽으로 틀린다.
+    const wide = (c: number): boolean =>
+      (c >= 0x1100 && c <= 0x11ff) ||
+      (c >= 0x3000 && c <= 0x303f) ||
+      (c >= 0xac00 && c <= 0xd7a3) ||
+      (c >= 0x4e00 && c <= 0x9fff) ||
+      (c >= 0xff00 && c <= 0xff60);
+    const lineCount = (text: string, maxW: number): number => {
+      let n = 1;
+      let cur = 0;
+      for (const ch of text) {
+        if (ch === '\n') {
+          n++;
+          cur = 0;
+          continue;
+        }
+        const cw = ch === ' ' ? 4.2 : wide(ch.codePointAt(0) ?? 0) ? 14 : 8.2;
+        if (cur + cw > maxW) {
+          n++;
+          cur = cw;
+        } else cur += cw;
+      }
+      return n;
+    };
+
+    const m = CELL_ROW_METRICS;
+    const wrapW = m.ruleWrapWidth(layout.grid.cellW);
+    for (const def of CATALYSTS) {
+      const lines = lineCount(catalystRule(def), wrapW);
+      expect(lines, `촉매 id ${def.id} 규칙문이 ${lines}줄 — 예산 ${m.ruleMaxLines}줄을 넘는다`).toBeLessThanOrEqual(
+        m.ruleMaxLines,
+      );
+    }
   });
 
   it('요약 열이 축 여섯 종을 감당할 만큼 그린다(넘치면 개수로 알린다)', () => {
