@@ -573,3 +573,90 @@ select profile_id, sum(granted) as day_total
  where created_at > now() - interval '1 day'
  group by 1 having sum(granted) > 40 order by 2 desc;
 ```
+
+## ⏳ 적용 대기 — 촉매 드랍 축이 설계도·의뢰서에 닿는다 (2026-08-08 2차 지시)
+
+사용자 지시: *"설계도와 의뢰서도 아이템이다. 촉매의 드랍 추가 확률에 의해서 이것들도 영향을
+받게 하라."*
+
+마이그레이션 `20260808090000_drop_axis_scales_issue_and_caps.sql`,
+적용 스크립트 `scripts/apply-drop-axis-issue-caps-migration.ps1`.
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\apply-drop-axis-issue-caps-migration.ps1
+```
+
+### 담는 것 넷
+
+1. **의뢰서 게이트 4b 에 배율** — `ISSUE_CHANCE_CP`(3000)를 클라 주장 `catalystLootMultCenti`
+   로 스케일한다. **[100, 300] 클램프**(거부 아님) → 30% ~ 최대 90%.
+2. **의뢰서 게이트 4c 신설** — 하루 발령 캡 360, `profiles` 행 잠금, 분자는 `granted` 건수.
+3. **`skip_reason` += `'rate-day'`** — 이름 무관 자기 치유형 제약 교체.
+4. **설계도 캡 재유도** — 12/60 → **20/140**.
+
+### 왜 설계도 캡을 함께 올렸는가 — 방향만 반대인 같은 함정
+
+`.omc/skills/relative-security-bound-expertise.md` 는 *"정직한 획득률을 **내리면** 위조 천장이
+상대적으로 느슨해진다"* 를 적었다. 이번은 그 **거울상**이다: 정직한 획득률이 **오르면** 고정된
+캡이 정직한 플레이어를 벌한다.
+
+```
+정직 기대(시간) = 축 D 60런/h × 9%(3% base × 드랍 축 상한 3.0) = 5.4/h
+옛 캡 12/h  →  Poisson(5.4) P(X ≥ 12) ≈ 1e-2   ← 최대 배율 플레이어의 100시간 중 1시간이 거부
+새 캡 20/h  →  Poisson(5.4) P(X ≥ 20) ≈ 1.1e-6  (옛 유도의 1.5e-6 과 같은 급)
+하루: 16h × 60런 × 9% = 86.4 (sd 8.87) → 86.4 + 5.9sd = 138.7 → 140
+```
+
+⭐ **캡을 올렸는데 비율은 조여진다** — 시간 6.7배 → **3.7배**, 하루 2.1배 → **1.6배**.
+ADR-0026 은 절대 천장이 아니라 이 비율을 본다. "캡을 올렸으니 약해졌다"는 오독이다.
+
+### ×3.0 의 출처 — 손 계산이 아니라 전수 스윕
+
+`npx tsx scripts/catalystCapSweep.ts` (48C3 = 17,296 → 특산 필터 후 12,430 유효, 공명 포함):
+
+```
+[drop] x3.0000
+  최악: #15 extraction + #20 resonance + #34 berdan-royal-jelly | 공명 harvest:weak (snare)
+```
+
+⚠️ 공명을 빼는 `axisCapMult` 는 ×2.9 를 낸다 — 그것을 쓰면 **정직한 최대 조합이 잘린다**
+(드랍축 공명이 7종이다). 미러 상수 `COMMISSION_MAX_LOOT_MULT_CENTI = 300` 은 스윕값이다.
+
+### ⚠️ 의뢰서는 **시간당** 캡을 안 넣었다 — 넣을 수 없어서다
+
+```
+위조 천장(시간) = 20 주장/h × min(1, 0.30 × 3.0) = 18/h
+정직 천장(시간) = 20 주장/h × min(1, 0.30 × 3.0) = 18/h   ← 같은 수다
+```
+
+공격자의 거짓말이 **배율 하나뿐**이고 최상위 정직 유저는 그 배율을 **정당하게** 주장한다.
+둘을 가르는 신호가 서버에 없으므로, 18 미만의 시간 캡은 공격자를 조이는 만큼 **정확히 같은
+크기로 정직한 플레이어를 조인다**. 18 이상은 무연산이다(헌장 §*"코드가 이미 자르는 값을
+상한으로 적지 마라"*).
+
+그리고 ADR-0026 기준은 위 두 수가 같으므로 비율 **1.0** 으로 이미 충족돼 있다 — 배율 도입
+전(6 대 6)과 **같은 비율**이다. 실제로 비어 있던 것은 **하루 축**이고(배율과 무관하게 원래
+없었다), 배율이 그 구멍을 144 → 432/day 로 키웠으므로 **360** 으로 닫는다(정직 천장 288).
+
+**자인**: 시간 축의 여유(18/h)는 남는다. 더 조이려면 배율을 **검증 가능**하게 만들어야 하고
+(= 서버가 촉매 주입 목록에서 재계산), 그 길은 조건부 규칙을 무시한 **무조건 배율**이 되어
+헌장 §상한 근거 규율과 충돌한다. **별도 결정으로 남긴다.**
+
+### 하위 호환은 산술로 보장된다 — 배포 순서 무관
+
+새 summary 키 `catalystLootMultCenti` 는 **optional** 이고, 부재 → `100` → **정확히 종전 30%**.
+캐시된 구 클라는 거동이 바이트 동일하다. 클라 선배포·서버 선배포 어느 쪽이든 안전하다.
+
+### 관측할 것
+
+```sql
+-- 하루 캡에 닿은 프로필. 정직 천장이 288 이므로 360 에 닿으면 유도의 분모가 틀린 것이다.
+select profile_id, count(*) as granted_day
+  from public.commission_issues
+ where granted and created_at > now() - interval '1 day'
+ group by 1 having count(*) > 300 order by 2 desc;
+
+-- 롤 실패 대 발령 비율. 최대 배율 유저가 늘면 roll 비중이 내려가야 정상이다.
+select skip_reason, count(*) from public.commission_issues
+ where created_at > now() - interval '1 day' group by 1 order by 2 desc;
+```

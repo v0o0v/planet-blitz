@@ -191,6 +191,21 @@ export interface RunResult {
     earned: number;
     missed: number;
   }[];
+  /**
+   * 촉매 **드랍 축이 이번 런에서 실제로 만든 전리품 배율**(≥1, sim `catalystLootMultOf` 파생).
+   * 설계도 게이트(`blueprintDropsFromLoot`)와 의뢰서 발령 게이트(서버 `issue_commission_for_run`)
+   * 가 이 값을 곱해 받는다 — 2026-08-08 사용자 지시 *"설계도와 의뢰서도 아이템이다"*.
+   *
+   * ## ⚠️ 주입 목록이 아니라 **실측**이다
+   * 드랍 축 카드를 꽂기만 하고 조건을 한 번도 못 채운 런은 `undefined` 이고, 그때 두 확률은
+   * base 그대로다. 카드 목록에서 파생하면 그 순간 **무조건 배율**이 되어 헌장 §상한 근거
+   * 규율을 깬다(`src/data/catalystDrops.ts` 의 촉매 드랍축이 같은 함정을 먼저 밟았다).
+   *
+   * ## `undefined` 가 기본이다
+   * 무촉매 런 · 침공 런 · 구 세이브 전부 필드가 안 실린다(`catalystSettlement` 와 동일 규율).
+   * 유계는 sim 이 이미 지웠다 — 여기 도착한 값은 **드랍 축 상한(공명 포함) 이하**임이 보장된다.
+   */
+  catalystLootMult?: number;
 }
 
 /** Summary of what a run added to the profile (for the result overlay). */
@@ -420,7 +435,14 @@ export function settleRun(
   //    ⚠️ **행성 인기 배율은 더 넘기지 않는다.** 런 단위 3% 게이트가 건수와 획득률을 분리해
   //    ADR-0038 역수 보정이 불필요해졌고, 인자 자체를 없앴다(경위는 blueprintDropsFromLoot
   //    주석). 위 §설계도 절의 "역수 보정" 서술도 함께 갱신했다.
-  const blueprintsGained = blueprintDropsFromLoot(result.loot, result.victory === true);
+  //    ⚠️ **세 번째 인자는 촉매 드랍 축 실측 배율이다**(2026-08-08 2차 지시). 행성 배율과
+  //    혼동하지 마라 — 저쪽은 구조적으로 배제됐고 이쪽은 의도적으로 들였다. 배선을 지우면
+  //    설계도가 조용히 상시 3% 로 되돌아간다(테스트: blueprintDrops.test.ts §촉매 배율).
+  const blueprintsGained = blueprintDropsFromLoot(
+    result.loot,
+    result.victory === true,
+    result.catalystLootMult,
+  );
 
   // 7. 스토리 시스템(Phase E, ADR-0023) — 마일스톤 누적 · 파편 수집 · 챕터 보상 claim.
   //    전부 비-sim 메타 경로라 해시·리플레이 무관이다. 오염 런·하네스 침공 런은 호출부(main.ts)가

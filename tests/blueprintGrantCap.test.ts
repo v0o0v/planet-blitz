@@ -21,42 +21,70 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   CAP_BLUEPRINTS_PER_HOUR,
   CAP_BLUEPRINTS_PER_DAY,
 } from '../src/net/blueprintServerConstants.js';
 import { BLUEPRINT_RUN_CHANCE_CP } from '../src/sim/drops.js';
+import { COMMISSION_MAX_LOOT_MULT_CENTI } from '../src/run/commissionServerConstants.js';
 
-const MIGRATION = fileURLToPath(
-  new URL('../supabase/migrations/20260808080000_blueprint_grant_cap.sql', import.meta.url),
-);
-
-function sql(): string {
-  return new TextDecoder().decode(readFileSync(MIGRATION));
-}
+const MIGRATIONS_DIR = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
 
 function stripLineComments(s: string): string {
   return s.replace(/--[^\n]*/g, '');
 }
 
-/** `NAME constant <type> := <값>;` 의 우변 숫자를 읽는다(주석 제거본 기준). */
-function sqlConstant(name: string): number {
-  const code = stripLineComments(sql());
-  const m = new RegExp(`${name}\\s+constant\\s+[\\w ]+:=\\s*([0-9.]+)`).exec(code);
-  expect(m, `SQL 상수 ${name} 을 찾지 못함`).not.toBeNull();
-  return Number(m![1]);
+/**
+ * ⚠️ **파일명을 상수로 고정해 읽지 않는다**(2026-08-08 2차).
+ *
+ * 이 파일은 원래 `20260808080000_blueprint_grant_cap.sql` 을 이름으로 박아 읽었다. 그런데
+ * `grant_blueprints` 는 `create or replace` 로 재정의될 수 있고, 재정의되는 순간 **실제로 도는
+ * 정의는 최신 파일**인데 이 관측면은 옛 파일을 계속 본다 — 값이 갈려도 초록이다.
+ * 실제로 촉매 드랍 축 레인이 캡을 20/140 으로 재유도하자 이 형태가 곧바로 드러났다.
+ *
+ * 처방은 `commissionLedgerContract.test.ts` 와 같다: **적용 순 마지막 정의**를 찾아 그 파일을
+ * 읽는다(학습 스킬 `sql-redefinition-observability-expertise` §2).
+ */
+function migrationsInOrder(): { file: string; sql: string }[] {
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()
+    .map((f) => ({ file: f, sql: new TextDecoder().decode(readFileSync(MIGRATIONS_DIR + f)) }));
 }
 
-/** `grant_blueprints` 본문만 잘라 준다(다른 정의의 문장이 섞이면 순서 단언이 무의미해진다). */
+/** `grant_blueprints` 의 **최신** 정의 본문(주석 제거). 다른 정의 문장이 섞이지 않는다. */
 function grantBody(): string {
-  const code = stripLineComments(sql());
-  const at = code.indexOf('create or replace function public.grant_blueprints(');
-  expect(at, 'grant_blueprints 정의를 찾지 못함').toBeGreaterThan(0);
-  const end = code.indexOf('\n$$;', at);
-  expect(end, '본문 종결자를 찾지 못함').toBeGreaterThan(at);
-  return code.slice(at, end);
+  let found: string | null = null;
+  for (const { file, sql } of migrationsInOrder()) {
+    const at = sql.lastIndexOf('create or replace function public.grant_blueprints(');
+    if (at < 0) continue;
+    const end = sql.indexOf('\n$$;', at);
+    expect(end, `${file}: 본문 종결자를 찾지 못함`).toBeGreaterThan(at);
+    found = stripLineComments(sql.slice(at, end));
+  }
+  if (found === null) throw new Error('마이그레이션에서 grant_blueprints 정의를 찾지 못했습니다');
+  return found;
+}
+
+/** `grant_blueprints` 의 최신 정의를 **담은 파일 전문**(본문 뒤 revoke/grant 까지 포함). */
+function effectiveDefinitionFile(): string {
+  let found: string | null = null;
+  for (const { sql } of migrationsInOrder()) {
+    if (sql.includes('create or replace function public.grant_blueprints(')) {
+      found = stripLineComments(sql);
+    }
+  }
+  if (found === null) throw new Error('grant_blueprints 정의를 담은 파일을 찾지 못했습니다');
+  return found;
+}
+
+/** `NAME constant <type> := <값>;` 의 우변 숫자를 **최신 정의 본문에서** 읽는다. */
+function sqlConstant(name: string): number {
+  const m = new RegExp(`${name}\\s+constant\\s+[\\w ]+:=\\s*([0-9.]+)`).exec(grantBody());
+  expect(m, `SQL 상수 ${name} 을 찾지 못함`).not.toBeNull();
+  return Number(m![1]);
 }
 
 describe('설계도 캡 — SQL ↔ TS 미러', () => {
@@ -91,22 +119,61 @@ describe('설계도 캡 — 정직한 플레이를 벌하지 않는다', () => {
     return Number(m![1]);
   }
 
-  it('시간 캡이 정직한 기대치의 5배 이상이다', () => {
-    // 기대 = 축 D 런 상한 x 클리어당 설계도 확률. 캡이 이 기대치에 가까우면 운 좋은
-    // 정직한 플레이어가 캡에 닿아 조용히 설계도를 잃는다(RPC 가 fire-and-forget 이라 무증상).
-    const expected = capRunsPerHour() * (BLUEPRINT_RUN_CHANCE_CP / 10000);
-    expect(expected).toBeGreaterThan(0);
-    expect(CAP_BLUEPRINTS_PER_HOUR / expected).toBeGreaterThan(5);
+  /**
+   * 정직한 **상한** 확률 = base × 드랍 축 최대 배율.
+   *
+   * ⚠️ 2026-08-08(2차)부터 `BLUEPRINT_RUN_CHANCE_CP` 만으로는 부족하다 — 촉매 드랍 축이 그 값을
+   * 스케일한다. 최대 배율을 안 곱하면 "정직한 기대치"를 **3배 과소평가**하고, 그 상태로 캡을
+   * 유도하면 최대 배율로 도는 플레이어가 조용히 거부된다.
+   */
+  function honestClearChance(): number {
+    return (BLUEPRINT_RUN_CHANCE_CP / 10000) * (COMMISSION_MAX_LOOT_MULT_CENTI / 100);
+  }
+
+  /** Poisson(λ) 의 P(X ≥ k). 캡 유도가 실제로 쓰는 판정식이라 그대로 잰다. */
+  function poissonTail(lambda: number, k: number): number {
+    // p(0) 부터 누적해 1 에서 뺀다. λ·k 가 작아(≤ 수십) 언더플로 걱정이 없다.
+    let term = Math.exp(-lambda);
+    let cdf = term;
+    for (let i = 1; i < k; i++) {
+      term *= lambda / i;
+      cdf += term;
+    }
+    return Math.max(0, 1 - cdf);
+  }
+
+  /**
+   * ⚠️ **"캡이 기대치의 N배" 로 재지 않는다.** 그 규칙은 λ 에 의존해서 틀린다 — 같은 안전도를
+   * 주는 배수가 λ=1.8 에서는 6.7배, λ=5.4 에서는 3.7배다(꼬리가 λ 와 함께 얇아진다). 옛 단언이
+   * 고정 5배였고, 드랍 축이 λ 를 3배로 올리자 **캡이 충분히 안전한데도 빨개졌다.**
+   * 판정 근거인 꼬리 확률을 직접 잰다.
+   */
+  it('시간 캡에 정직한 플레이어가 닿을 확률이 1e-5 이하다', () => {
+    const lambda = capRunsPerHour() * honestClearChance();
+    expect(lambda).toBeGreaterThan(0);
+    expect(
+      poissonTail(lambda, CAP_BLUEPRINTS_PER_HOUR),
+      `정직 기대 ${lambda.toFixed(2)}/h 에서 캡 ${CAP_BLUEPRINTS_PER_HOUR} 는 너무 낮다 — 캡을 올려라`,
+    ).toBeLessThan(1e-5);
   });
 
-  it('확률을 크게 올리면 이 유도가 깨지는 것을 자각한다', () => {
-    // 뮤테이션 감지용: BLUEPRINT_RUN_CHANCE_CP 를 올리면 기대치가 캡에 접근한다.
-    // 확률 축을 다시 만지는 레인은 이 캡도 함께 올려야 한다 — 그 사실을 여기 못 박는다.
-    const atTenPercent = capRunsPerHour() * 0.1;
+  it('확률을 더 올리면 이 유도가 깨지는 것을 자각한다', () => {
+    // 뮤테이션 감지용: 확률 축(base 또는 드랍 축 상한)을 또 올리면 꼬리가 두꺼워진다.
+    // 그 레인은 이 캡도 함께 올려야 한다 — 그 사실을 여기 못 박는다.
+    const doubled = capRunsPerHour() * honestClearChance() * 2;
     expect(
-      CAP_BLUEPRINTS_PER_HOUR / atTenPercent,
-      '확률이 10% 가 되면 시간 캡 여유가 5배 아래로 떨어진다 — 캡을 함께 올려라',
-    ).toBeLessThan(5);
+      poissonTail(doubled, CAP_BLUEPRINTS_PER_HOUR),
+      '정직 기대가 두 배가 되면 시간 캡이 정직한 플레이어를 물기 시작한다 — 캡을 함께 올려라',
+    ).toBeGreaterThan(1e-5);
+  });
+
+  it('하루 캡도 같은 기준을 통과한다 (헤비 16시간 가정)', () => {
+    // 하루 축이 실질 구속이므로 시간 축과 같은 엄격도로 잰다.
+    const lambda = 16 * capRunsPerHour() * honestClearChance();
+    expect(
+      poissonTail(lambda, CAP_BLUEPRINTS_PER_DAY),
+      `헤비 유저 기대 ${lambda.toFixed(1)}/day 에서 캡 ${CAP_BLUEPRINTS_PER_DAY} 는 너무 낮다`,
+    ).toBeLessThan(1e-5);
   });
 });
 
@@ -152,9 +219,11 @@ describe('설계도 캡 — 구조 계약 (값이 맞아도 이게 어긋나면 
 
   it('분모 테이블이 클라에게 안 보인다 — RLS 켜고 정책 0개', () => {
     // 분모를 읽으면 "언제 캡이 풀리는가"를 알아내 회피 타이밍을 맞출 수 있다.
-    const code = sql();
-    expect(code).toContain('alter table public.blueprint_grant_log enable row level security');
-    expect(code).not.toMatch(/create policy[^;]*blueprint_grant_log/);
+    // ⚠️ **전 마이그레이션을 훑는다.** 테이블은 한 파일에서 만들어지지만 정책은 **아무 파일에서나**
+    //    나중에 붙을 수 있다 — 생성 파일만 보면 뒤에 붙은 `create policy` 를 영영 못 본다.
+    const all = migrationsInOrder().map((m) => stripLineComments(m.sql)).join('\n');
+    expect(all).toContain('alter table public.blueprint_grant_log enable row level security');
+    expect(all).not.toMatch(/create policy[^;]*blueprint_grant_log/);
   });
 
   it('형식 상한(행 8 · 장수 4)을 조이지 않았다', () => {
@@ -166,18 +235,33 @@ describe('설계도 캡 — 구조 계약 (값이 맞아도 이게 어긋나면 
   });
 
   it('anon 은 실행할 수 없다', () => {
-    const code = sql();
+    // ⚠️ **최신 정의 파일**을 읽는다. `create or replace` 는 ACL 을 보존하므로 재정의가 회수를
+    //    빠뜨려도 순서대로 적용된 DB 에서는 증상이 0 이다 — 위험은 함수가 선재하지 않는 경로
+    //    (baseline 스쿼시 · drop 후 부분 재적용)이고, 그때 definer 함수가 EXECUTE to PUBLIC 으로
+    //    새로 생긴다. 옛 파일을 읽으면 그 누락이 영영 안 보인다(학습 스킬 §2).
+    const code = effectiveDefinitionFile();
     expect(code).toContain('revoke all on function public.grant_blueprints(jsonb) from anon');
     expect(code).toContain('revoke all on function public.grant_blueprints(jsonb) from public');
     expect(code).toContain('to authenticated, service_role');
   });
 
-  it('다른 설계도 유입 경로를 건드리지 않았다', () => {
+  it('설계도 캡 마이그레이션들이 다른 유입 경로를 건드리지 않았다', () => {
     // 침공 약탈 · 의뢰 배송 · 일일 보상은 defense_blueprints 에 직접 쓴다(서버 판정이라
-    // 캡 대상이 아니다). 이 마이그레이션이 그 함수들을 재정의하면 안 된다.
-    const code = sql();
-    expect(code).not.toContain('create or replace function public.loot_defense_blueprint');
-    expect(code).not.toContain('create or replace function public.claim_commission_grant');
-    expect(code).not.toContain('create or replace function public.claim_daily_reward');
+    // 캡 대상이 아니다). **캡을 담은** `grant_blueprints` 재정의 파일은 그 함수들을 함께
+    // 재정의하면 안 된다 — 곁다리 재정의가 낡은 본문을 복제하는 것이 이 리포의 전례다.
+    //
+    // ⚠️ 판별을 `CAP_BLUEPRINTS_PER_HOUR` 로 한다. "grant_blueprints 를 정의하는 파일" 로
+    //    잡으면 **원래 셋을 함께 만든 생성 파일**(20260722020000)까지 걸려 거짓 실패한다.
+    let seen = 0;
+    for (const { file, sql } of migrationsInOrder()) {
+      if (!sql.includes('CAP_BLUEPRINTS_PER_HOUR')) continue;
+      seen++;
+      const code = stripLineComments(sql);
+      expect(code, file).not.toContain('create or replace function public.loot_defense_blueprint');
+      expect(code, file).not.toContain('create or replace function public.claim_commission_grant');
+      expect(code, file).not.toContain('create or replace function public.claim_daily_reward');
+    }
+    // 순회가 공허하면 위 단언은 아무것도 보장하지 않는다(확률 축 레인이 밟은 함정과 같은 형태).
+    expect(seen, '캡을 담은 마이그레이션을 하나도 못 찾았다 — 판별식이 낡았다').toBeGreaterThan(0);
   });
 });

@@ -241,6 +241,37 @@ export function catalystDropMultFromContributions(
 /** 촉매 드랍축 카드 id 목록(정합 검사용 — 카탈로그의 `cap.axis === 'catalystDrop'` 과 같아야 한다). */
 export const CATALYST_DROP_AXIS_IDS: readonly number[] = CATALYST_DROP_AXIS.map((a) => a.id);
 
+// ---------------------------------------------------------------------------
+// 확률 게이트 스케일 — 설계도·의뢰서 공용 (2026-08-08 사용자 지시)
+// ---------------------------------------------------------------------------
+
+/**
+ * 확률 게이트 cp 의 하드 천장(= 100%). 확률은 이 위로 못 간다.
+ *
+ * ⚠️ **이것은 밸런스 상한이 아니다.** 배율의 유계는 드랍 축 상한
+ * (`axisCapMultWithResonance(ids,'drop')`)이 sim 에서 이미 지웠고, 여기 있는 것은 산술이
+ * 100% 를 넘지 않게 하는 착지다. 밸런스를 여기서 조이면 정본이 둘이 된다.
+ */
+export const GATE_CP_MAX = 10000;
+
+/**
+ * base 확률(cp)에 **드랍 축 실측 배율**을 곱한 정수 cp. 설계도(3%)와 의뢰서(30%)가 **같은 산술**을
+ * 써야 하므로 여기 한 줄이 정본이다 — 두 곳에 따로 적으면 한쪽만 상한에 걸리는 형태가 된다.
+ *
+ * `mult` 는 `RunResult.catalystLootMult`(sim 실측·축 상한 클램프 완료)다. `undefined`·1 이하는
+ * **base 를 그대로** 돌려준다 — 무촉매 런이 반올림 왕복조차 겪지 않게 하기 위해서다(구 경로와
+ * 정수 동일).
+ *
+ * ⚠️ **SQL 미러가 있다.** 의뢰서 쪽 짝은 `issue_commission_for_run` 의 게이트 4b 이고
+ * `tests/commissionServerConstants.test.ts` 가 두 산술이 같은지 기계로 잰다. 반올림 방식
+ * (`round`)까지 계약이다 — SQL 이 `floor` 면 같은 배율에서 확률이 갈린다.
+ */
+export function scaleGateChanceCp(baseCp: number, mult: number | undefined): number {
+  if (mult === undefined || !(mult > 1)) return baseCp;
+  const scaled = Math.round(baseCp * mult);
+  return scaled > GATE_CP_MAX ? GATE_CP_MAX : scaled;
+}
+
 // --- 순수 정수 해시 (murmur3 finalizer — src/sim/drops.ts 와 같은 방식, 부동소수 없음) ---
 
 /** 판정 축별 salt — 게이트/인덱스가 같은 시드에서 독립적으로 갈리게 한다(드랍 축과도 독립). */

@@ -74,8 +74,8 @@ import {
 import { arkeMassTurnBlend } from './catalyst/arke.js';
 // 촉매 연출·귀속 채널(ADR-0052 §가시성/§귀속). `catalyst/fx.ts` 는 `world.js` 를 **type-only**
 // 로만 끄는 리프라 값으로 들여와도 순환이 생기지 않는다.
-import { clearCatalystFx } from './catalyst/fx.js';
-import type { CatalystFxEvent, CatalystContribution } from './catalyst/fx.js';
+import { clearCatalystFx, creditLootCount } from './catalyst/fx.js';
+import type { CatalystFxEvent, CatalystContribution, CatalystLootTally } from './catalyst/fx.js';
 import { resolveCatalystMods } from './catalystMods.js';
 // 촉매 그룹 모듈 **직접 참조** — 남은 것은 `id 33` 의 모드 좌표뿐이다.
 //
@@ -305,8 +305,8 @@ import { krasBreachKeepsCover, krasBreachWallHpMult } from './catalyst/kras.js';
 export { catalystSettlementOf } from './catalystHooks.js';
 // 연출·귀속 채널의 **읽기 면**만 재수출한다(W3=`main.ts` 소비). 통지·적립 API 는 sim 안쪽
 // 전용이라 여기서 열지 않는다 — 열면 렌더가 sim 상태의 두 번째 작성자가 된다.
-export { catalystContributionsOf } from './catalyst/fx.js';
-export type { CatalystContribution, CatalystFxEvent } from './catalyst/fx.js';
+export { catalystContributionsOf, catalystLootMultOf } from './catalyst/fx.js';
+export type { CatalystContribution, CatalystFxEvent, CatalystLootTally } from './catalyst/fx.js';
 
 /**
  * 앵커 ⑱ 이 쓰는 **재사용 레코드**. 명중 해소 루프는 틱당 최대 ~2,000회 돌아 발당 할당이
@@ -1509,6 +1509,24 @@ export interface WorldState {
    * 존재하지 않는다. 위 `catalystSlots` 주석 참조).
    */
   catalystLedger?: CatalystContribution[] | undefined;
+  /**
+   * 드랍 축이 이번 런에서 **실제로** 만든 전리품 배율의 원재료(롤 수 / 추가 레코드 수).
+   * 적립 API 와 정산 리더는 {@link file://./catalyst/fx.ts} 가 소유한다
+   * ({@link import('./catalyst/fx.js').creditLootCount} · `catalystLootMultOf`).
+   *
+   * 설계도 3% 게이트와 의뢰서 30% 발령 게이트가 이 배율을 곱해 받는다(2026-08-08 사용자 지시:
+   * *"설계도와 의뢰서도 아이템이다"*). 그전까지 두 축은 드랍 축과 **구조적으로 분리**돼
+   * 있었다 — 그 분리를 되돌리는 것이 이 필드의 존재 이유이므로, 지우면 두 확률이 조용히
+   * 상수로 되돌아간다.
+   *
+   * `catalystLedger` 와 **같은 이유로 해시에 안 접힌다** — 어느 sim 산술에도 안 들어가고
+   * 정산으로만 나간다(드랍 레코드 자체는 이미 접혀 있고, 이 필드는 그 수를 세기만 한다).
+   * 무촉매 런은 `undefined` 라 채널 자체가 없다.
+   *
+   * **`WORLD_FRESH` 다** — `catalystLedger` 와 같은 근거다(촉매가 실린 런에는 구간 전환이
+   * 존재하지 않는다).
+   */
+  catalystLootTally?: CatalystLootTally | undefined;
 }
 
 /**
@@ -5298,9 +5316,14 @@ function compact(state: WorldState): void {
           lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
           // 촉매 드랍량 보상축: 배율 > 1 이면 같은 등급의 추가 루팅을 결정론적으로 파생한다
           // (dropRng 미소비 → 드랍 스트림 무영향). 무촉매면 빈 배열이라 무연산.
-          for (const bs of bonusLootSeeds(roll.seed, lr.count)) {
+          const bonus = bonusLootSeeds(roll.seed, lr.count);
+          for (const bs of bonus) {
             lootDrops.push({ x: e.x, y: e.y, seed: bs, rarity: roll.rarityCode });
           }
+          // 드랍 축 실측 계수(설계도·의뢰서 확률의 입력). **파생한 수 그대로** 넘긴다 —
+          // `lr.count` 를 넘기면 배율의 소수부가 실제로 시드를 만들었는지와 무관해져
+          // "화면이 주장한 배율"과 "실제로 떨어진 수"가 갈린다.
+          creditLootCount(state, bonus.length);
         }
         // 분열하는·폭발성의 엘리트는 사망 시 방사 폭발을 남긴다(spawnEliteDeathFx).
         // 드랍 게이트와 무관 — 어픽스 연출은 전리품 축이 아니다.
@@ -5376,9 +5399,12 @@ function compact(state: WorldState): void {
         );
         const roll = rollBossDrop(state.dropRng, stage, lr.rarity, dropOdds);
         state.loot.push({ seed: roll.seed >>> 0, rarity: roll.rarityCode, planet, stage });
-        for (const bs of bonusLootSeeds(roll.seed, lr.count)) {
+        const bossBonus = bonusLootSeeds(roll.seed, lr.count);
+        for (const bs of bossBonus) {
           state.loot.push({ seed: bs >>> 0, rarity: roll.rarityCode, planet, stage });
         }
+        // 드랍 축 실측 계수 — 엘리트 지점과 **대칭**이다(한쪽만 세면 배율이 절반만 반영된다).
+        creditLootCount(state, bossBonus.length);
       }
     }
   }

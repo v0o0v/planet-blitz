@@ -105,6 +105,7 @@ import {
   echoStabilizedOf,
   catalystSettlementOf,
   catalystContributionsOf,
+  catalystLootMultOf,
   encounterShardOf,
   encounterTypeOf,
   runStoryMetrics,
@@ -2147,6 +2148,11 @@ async function main(): Promise<void> {
         // 촉매별 기여 명세(헌장 §귀속 규율 2). 같은 규율의 두 번째 순수 리더 — 무촉매 런과
         // 적립이 한 번도 없던 런은 undefined 다.
         const catalystContributions = catalystContributionsOf(w);
+        // 드랍 축 **실측** 배율(2026-08-08 2차 지시 — 설계도·의뢰서도 드랍 축을 탄다).
+        // 세 번째 순수 리더이고 같은 규율이다: 무촉매 런·드랍 축 미발동 런은 undefined.
+        // sim 이 축 상한(공명 포함)으로 이미 클램프해 내보내므로 여기서 다시 자르지 않는다 —
+        // 두 곳에서 자르면 어느 쪽이 물었는지 알 수 없어진다.
+        const catalystLootMult = catalystLootMultOf(w);
         lastOutcome = settleRun(profile, {
           victory: w.victory,
           loot: w.loot,
@@ -2180,6 +2186,9 @@ async function main(): Promise<void> {
           // 촉매별 기여 명세(헌장 §귀속 규율 2 — 발동 횟수 / 번 액수 / 놓친 액수). 위와 같은
           // 스프레드 규율이라 무촉매 런의 정산 입력은 종전과 바이트 동일하다.
           ...(catalystContributions !== undefined ? { catalystContributions } : {}),
+          // 드랍 축 실측 배율 → 설계도 3% 게이트의 스케일. 같은 스프레드 규율이라 무촉매 런의
+          // 정산 입력은 종전과 바이트 동일하다.
+          ...(catalystLootMult !== undefined ? { catalystLootMult } : {}),
         }, { serverDrops });
         // Completing the tutorial (win or lose) reveals the base and makes the run
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
@@ -2241,6 +2250,13 @@ async function main(): Promise<void> {
               // resource_mult 영수증과 같은 규율, 추가 RPC 0). 오프라인 런은 undefined.
               ...(w.config.planetMultEpoch !== undefined
                 ? { epoch: w.config.planetMultEpoch }
+                : {}),
+              // 촉매 드랍 축 실측 배율 → 의뢰서 발령 확률의 스케일(게이트 4b). **centi 정수**로
+              // 보낸다 — 서버 산술이 정수라야 TS 짝 `scaleGateChanceCp` 와 반올림까지 같아진다.
+              // ⚠️ 바로 위 epoch 과 정반대 판단(값을 직접 보낸다)인 근거는 PveSettleSummary 주석.
+              // 무촉매·드랍 축 미발동 런은 undefined → 필드 미전송 → 서버가 100 으로 접는다.
+              ...(catalystLootMult !== undefined
+                ? { catalystLootMultCenti: Math.round(catalystLootMult * 100) }
                 : {}),
             },
             storyRewardCredits: storyReward,

@@ -38,8 +38,10 @@ import { CATALOG_BOSS, CATALOG_KIND_COUNTS } from '../invasion/catalog.js';
 import {
   rollRunBlueprint,
   DEFAULT_BLUEPRINT_CHANCE_CP,
+  BLUEPRINT_RUN_CHANCE_CP,
   type BlueprintCandidate,
 } from '../../src/sim/drops.js';
+import { scaleGateChanceCp } from '../../src/data/catalystDrops.js';
 
 /**
  * 행성 드랍 rarity 기준 확률(src/sim/drops.ts가 소비).
@@ -420,6 +422,19 @@ export interface LootLike {
  *   - **분포** — 게이트를 통과했을 때 후보를 등급별 cp 로 가중 추첨한다. rare:unique 비중과
  *     행성별 편차(카르곤 5/20 … 아르케 8/26)가 종전 그대로 보존된다.
  *
+ * ## 2026-08-08(2차) — 촉매 드랍 축이 **총량에 다시 닿는다** (사용자 지시)
+ * *"설계도와 의뢰서도 아이템이다. 촉매의 드랍 추가 확률에 의해서 이것들도 영향을 받게 하라."*
+ * 위 §총량의 "무관하게"는 이제 **드랍 건수·단계·행성 배율 셋에만** 해당한다 — 촉매 드랍 축은
+ * {@link catalystLootMult} 로 게이트 확률을 직접 스케일한다(3% → 최대 축 상한배).
+ *
+ * ⚠️ **되돌아간 것은 총량 축 하나뿐이고, 세 축의 분리는 그대로다.** 옛 창발 모델의 병폐는
+ * "런당 확률이 어디에도 적혀 있지 않았다"였는데, 지금은 base 상수 하나 × 실측 배율 하나라
+ * 두 수를 곱하면 답이 나온다. 특히 **행성 인기 배율은 여전히 닿지 않는다**(ADR-0038 불변) —
+ * 이 함수는 `planetMult` 인자를 받지 않고, 그 부재가 곧 구조적 증명이다.
+ *
+ * ⚠️ 배율은 **주입 목록이 아니라 sim 실측**이다(`catalystLootMultOf`). 드랍 축 카드를 꽂고
+ * 조건을 한 번도 못 채우면 `undefined` 가 와서 정확히 3% 다.
+ *
  * ## 클리어 게이트
  * `victory` 가 아니면 즉시 빈 목록이다. 예전에는 패배·중도 이탈 런도 수거한 드랍만 있으면
  * 설계도가 나왔다 — "클리어할 때만 먹는다"가 지시의 첫 줄이고, 여기가 그 유일한 관문이다.
@@ -440,6 +455,7 @@ export interface LootLike {
 export function blueprintDropsFromLoot(
   loot: readonly LootLike[],
   victory = false,
+  catalystLootMult?: number,
 ): BlueprintGrant[] {
   if (!victory) return [];
 
@@ -454,7 +470,7 @@ export function blueprintDropsFromLoot(
     };
   });
 
-  const hit = rollRunBlueprint(cands);
+  const hit = rollRunBlueprint(cands, scaleGateChanceCp(BLUEPRINT_RUN_CHANCE_CP, catalystLootMult));
   if (hit === null) return [];
   const rec = loot[hit.pick];
   if (rec === undefined) return [];

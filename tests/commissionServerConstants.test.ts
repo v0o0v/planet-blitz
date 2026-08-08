@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   CAP_ISSUE_ATTEMPTS_PER_HOUR,
@@ -28,8 +28,11 @@ import {
   COMMISSION_ACTIVE_TTL_MS,
   COMMISSION_BLOB_TTL_MS,
   COMMISSION_ISSUES_RETENTION_MS,
+  COMMISSION_MAX_LOOT_MULT_CENTI,
+  CAP_COMMISSIONS_PER_DAY,
 } from '../src/run/commissionServerConstants.js';
 import { MIN_BOSS_KILL_TICKS } from '../src/run/commissionConstants.js';
+import { scaleGateChanceCp, GATE_CP_MAX } from '../src/data/catalystDrops.js';
 
 const MIGRATION = fileURLToPath(
   new URL('../supabase/migrations/20260803000000_commission_ledger.sql', import.meta.url),
@@ -184,17 +187,25 @@ describe('AC-G2 확장 — source 집합 일치 (값이 아니라 집합)', () =
 // ---------------------------------------------------------------------------
 
 /**
- * ⚠️ 위 블록들은 **원본** 마이그레이션(20260803000000)을 읽는다. 발령 함수는 그 뒤로 두 번
- * `create or replace` 됐고(20260803030000 구간 재조정 · 20260808070000 발령 확률), 실제
- * 데이터베이스가 도는 것은 **마지막 것**이다. 그래서 이 블록만 새 파일을 읽는다 —
- * 원본을 읽으면 "고쳤는데 테스트가 옛 본문을 보고 통과"하는 형태가 된다.
+ * ⚠️ 위 블록들은 **원본** 마이그레이션(20260803000000)을 읽는다. 발령 함수는 그 뒤로 여러 번
+ * `create or replace` 됐고, 실제 데이터베이스가 도는 것은 **마지막 것**이다. 그래서 이 블록만
+ * 최신 정의를 읽는다 — 원본을 읽으면 "고쳤는데 테스트가 옛 본문을 보고 통과"하는 형태가 된다.
+ *
+ * ⚠️⚠️ **파일명을 상수로 박지 않는다**(2026-08-08 2차에 고쳤다). 이 파일은 원래
+ * `20260808070000` 을 이름으로 박아 읽었고, 촉매 드랍 축 레인이 그 함수를 또 재정의하자
+ * **새 본문을 한 줄도 안 보면서 초록**이 됐다 — 이 주석이 경고한 바로 그 형태를 자기가 밟은
+ * 것이다. 적용 순 마지막 정의를 찾아 읽는다(학습 스킬 `sql-redefinition-observability-expertise` §2).
  */
-const ISSUE_RATE_MIGRATION = fileURLToPath(
-  new URL('../supabase/migrations/20260808070000_commission_issue_rate.sql', import.meta.url),
-);
+const MIGRATIONS_DIR = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
 
 function issueRateSql(): string {
-  return new TextDecoder().decode(readFileSync(ISSUE_RATE_MIGRATION));
+  let found: string | null = null;
+  for (const f of readdirSync(MIGRATIONS_DIR).filter((x) => x.endsWith('.sql')).sort()) {
+    const text = new TextDecoder().decode(readFileSync(MIGRATIONS_DIR + f));
+    if (text.includes('create or replace function public.issue_commission_for_run(')) found = text;
+  }
+  if (found === null) throw new Error('issue_commission_for_run 정의를 찾지 못했습니다');
+  return found;
 }
 
 describe('발령 확률 게이트 SQL ↔ TS 미러', () => {
@@ -214,7 +225,7 @@ describe('발령 확률 게이트 SQL ↔ TS 미러', () => {
       .split(',')
       .map((s) => s.trim().replace(/^'|'$/g, ''))
       .sort();
-    expect(labels).toEqual(['cooldown', 'not-victory', 'rate', 'roll', 'stock']);
+    expect(labels).toEqual(['cooldown', 'not-victory', 'rate', 'rate-day', 'roll', 'stock']);
   });
 
   it('게이트가 재고 상한 뒤 · 계급 롤 앞에 있다', () => {
@@ -232,7 +243,7 @@ describe('발령 확률 게이트 SQL ↔ TS 미러', () => {
   it('게이트 롤과 계급 롤이 서로 다른 random() 호출이다', () => {
     // 하나를 재사용하면 계급 분포가 [0.3, 1) 로 잘려 1급(<0.55)이 사라진다.
     const code = stripLineComments(issueRateSql());
-    expect(code).toContain('floor(random() * 10000)::int >= ISSUE_CHANCE_CP');
+    expect(code).toContain('floor(random() * 10000)::int >= v_chance_cp');
     expect(code).toContain('v_roll := random()');
   });
 
@@ -244,5 +255,109 @@ describe('발령 확률 게이트 SQL ↔ TS 미러', () => {
     const horizon = code.indexOf('next_eligible_at = greatest(now(), v_horizon)');
     expect(horizon).toBeGreaterThan(roll); // 전진은 게이트보다 뒤(= 6단계 발령)에서만.
     expect(code.slice(roll, horizon)).toContain('return;');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 촉매 드랍 축이 발령 확률에 닿는다 (2026-08-08 2차 지시)
+// ---------------------------------------------------------------------------
+
+describe('발령 확률 — 드랍 축 배율', () => {
+  it('MAX_LOOT_MULT_CENTI == COMMISSION_MAX_LOOT_MULT_CENTI', () => {
+    const code = stripLineComments(issueRateSql());
+    const m = /MAX_LOOT_MULT_CENTI\s+constant\s+[\w ]+:=\s*([0-9]+)/.exec(code);
+    expect(m, 'SQL 상수 MAX_LOOT_MULT_CENTI 를 찾지 못함').not.toBeNull();
+    expect(Number(cap(m, 1, 'MAX_LOOT_MULT_CENTI'))).toBe(COMMISSION_MAX_LOOT_MULT_CENTI);
+  });
+
+  it('CAP_COMMISSIONS_PER_DAY 가 일치한다', () => {
+    const code = stripLineComments(issueRateSql());
+    const m = /CAP_COMMISSIONS_PER_DAY\s+constant\s+[\w ]+:=\s*([0-9]+)/.exec(code);
+    expect(m, 'SQL 상수 CAP_COMMISSIONS_PER_DAY 를 찾지 못함').not.toBeNull();
+    expect(Number(cap(m, 1, 'CAP_COMMISSIONS_PER_DAY'))).toBe(CAP_COMMISSIONS_PER_DAY);
+  });
+
+  it('형식 상한이 드랍 축 전수 스윕 최댓값과 같다', () => {
+    // 손 계산하면 틀린다(catalysts.ts:453 — "손 계산이 2·3판 연속 틀렸다"). 공명을 포함한
+    // 전수 최댓값이 x3.0 이고, 공명을 빠뜨린 axisCapMult 는 x2.9 다 — 후자를 쓰면 **정직한
+    // 최대 조합이 잘린다**. 여기서 300(=x3.00)을 못 박아 그 하향을 뮤테이션으로 잡는다.
+    expect(COMMISSION_MAX_LOOT_MULT_CENTI).toBe(300);
+  });
+
+  it('클램프이지 거부가 아니다 — 구 클라(키 부재)는 정확히 base 를 받는다', () => {
+    // 거부하면 캐시된 구 클라가 조용히 막힌다(학습 스킬 §5). 그리고 키 부재 -> 100 이라
+    // 하위 호환이 **산술로** 보장된다. 아래 셋이 다 있어야 그 성질이 선다.
+    const code = stripLineComments(issueRateSql());
+    expect(code).toContain("(p_summary->>'catalystLootMultCenti') ~ '^[0-9]+$'");
+    expect(code).toContain('least(MAX_LOOT_MULT_CENTI, greatest(100,');
+    expect(code).toMatch(/else\s+100\s+end;/);
+    // TS 짝이 같은 하위 호환을 갖는다: mult 미지정이면 base 를 **정수 그대로** 돌려준다.
+    expect(scaleGateChanceCp(COMMISSION_ISSUE_CHANCE_CP, undefined)).toBe(
+      COMMISSION_ISSUE_CHANCE_CP,
+    );
+    expect(scaleGateChanceCp(COMMISSION_ISSUE_CHANCE_CP, 1)).toBe(COMMISSION_ISSUE_CHANCE_CP);
+  });
+
+  it('반올림이 TS 짝과 같다 — floor 로 바꾸면 발령률이 갈린다', () => {
+    // SQL 이 round 이고 TS 가 round 여야 클라 계측과 서버 발령률이 안 갈린다.
+    const code = stripLineComments(issueRateSql());
+    expect(code).toContain('round(ISSUE_CHANCE_CP * v_mult_cp / 100.0)::int');
+    // 반올림이 실제로 관측되는 배율을 하나 고른다: 3000 x 1.005 = 3015 (floor 도 3015 라
+    // 구분이 안 되므로 소수 반올림이 갈리는 값을 쓴다). 3000 x 1.0005 = 3001.5 -> round 3002.
+    expect(scaleGateChanceCp(3000, 1.0005)).toBe(3002);
+  });
+
+  it('최대 배율에서 90% 이고 100% 를 넘지 않는다', () => {
+    const maxMult = COMMISSION_MAX_LOOT_MULT_CENTI / 100;
+    expect(scaleGateChanceCp(COMMISSION_ISSUE_CHANCE_CP, maxMult)).toBe(9000);
+    // 형식 상한이 훗날 커져도 산술이 100% 를 넘지 않는다(SQL 의 least(GATE_CP_MAX, …) 짝).
+    expect(scaleGateChanceCp(COMMISSION_ISSUE_CHANCE_CP, 99)).toBe(GATE_CP_MAX);
+    expect(code_gateCpMax()).toBe(GATE_CP_MAX);
+  });
+
+  function code_gateCpMax(): number {
+    const code = stripLineComments(issueRateSql());
+    const m = /GATE_CP_MAX\s+constant\s+[\w ]+:=\s*([0-9]+)/.exec(code);
+    expect(m, 'SQL 상수 GATE_CP_MAX 를 찾지 못함').not.toBeNull();
+    return Number(cap(m, 1, 'GATE_CP_MAX'));
+  }
+
+  it('하루 캡이 확률 게이트 뒤 · 발령 앞이다', () => {
+    // 순서 이유가 4b 와 **반대**다: 이 캡의 분자는 발령 건수라 롤 실패를 세면 안 된다.
+    // 앞에 두면 롤 실패가 하루 캡을 갉아먹어 정직한 플레이어가 발령 없이 캡에 닿는다.
+    const code = stripLineComments(issueRateSql());
+    const roll = code.indexOf("skip_reason = 'roll'");
+    const day = code.indexOf("skip_reason = 'rate-day'");
+    const insert = code.indexOf('insert into public.commission_inventory');
+    expect(roll).toBeGreaterThan(0);
+    expect(day).toBeGreaterThan(roll);
+    expect(insert).toBeGreaterThan(day);
+  });
+
+  it('하루 캡이 프로필 행을 잠그고 발령 건수만 센다', () => {
+    // 잠금 부재 -> 병렬 정산 N개가 각자 "여유 있음"을 읽어 N배. 분자가 발령이 아니라 시도면
+    // 롤 실패가 캡을 먹는다(위 순서 단언의 짝 — 값 대조로는 둘 다 안 잡힌다).
+    const code = stripLineComments(issueRateSql());
+    const lock = code.indexOf('from public.profiles where id = p_profile_id for update');
+    const day = code.indexOf("skip_reason = 'rate-day'");
+    expect(lock).toBeGreaterThan(0);
+    expect(day).toBeGreaterThan(lock);
+    expect(code.slice(lock, day)).toContain('and granted');
+    expect(code.slice(lock, day)).toContain("interval '1 day'");
+  });
+
+  it('하루 캡이 정직한 헤비 유저를 벌하지 않는다', () => {
+    // 정직 천장 = 16시간 x 시도 상한 x min(1, base x 최대 배율).
+    const perHour =
+      CAP_ISSUE_ATTEMPTS_PER_HOUR *
+      Math.min(1, scaleGateChanceCp(COMMISSION_ISSUE_CHANCE_CP, 3) / 10000);
+    const honestDay = 16 * perHour;
+    expect(honestDay).toBeGreaterThan(0);
+    expect(
+      CAP_COMMISSIONS_PER_DAY,
+      `정직 천장 ${honestDay}/day 보다 캡이 낮으면 최대 배율 플레이어가 조용히 거부된다`,
+    ).toBeGreaterThan(honestDay);
+    // 그리고 24시간 위조 천장(24 x perHour)보다는 낮아야 하루 축이 실제로 구속한다.
+    expect(CAP_COMMISSIONS_PER_DAY).toBeLessThan(24 * perHour);
   });
 });

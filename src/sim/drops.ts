@@ -104,6 +104,12 @@ export const DEFAULT_BLUEPRINT_CHANCE_CP: readonly number[] = [0, 0, 600, 2500];
  *
  * 클리어 런은 보스 확정 드랍(항상 rare 이상, ADR-0035)을 반드시 1건 갖기 때문에 후보가
  * 비는 일이 없다 — 그래서 "3%"가 근사치가 아니라 **정확히 3%** 다.
+ *
+ * ## ⚠️ 2026-08-08(2차) — 이 상수는 이제 **base** 다 (사용자 지시)
+ * 촉매 드랍 축이 이 값을 스케일한다(`scaleGateChanceCp(BLUEPRINT_RUN_CHANCE_CP, mult)`).
+ * 위 문단의 *"정확히 3%"* 는 **드랍 축 미발동 런**에서만 참이다 — 무촉매 런이 정확히 그
+ * 경우라 옛 계약이 그대로 유지되지만, "설계도는 언제나 3%"라고 읽으면 틀린다.
+ * 배율의 유계는 이 파일이 아니라 드랍 축 상한이 진다(`catalystLootMultOf` 의 클램프).
  */
 export const BLUEPRINT_RUN_CHANCE_CP = 300;
 
