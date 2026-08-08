@@ -49,6 +49,19 @@ export interface SettlementSummary {
   combatPower: number;
   /** 획득 장비 표시 목록(등급별 색상 칩, M5 C2). */
   drops: ResultDrop[];
+  /**
+   * `true` = **아직 무엇을 받았는지 모른다**(서버 권위 드랍 모드 — ADR-0050 §3 단계 1).
+   *
+   * 그 모드에서 정산은 전리품을 굴리지 않는다. 서버가 자기 시드로 굴려 원장에 적고, 클라는
+   * 정산 **직후 배송 왕복**이 끝나야 실물을 안다. 그 사이 `drops` 는 비어 있는데, 그것을
+   * "없음"으로 말하면 거짓이다 — 장비를 주운 런에서도 "이번 런에는 새 장비가 없습니다"가
+   * 떴다(사용자 신고 2026-08-09). 이 깃발이 서 있는 동안 화면은 **"수령 중…"** 으로 말하고,
+   * 배송이 끝나면 `ResultOverlayScreen.updateDrops()` 가 실물로 갈아끼운다.
+   *
+   * 오프라인(로컬 롤) 경로는 정산 순간에 이미 실물을 쥐고 있으므로 이 필드를 싣지 않는다 —
+   * 그쪽의 빈 `drops` 는 진짜 "없음"이다.
+   */
+  dropsPending?: boolean;
   /** 이번 런에 얻은 촉매 총량(ADR-0029). > 0 일 때만 정산 항목으로 표시. */
   catalystDrops?: number;
   /**
@@ -267,7 +280,11 @@ export class ResultOverlay {
       if (st.drops.length === 0) {
         const none = document.createElement('div');
         none.className = 'pb-drops-none';
-        none.textContent = t('result.drops.none');
+        // 서버 권위 모드는 배송이 끝나야 실물을 안다 — 그 사이를 "없음"이라 말하면 거짓이다
+        // (`SettlementSummary.dropsPending` 주석). DOM 판은 회귀 대비 폴백이라 갱신 경로가
+        // 없으므로 문구만 정직하게 둔다.
+        none.textContent =
+          st.dropsPending === true ? t('result.drops.pending') : t('result.drops.none');
         this.root.appendChild(none);
       } else {
         const chips = document.createElement('div');

@@ -32,7 +32,7 @@ import { INVENTORY_CAP, stashCapacity } from '../save/profile.js';
 import { hasItemId } from '../save/itemPresence.js';
 import type { ItemPresenceProfileLike } from '../save/itemPresence.js';
 import { dropGrantItemId, itemFromDropGrant } from '../items/dropGrant.js';
-import type { ItemSource } from '../items/types.js';
+import type { Item, ItemSource } from '../items/types.js';
 import type { ItemGrantRow } from '../net/gateway.js';
 
 /** 주입 가능한 배송 의존성. 전부 순수하지 않은 경계라 테스트가 여기를 잡는다. */
@@ -54,9 +54,22 @@ export interface ItemGrantDeliveryDeps {
   readonly markApplied: (grantId: string) => Promise<boolean>;
 }
 
-/** 배송 1회분 결과. 화면에는 쓰지 않고 테스트·로그가 읽는다. */
+/** 배송으로 세이브에 **새로 심은** 아이템 1건(발급 id 를 달고 나온다). */
+export interface DeliveredItemGrant {
+  readonly grantId: string;
+  readonly item: Item;
+}
+
+/**
+ * 배송 1회분 결과. 카운터는 테스트·로그가 읽고, {@link deliveredItems} 는 **정산 화면**이 읽는다.
+ *
+ * ⚠️ 화면이 이 목록을 읽어야 하는 이유가 구조적이다: 서버 권위 모드의 `settleRun` 은 전리품을
+ * 굴리지 않으므로(`itemsGained` 가 빈 배열) **무엇이 나왔는지 아는 유일한 자리가 배송**이다.
+ * 예전에는 화면이 `itemsGained` 만 읽어, 온라인 계정에서 장비를 주웠는데도 정산이 "이번 런에는
+ * 새 장비가 없습니다"를 띄웠다(사용자 신고 2026-08-09).
+ */
 export interface ItemGrantDeliveryReport {
-  /** 세이브에 새로 심은 아이템 수. */
+  /** 세이브에 새로 심은 아이템 수(= `deliveredItems.length`). */
   readonly delivered: number;
   /** `applied_at` 을 찍은 행 수(이미 들고 있어 심지 않고 찍은 것 포함). */
   readonly marked: number;
@@ -64,9 +77,21 @@ export interface ItemGrantDeliveryReport {
   readonly held: number;
   /** 등급·시드가 형식 위반이라 해석하지 못해 남겨 둔 행 수. */
   readonly unresolved: number;
+  /**
+   * 이번 배송으로 **새로 심은** 아이템(발급 id 동반). 보류(`held`)·해석 실패(`unresolved`)·
+   * 이미 들고 있어 표시만 한 행(`marked` 중 일부)은 들어오지 않는다 — 화면이 "이 런에 실제로
+   * 손에 들어온 것"만 보여야 하기 때문이다.
+   */
+  readonly deliveredItems: readonly DeliveredItemGrant[];
 }
 
-const EMPTY: ItemGrantDeliveryReport = { delivered: 0, marked: 0, held: 0, unresolved: 0 };
+const EMPTY: ItemGrantDeliveryReport = {
+  delivered: 0,
+  marked: 0,
+  held: 0,
+  unresolved: 0,
+  deliveredItems: [],
+};
 
 /** 표시 시도 — 예외도 실패로 접는다(이 경로의 예외가 배송 루프를 끊으면 안 된다). */
 async function tryMark(deps: ItemGrantDeliveryDeps, grantId: string): Promise<boolean> {
@@ -113,6 +138,7 @@ export async function deliverItemGrants(
   let marked = 0;
   let held = 0;
   let unresolved = 0;
+  const deliveredItems: DeliveredItemGrant[] = [];
 
   for (const row of rows) {
     if (row.appliedAtMs !== null) continue; // 이미 배송됨.
@@ -144,6 +170,10 @@ export async function deliverItemGrants(
       continue;
     }
     delivered++;
+    // 화면이 읽을 목록에 **여기서** 넣는다 — 아래 push·재-pull·표시 단계가 실패해도 아이템은
+    // 이미 로컬 세이브에 있으므로(그래서 다음 부팅이 표시만 재시도한다) 플레이어 손에는 들어온
+    // 것이 맞다. 표시(`markApplied`) 성공을 조건으로 걸면 오프라인 순간에 화면만 비게 된다.
+    deliveredItems.push({ grantId: row.grantId, item });
     deps.saveProfile(profile);
 
     // ③ push 성공 → ④ 재-pull 존재 확인 → ⑤ 표시. 어느 단계든 실패하면 표시하지 않는다.
@@ -168,5 +198,5 @@ export async function deliverItemGrants(
     if (await tryMark(deps, row.grantId)) marked++;
   }
 
-  return { delivered, marked, held, unresolved };
+  return { delivered, marked, held, unresolved, deliveredItems };
 }

@@ -173,6 +173,32 @@ export class ResultOverlayScreen {
     this.render();
   }
 
+  /**
+   * 서버 권위 드랍의 **배송 결과**를 반영해 다시 그린다(ADR-0050 §3 단계 1).
+   *
+   * 위 `updateCommission` 과 같은 사유로 별도 경로다: 런 종료 시점에는 서버가 무엇을 굴렸는지
+   * 알 수 없고(클라는 **개수만** 주장한다), 배송 왕복이 끝나야 실물이 손에 들어온다. 그때까지
+   * 화면은 `dropsPending` 으로 "수령 중…"을 말하고, 여기서 실물 목록·전투력으로 갈아끼운다.
+   *
+   * 예전에는 이 경로가 아예 없어서, 온라인 계정으로 장비를 주운 런의 정산이 **항상**
+   * "이번 런에는 새 장비가 없습니다 / 전투력 +0" 이었다(사용자 신고 2026-08-09).
+   *
+   * 화면이 이미 닫혔거나(다음 런으로 진행) 정산 블록이 없으면(오염 런) 조용히 무시한다.
+   */
+  updateDrops(drops: readonly ResultDrop[], combatPower: number): void {
+    const s = this.state;
+    if (s === null || !this.root.visible) return;
+    const st = s.settlement;
+    if (st === undefined) return;
+    // `itemsGained`(= 회수 점수)는 **건드리지 않는다.** 그것은 이 런에 주운 개수이고, 만석 보류나
+    // 개연성 캡으로 실제 배송이 그보다 적을 수 있다 — 두 수가 다르다는 사실 자체가 정보다.
+    this.state = {
+      ...s,
+      settlement: { ...st, drops: [...drops], combatPower, dropsPending: false },
+    };
+    this.render();
+  }
+
   // --- 렌더 ----------------------------------------------------------------
 
   private render(): void {
@@ -541,7 +567,10 @@ export class ResultOverlayScreen {
     if (st.drops.length === 0) {
       const none = new Text({
         resolution: 2,
-        text: t('result.drops.none'),
+        // 배송 대기 중이면 "없음"이 아니라 "수령 중…"이다(`SettlementSummary.dropsPending`).
+        // 서버가 굴린 결과는 배송 왕복이 끝나야 알 수 있고, 그 사이 이 자리를 "없음"으로
+        // 말하면 장비를 주운 런에서도 화면이 거짓을 말한다.
+        text: st.dropsPending === true ? t('result.drops.pending') : t('result.drops.none'),
         style: {
           fontFamily: UI_FONT,
           fontSize: 20,

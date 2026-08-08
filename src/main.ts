@@ -164,6 +164,7 @@ import {
 // 서버 드랍 배송(원장 → 세이브) — ADR-0050 §3 단계 1. 발급은 서버가 하고 배송은 클라만 할 수
 // 있다(`items` 테이블에 클라가 한 줄도 안 쓴다 — itemGrantDelivery.ts 머리 참조).
 import { deliverItemGrants } from './run/itemGrantDelivery.js';
+import type { ItemGrantDeliveryReport } from './run/itemGrantDelivery.js';
 // 의뢰 확정 지급물 배송(발급 원장 → 세이브). 발급은 서버가 하고 배송은 클라만 할 수 있다 —
 // `items` 는 클라 rw 미러라 서버가 심을 자리가 없다(commissionGrantDelivery.ts 머리 참조).
 import { deliverCommissionGrants } from './run/commissionGrantDelivery.js';
@@ -243,6 +244,27 @@ import { SettingsScreen } from './ui/pixi/settingsPanel.js';
 import { t } from './i18n/index.js';
 import { totalCombatPower } from './save/combatPower.js';
 import type { ResultDrop } from './ui/resultOverlay.js';
+import type { Item } from './items/types.js';
+
+/**
+ * 실물 아이템 → 정산 화면의 '획득 장비' 칩 1개.
+ *
+ * **두 경로가 공유한다**: 로컬 롤(오프라인)의 `settleRun` 산출물과, 서버 권위 모드의 배송
+ * 산출물. 예전에는 전자만 있어 매핑이 `resultOverlay.show(...)` 안에 인라인으로 있었고,
+ * 그래서 서버 경로에는 '획득 장비'가 아예 존재하지 않았다(사용자 신고 2026-08-09).
+ * 같은 화면 항목을 두 벌로 적으면 다시 갈리므로 한 자리에 둔다.
+ *
+ * `item` 을 통째로 싣는 이유는 hover 툴팁이 어픽스·요구 레벨·전투력까지 읽기 때문이다
+ * (사용자 요청 2026-07-26). 표시 전용이라 sim·세이브와 무관하다.
+ */
+function resultDropOf(it: Item): ResultDrop {
+  return {
+    rarity: it.rarity,
+    slot: it.slot,
+    ...(it.weaponType !== undefined ? { weaponType: it.weaponType } : {}),
+    item: it,
+  };
+}
 
 async function main(): Promise<void> {
   const mount = document.getElementById('app');
@@ -1954,8 +1976,12 @@ async function main(): Promise<void> {
    * (저장 → push → 재-pull 확인 → 표시)을 쓰므로 규율이 한 벌이다.
    *
    * 절대 throw 하지 않는다. 오프라인·미설정이면 완전 no-op 이다.
+   *
+   * 리포트를 **돌려준다** — 정산 화면이 `deliveredItems` 를 읽어 '획득 장비'를 채운다. 서버
+   * 권위 모드에서는 여기가 클라가 무엇을 받았는지 아는 유일한 자리다(`itemGrantDelivery.ts`
+   * `ItemGrantDeliveryReport` 주석).
    */
-  async function runItemGrantDelivery(): Promise<void> {
+  async function runItemGrantDelivery(): Promise<ItemGrantDeliveryReport> {
     const report = await deliverItemGrants(profile, {
       fetchGrants: () => fetchPendingItemGrantsOnServer(),
       saveProfile: (p) => saveProfile(p),
@@ -1975,6 +2001,7 @@ async function main(): Promise<void> {
     if (report.unresolved > 0) {
       console.warn(`[drops] 원장 ${report.unresolved}건을 해석하지 못했다(등급·시드 형식 위반)`);
     }
+    return report;
   }
 
   /**
@@ -2007,7 +2034,25 @@ async function main(): Promise<void> {
       );
     }
     // 발급이 실패했어도 배송은 시도한다 — 지난 런의 미배송 행이 남아 있을 수 있다.
-    await runItemGrantDelivery();
+    const report = await runItemGrantDelivery();
+
+    // ⭐ 배송 결과를 정산 화면의 '획득 장비'로 갈아끼운다(사용자 신고 2026-08-09).
+    //
+    // 이 모드에서 `settleRun` 은 전리품을 굴리지 않아 `itemsGained` 가 **항상 빈 배열**이다.
+    // 그런데 화면은 그 배열만 읽고 있었다 — 그래서 온라인 계정으로 장비를 주운 런의 정산이
+    // 언제나 "이번 런에는 새 장비가 없습니다 / 전투력 +0" 이었다. 서버가 굴린 실물을 아는
+    // 자리는 배송뿐이므로, 배송이 끝난 **여기서** 화면에 실어 준다.
+    //
+    // ⚠️ **이 런의 발급분으로 좁힌다.** 배송은 `applied_at IS NULL` 인 행을 전부 훑으므로
+    // 지난 런의 보류분(만석·표시 실패)이 섞여 들어올 수 있고, 그것을 이번 런 전리품으로
+    // 적으면 화면이 또 거짓을 말한다. 발급 응답의 `grants` 가 이 런의 id 집합이다.
+    // 발급이 실패했거나(`status !== 'ok'`) 멱등 재호출로 0건이면 좁힐 근거가 없으므로
+    // 화면을 건드리지 않는다 — "모르는 것"을 "없는 것"으로 적지 않기 위해서다.
+    const ids = res.status === 'ok' ? new Set(res.grants.map((g) => g.grantId)) : null;
+    if (ids !== null && ids.size > 0) {
+      const items = report.deliveredItems.filter((d) => ids.has(d.grantId)).map((d) => d.item);
+      resultOverlay.updateDrops(items.map(resultDropOf), totalCombatPower(items));
+    }
   }
 
   /**
@@ -2104,6 +2149,14 @@ async function main(): Promise<void> {
     // 총량과 내역을 **둘 다** 남긴다 — 총량은 정산 수치 줄, 내역은 아이콘 칩 줄이 쓴다.
     let catalystDropTotal = 0;
     let catalystDropList: readonly { readonly id: number; readonly qty: number }[] = [];
+    /**
+     * 서버 권위 모드에서 **서버에 주장한 전리품 개수**(압류·소멸을 이미 뺀 값). 0 보다 크면
+     * 정산 화면의 "회수 N점"이 이 값으로 서고 '획득 장비'는 배송을 기다린다.
+     *
+     * 로컬 롤(오프라인)·오염 런·발급 실패는 0 으로 남는다 — 전자는 `itemsGained` 가 실물을
+     * 이미 들고 있고, 후자 둘은 애초에 전리품이 없다.
+     */
+    let claimedServerDrops = 0;
     if (!settled) {
       settled = true;
       // M5 C1: 승/패 연출 사운드(런당 1회). 격추 사출음(eject)은 피격 관찰에서 이미 났으므로
@@ -2331,7 +2384,10 @@ async function main(): Promise<void> {
           // 특히 ①이 깨지는(주장을 하한으로도 쓰는) 서버 변경이 오면 이 감산이 손해가 된다.
           const seized = lastOutcome?.catalystDebt?.seized ?? 0;
           const voided = lastOutcome?.sealedVoided ?? 0;
-          void deliverRunDrops(dropRunId, Math.max(0, w.loot.length - seized - voided), {
+          // 화면과 발급이 **같은 수**를 쓴다(위 축 ③과 같은 규율) — 정산의 "회수 N점"도 이
+          // 값이다. 두 자리에서 따로 계산하면 압류·소멸이 한쪽에만 반영돼 또 갈린다.
+          claimedServerDrops = Math.max(0, w.loot.length - seized - voided);
+          void deliverRunDrops(dropRunId, claimedServerDrops, {
             planet: w.config.planet ?? 0,
             stage: w.config.stage ?? 1,
             levelCap: dropLevelCap,
@@ -2365,7 +2421,13 @@ async function main(): Promise<void> {
         ...(o !== null
           ? {
               settlement: {
-                itemsGained: o.itemsGained.length,
+                // ⭐ 회수 점수는 **두 모드가 서로 다른 자리에서 온다.**
+                //  - 로컬 롤(오프라인) → `itemsGained` 가 곧 실물이라 그 길이가 정답이다.
+                //  - 서버 권위 → `itemsGained` 는 **항상 빈 배열**이다(settleRun 이 굴리지
+                //    않는다). 그래서 서버에 주장한 개수(`claimedServerDrops`)를 쓴다 —
+                //    `SettleRunOptions.serverDrops` 주석이 처음부터 그렇게 쓰라고 적어 둔
+                //    값이고, 화면이 그걸 안 읽어서 "회수 0점"이 뜨고 있었다(2026-08-09).
+                itemsGained: claimedServerDrops > 0 ? claimedServerDrops : o.itemsGained.length,
                 levelsGained: o.levelsGained,
                 skillPointsGained: o.skillPointsGained,
                 creditsGained: o.creditsGained,
@@ -2384,17 +2446,14 @@ async function main(): Promise<void> {
                   ? { debtSeized: o.catalystDebt.seized }
                   : {}),
                 // M5 C2: 획득 전투력 합계 + 등급별 장비 칩 목록(정산 완성판).
+                //
+                // 서버 권위 모드에서는 이 둘이 **여기서 채워질 수 없다** — 무엇이 나왔는지는
+                // 서버만 알고, 클라는 배송 왕복이 끝나야 안다. 그래서 빈 채로 열고
+                // `dropsPending` 을 세워 화면이 "수령 중…"이라고 말하게 한 뒤,
+                // `deliverRunDrops` 가 `updateDrops()` 로 실물을 갈아끼운다.
                 combatPower: totalCombatPower(o.itemsGained),
-                drops: o.itemsGained.map(
-                  (it): ResultDrop => ({
-                    rarity: it.rarity,
-                    slot: it.slot,
-                    ...(it.weaponType !== undefined ? { weaponType: it.weaponType } : {}),
-                    // 실물 아이템을 그대로 실어 정산 hover 툴팁이 어픽스·요구 레벨·전투력까지
-                    // 보여준다(사용자 요청 2026-07-26). 표시 전용이라 sim·세이브와 무관.
-                    item: it,
-                  }),
-                ),
+                drops: o.itemsGained.map(resultDropOf),
+                ...(claimedServerDrops > 0 ? { dropsPending: true } : {}),
               },
             }
           : {}),
