@@ -25,9 +25,18 @@
 -- 런이 지평을 밀면 그 불변이 오히려 깨진다. 미발령 행은 default now() 라 max 에 영향이 없다.
 --
 -- ## 30% 의 실효
--- 시간당 상한 20(주장 기준)은 그대로이므로 발령 기대치는 시간당 약 6건이 된다. 재고 상한 12,
--- 쿨다운 누적기는 그대로라 상한들이 물기 전에 확률이 먼저 문다 — 의도한 방향이다(방어 상수가
--- 밸런스를 결정하던 것을 되돌린다).
+-- 시간당 상한 20(**주장** 기준 — 롤 실패 런도 카운트에 남는다)은 그대로이므로 발령 기대치는
+-- 시간당 약 6건이 된다. 재고 상한 12, 쿨다운 누적기도 그대로다.
+--
+-- ⚠️ **"상한보다 확률이 먼저 문다"고 쓰지 않는다** — 평균적으로만 참이고 실측과 어긋난다.
+--    finalTick 실측 p50 이 782틱(≈13초)이므로 반복 플레이어는 시간당 20 주장을 쉽게 넘겨
+--    `skip_reason='rate'` 에 **상시 닿는다.** 확률과 상한은 "어느 하나가 먼저 무는" 관계가 아니라
+--    직렬로 곱해지는 두 축이다: 실효 발령 = min(20/h 주장) × 30%.
+--
+-- ⚠️ **롤 실패가 상한 카운트에 남는 것은 의도이고, 방어에 유리하다.** 게이트가 상한들 뒤에 있어
+--    앵커가 이미 박혀 있으므로 위조 발령 천장이 20/h → 약 6/h 로 **내려간다**. 게이트를 상한
+--    앞에 두면 공격자가 롤 실패를 무비용으로 반복해 granted 20/h 까지 뽑을 수 있어 방어가
+--    3.3배 약해진다 — 순서가 방어 계약인 두 번째 이유다.
 --
 -- ⚠️ **계급 확률표(0.55/0.20/0.18/0.07)는 손대지 않았다.** 지시가 "의뢰서가 나올 때 등급
 --    확률은 원래 그대로"다. 이 게이트는 **총량 축**만 건드린다.
@@ -39,17 +48,44 @@
 -- ① skip_reason 도메인 확장. 새 값을 안 넣으면 4b 의 update 가 check 위반으로 터지고,
 --    함수 전체가 서브트랜잭션 exception 핸들러로 떨어져 **앵커 행까지 사라진다**(fail-closed).
 --    그 경로는 조용해서(warning 뿐) 발령이 영영 0% 인 것처럼 보인다 — 이 alter 가 본체다.
-alter table public.commission_issues
-  drop constraint if exists commission_issues_skip_reason_check;
+-- ⚠️ **이름을 가정하지 않고 지운다 — 자기 치유형이다.**
+--    `drop constraint if exists <기본생성명>` 만 쓰면 PG 기본 작명(`commission_issues_skip_reason_check`)
+--    을 가정하는 것이다. 어느 환경에서 그 제약이 **다른 이름**으로 존재하면 drop 이 조용히
+--    no-op 하고 아래 add 가 제약을 *추가*해 **둘이 공존**한다 → 옛 제약이 'roll' 을 거부해 4b 의
+--    update 가 항상 터지고, 함수의 fail-closed 핸들러가 앵커까지 지운 뒤 warning 하나만 남긴다
+--    (= **발령률이 조용히 0%**, 화면은 아무 이상 없음). 그래서 `skip_reason` 을 참조하는 check
+--    제약을 **이름과 무관하게 전부** 걷어낸 뒤 정본 하나를 세운다.
+--
+--    ⚠️ 처음에는 "개수가 1인지 세서 아니면 exception" 형태로 썼다가 두 가지가 걸렸다:
+--      ① 자기 치유가 안 된다 — 실패하면 사람이 옛 제약 이름을 손으로 찾아 지워야 한다.
+--      ② `skip_reason` 을 언급하는 복합 check 가 훗날 추가되면 **정상 상태에서도 2를 세어**
+--         거짓 중단한다. 지우고 다시 세우는 편이 두 문제를 함께 없앤다.
+--    새 도메인은 구 도메인의 상집합이므로 재검증(add 시 전수 스캔)은 기존 데이터에서 통과한다.
+do $$
+declare r record;
+begin
+  for r in
+    select c.conname
+      from pg_constraint c
+      join pg_class t on t.oid = c.conrelid
+      join pg_namespace n on n.oid = t.relnamespace
+     where n.nspname = 'public'
+       and t.relname = 'commission_issues'
+       and c.contype = 'c'
+       and pg_get_constraintdef(c.oid) like '%skip_reason%'
+  loop
+    execute format('alter table public.commission_issues drop constraint %I', r.conname);
+    raise notice 'skip_reason check 제약 % 를 걷어냈다(정본으로 재생성한다)', r.conname;
+  end loop;
+end $$;
+
 alter table public.commission_issues
   add constraint commission_issues_skip_reason_check
   check (skip_reason in ('not-victory','stock','rate','cooldown','roll'));
 
--- ⚠️ **조용한 실패를 시끄럽게 만든다.** 위 `drop … if exists` 는 PG 기본 생성명을 가정한다.
---    어느 환경에서 그 제약이 **다른 이름**으로 존재하면 drop 이 no-op 하고 새 제약이 *추가*되어
---    둘이 공존한다 → 옛 제약이 'roll' 을 거부해 4b 의 update 가 항상 터지고, 함수의 fail-closed
---    핸들러가 앵커까지 지운 뒤 warning 하나만 남긴다(= 발령률 0%, 화면은 조용). 배포 시점에
---    깨뜨리는 편이 낫다.
+-- 사후 확인 — 위 루프가 걷어내고 정본 하나만 남았는지. 여기서 실패하면 배포가 멈춘다(fail-loud).
+-- ⚠️ 이 블록은 `execute format(%I)` 로 식별자를 인용하지만 **입력은 pg_constraint 카탈로그**이고
+--    사용자 입력이 닿는 자리가 없다 — 주입 표면이 아니다.
 do $$
 declare v_n int;
 begin
@@ -62,7 +98,7 @@ begin
      and c.contype = 'c'
      and pg_get_constraintdef(c.oid) like '%skip_reason%';
   if v_n <> 1 then
-    raise exception 'commission_issues.skip_reason check 제약이 %개다(1이어야 한다) — 옛 제약이 다른 이름으로 남아 있으면 발령률이 조용히 0%% 가 된다', v_n;
+    raise exception 'commission_issues.skip_reason check 제약이 %개다(1이어야 한다)', v_n;
   end if;
 end $$;
 
