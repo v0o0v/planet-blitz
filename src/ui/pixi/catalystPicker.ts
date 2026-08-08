@@ -182,13 +182,74 @@ const SUMMARY_ROWS_Y = 48;
 const SUMMARY_HEAD_H = 26;
 
 const COLS = 6;
-/** 셀 높이 = 아이콘/이름/종류·보유 + **규칙문 3줄** + 태그 칩 줄 + 상한 줄 + 상태 줄 + 버튼 줄. */
-const CELL_H = 244;
 const CELL_GAP = 12;
-/** 셀 안 고정 세로 격자 — 규칙문(66~120) → 태그 칩 → 상한 → 상태 → 버튼(CELL_H−44). */
-const TAG_ROW_Y = 124;
-const CAP_ROW_Y = 150;
-const STATUS_ROW_Y = 176;
+
+/**
+ * 셀 안 세로 격자.
+ *
+ * ## ⚠️ 규칙문 줄 수를 상수로 가정하면 안 된다 (2026-08-08 실제 신고)
+ * 예전에는 `TAG_ROW_Y`/`CAP_ROW_Y`/`STATUS_ROW_Y` 가 **위에서 잰 고정 상수**(124/150/176)였고,
+ * 그 격자는 규칙문이 **3줄**이라고 가정하고 있었다. 실제 문구는 48종 중 **41종이 4줄, 1종이
+ * 5줄** 이라 예산(58px = 3.2줄)을 넘겼고, 넘친 줄이 태그 칩과 상한 줄 위에 그대로 겹쳐 찍혔다.
+ * 42/48 이 깨져 있었는데도 좌표가 전부 상수라 아무 테스트도 이걸 못 봤다.
+ *
+ * 그래서 방향을 뒤집는다 — **아래 세 줄은 버튼 행에서 위로 파생**시킨다. 그러면
+ *  - 카드마다 태그/상한/상태 줄의 y 가 같아 격자 정렬이 유지되고(칩이 들쭉날쭉해지지 않는다),
+ *  - 규칙문이 쓸 수 있는 세로가 `RULE_BUDGET_H` 라는 **하나의 값**으로 드러난다.
+ * 규칙문이 그 예산을 넘으면 잘라내지 않고 **폰트를 줄여 맞춘다**(`fitRuleText`) — 이 카드에서
+ * 규칙문은 장식이 아니라 본문이라 truncate 는 정보를 잃는다.
+ */
+const RULE_TOP = 66;
+const RULE_LINE_H = 18;
+/** 규칙문이 감당해야 하는 최악 줄 수(48종 실측). 셀 높이가 여기서 나온다. */
+const RULE_MAX_LINES = 5;
+const RULE_BUDGET_H = RULE_MAX_LINES * RULE_LINE_H;
+/** 규칙문 아래 틈 → 태그 칩(20) → 상한(22) → 상태(17) → 버튼(34) → 바닥 여백(10). */
+const TAG_ROW_H = 20;
+const CAP_ROW_H = 22;
+const STATUS_ROW_H = 17;
+const BTN_ROW_H_CELL = 34;
+const CELL_BOTTOM_PAD = 10;
+const RULE_ROW_GAP = 6;
+
+const CELL_H =
+  RULE_TOP +
+  RULE_BUDGET_H +
+  RULE_ROW_GAP +
+  TAG_ROW_H +
+  4 +
+  CAP_ROW_H +
+  STATUS_ROW_H +
+  5 +
+  BTN_ROW_H_CELL +
+  CELL_BOTTOM_PAD;
+
+const CELL_BTN_Y = CELL_H - CELL_BOTTOM_PAD - BTN_ROW_H_CELL;
+const STATUS_ROW_Y = CELL_BTN_Y - 5 - STATUS_ROW_H;
+const CAP_ROW_Y = STATUS_ROW_Y - CAP_ROW_H;
+const TAG_ROW_Y = CAP_ROW_Y - 4 - TAG_ROW_H;
+
+/**
+ * 셀 세로 격자의 **순수 값 복제본**. 렌더 없이 "규칙문 예산이 실제 문구를 감당하는가"와
+ * "줄끼리 겹치지 않는가"를 단위 테스트가 직접 보게 하려고 내보낸다.
+ */
+export const CELL_ROW_METRICS = {
+  cellH: CELL_H,
+  ruleTop: RULE_TOP,
+  ruleLineH: RULE_LINE_H,
+  ruleMaxLines: RULE_MAX_LINES,
+  ruleBudgetH: RULE_BUDGET_H,
+  tagY: TAG_ROW_Y,
+  tagH: TAG_ROW_H,
+  capY: CAP_ROW_Y,
+  capH: CAP_ROW_H,
+  statusY: STATUS_ROW_Y,
+  statusH: STATUS_ROW_H,
+  btnY: CELL_BTN_Y,
+  btnH: BTN_ROW_H_CELL,
+  /** 규칙문 wrap 폭 = 셀 폭 − 좌우 여백(14×2). */
+  ruleWrapWidth: (cellW: number): number => cellW - 28,
+} as const;
 
 /** 헤더 슬롯 스트립 — **3칸 고정**(`SLOT_CAP`). 빈 칸도 그린다(헌장 §귀속 규율의 HUD 짝). */
 const SLOT_CELL_W = 132;
@@ -1169,6 +1230,9 @@ export class CatalystPicker {
 
     // 규칙문 — **이 카드가 무엇을 하는가**. 구 모델의 "페널티 …/ 보상 …" 방향 문구가 있던 자리다.
     // 양날이 한 문장 안에 있으므로 축을 두 줄로 가르지 않는다(ADR-0052 §유니크 양날 규칙).
+    // ⚠️ 예산(`RULE_BUDGET_H`)을 넘으면 **잘라내지 않고 폰트를 줄여 맞춘다** — 규칙문이 이
+    // 카드의 본문이라 truncate 는 정보를 잃는다. 근사 폭 계산이 실제 글꼴과 어긋나거나 앞으로
+    // 문구가 길어져도 겹침으로 번지지 않게 하는 안전망이다.
     const rule = new Text({
       resolution: 2,
       text: stripEmoji(catalystRule(def)),
@@ -1178,11 +1242,15 @@ export class CatalystPicker {
         fill: SLAB_BODY_FILL,
         wordWrap: true,
         wordWrapWidth: w - 28,
-        lineHeight: 18,
+        lineHeight: RULE_LINE_H,
         dropShadow: TEXT_SHADOW,
       },
     });
-    rule.position.set(14, iconY + iconSize + 10);
+    for (let size = 14; size > 10 && rule.height > RULE_BUDGET_H; size--) {
+      rule.style.fontSize = size - 1;
+      rule.style.lineHeight = RULE_LINE_H - (14 - (size - 1));
+    }
+    rule.position.set(14, RULE_TOP);
     cell.addChild(rule);
 
     // 태그 칩 1~2개 — 공명의 재료다. 칩 폭은 글자에서 재고, 두 번째가 셀을 넘으면 그리지 않는다.
@@ -1196,7 +1264,7 @@ export class CatalystPicker {
       const chipW = Math.round(label.width) + 16;
       if (chipX + chipW > w - 14) break;
       const chip = new Graphics();
-      chip.roundRect(chipX, TAG_ROW_Y, chipW, 20, 6).fill({ color: TAG_CHIP_FACE });
+      chip.roundRect(chipX, TAG_ROW_Y, chipW, TAG_ROW_H, 6).fill({ color: TAG_CHIP_FACE });
       cell.addChild(chip);
       label.position.set(chipX + 8, TAG_ROW_Y + 3);
       cell.addChild(label);
@@ -1260,11 +1328,11 @@ export class CatalystPicker {
       // 주입/해제 버튼 행(하단). ⚠️ 둘 다 어두운 톤이라 `setEnabled(false)`(alpha 0.4)에서도
       // 크림 라벨이 읽힌다 — 여기에 `gold` 를 쓰면 비활성 셀의 글자가 통째로 사라진다.
       const btnW = Math.floor((w - 14 * 2 - 10) / 2);
-      const btnY = CELL_H - 44;
+      const btnY = CELL_BTN_Y;
       const plus = this.chromeButton({
         tone: 'blue',
         width: btnW,
-        height: 34,
+        height: BTN_ROW_H_CELL,
         fontSize: 16,
         label: t('catalyst.picker.inject'),
         onClick: () => this.inject(def.id),
@@ -1276,7 +1344,7 @@ export class CatalystPicker {
       const minus = this.chromeButton({
         tone: 'red',
         width: btnW,
-        height: 34,
+        height: BTN_ROW_H_CELL,
         fontSize: 16,
         label: t('catalyst.picker.remove'),
         onClick: () => this.remove(def.id),
