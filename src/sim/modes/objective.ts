@@ -22,7 +22,14 @@
  * ## 새 모드를 추가할 때
  * 무대 진행·승리가 어떤 오브젝트의 파괴에 걸린다면 **그 술어를 여기에 추가해라.** 그것만으로
  * 조준(`isPlayerTargetable`)과 봇 추적(`autopilot`)이 동시에 성립한다.
- * `tests/objectiveTargetable.test.ts` 가 이 계약을 못 박는다.
+ *
+ * 이 계약의 **조준 쪽**을 잠그는 실재 파일은 둘이다:
+ *  - `tests/objectiveAimBias.test.ts` — `stepWorld` 조준 경로가 이 술어를 실제로 탄다(배선 실도달).
+ *  - `tests/catalystResource.test.ts` — "술어는 참인데 사격이 안 간다"를 `id 19` 광석으로 실측한다.
+ *
+ * ⚠️ **봇 추적 쪽(`autopilot.ts` 의 `nearestObjective`)은 아직 기계로 안 잠겨 있다** —
+ * `tests/autopilot.test.ts` 는 목표물 분기를 일부러 비우고 수거만 잰다. 새 모드를 넣을 때
+ * 봇이 목표로 이동하는지는 지금은 손으로 확인해야 한다.
  *
  * ## 왜 `destructible` 전체를 넣지 않는가
  * 절차 청크 지형(`ownerId === 0`)이 조준을 훔치면 **모든 무대의 거동이 바뀐다** — 플레이어가

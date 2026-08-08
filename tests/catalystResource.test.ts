@@ -18,6 +18,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createWorld, DEFAULT_CONFIG, stepWorld, catalystContributionsOf } from '../src/sim/world.js';
 import type { WorldState, InputFrame } from '../src/sim/world.js';
 import {
@@ -58,9 +60,14 @@ const CARD_GREED = 17;
 const CARD_MERCANTILE = 18;
 const CARD_MOTHERLODE = 19;
 
-/** `GreedSlot.Pending`. 숫자로 적는 이유: `const enum` 은 런타임 값이 없다. 배정표가 정본이다. */
+/**
+ * `GreedSlot.Pending`. 숫자로 적는 이유: `const enum` + `isolatedModules` 라 런타임 값이 없어
+ * import 로 못 잠근다. 배정표(`src/sim/catalystSlots.ts`)가 정본이고, 이 되적음이 정본과
+ * 갈리면 **이 파일 전체가 조용히 엉뚱한 칸을 검사한다**(빨개지지 않는다) — 그래서 파일 끝의
+ * 「슬롯 index 정본 잠금」이 소스를 정규식으로 대조한다.
+ */
 const SLOT_GREED_PENDING = 22;
-/** `MercantileSlot.Debt`. 위와 같은 사유. */
+/** `MercantileSlot.Debt`. 위와 같은 사유(잠금은 `tests/catalystSettleWire.test.ts` ② 절에 있다). */
 const SLOT_MERCANTILE_DEBT = 6;
 
 function w(catalysts?: number[]): WorldState {
@@ -603,5 +610,36 @@ describe('자원 결 · 스트림 불변', () => {
       expect(readMark(e, 'extractionAmount')).toBe(0);
       expect(readMark(e, 'greedAmount')).toBe(0);
     }
+  });
+});
+
+// ===========================================================================
+// 슬롯 index 정본 잠금 — 되적은 숫자가 배정표와 갈리면 여기서 빨개진다
+// ===========================================================================
+//
+// 선례는 `tests/catalystSettleWire.test.ts` ② 절이고 같은 모양이다.
+// ⚠️ `AfterburnerSlot.Ledger = 23` 은 여기서 안 잠근다 — `tests/catalystPower.test.ts` 가
+//    enum 을 **직접 import** 해서 이미 덮는다(중복 잠금은 유지비만 는다).
+describe('슬롯 index 정본이 배정표와 같다', () => {
+  const src = readFileSync(
+    fileURLToPath(new URL('../src/sim/catalystSlots.ts', import.meta.url)),
+    'utf8',
+  );
+  const GREED_PENDING_RE = /enum GreedSlot\s*\{[^}]*\bPending\s*=\s*22\b/;
+
+  it('`catalystSlots.ts` 의 `GreedSlot.Pending` 이 22 다', () => {
+    expect(GREED_PENDING_RE.test(src)).toBe(true);
+    expect(SLOT_GREED_PENDING).toBe(22);
+  });
+
+  it('그 정규식은 값이 틀리면 실제로 거짓을 낸다 — 절대 실패하지 않는 검증기 방지', () => {
+    // 통과하는 것만 보면 "정규식이 늘 참"인 경우와 구분되지 않는다. 값이 옮겨진 소스를
+    // 흉내 내어 거짓이 나오는지, 그리고 enum 이 아예 사라진 경우도 잡는지 같이 단언한다.
+    expect(GREED_PENDING_RE.test(src.replace('Pending = 22', 'Pending = 21'))).toBe(false);
+    expect(GREED_PENDING_RE.test(src.replace('enum GreedSlot', 'enum GreedSlotRenamed'))).toBe(
+      false,
+    );
+    // 자릿수만 늘어난 값(220)도 통과시키면 안 된다(`\b` 경계가 그 일을 한다).
+    expect(GREED_PENDING_RE.test(src.replace('Pending = 22', 'Pending = 220'))).toBe(false);
   });
 });

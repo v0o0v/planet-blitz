@@ -664,6 +664,10 @@ export function dropsOnLootRoll(state: WorldState, x: number, y: number, elite: 
   }
   if (carries(state, CARD_PLUNDER) && elite && !hasCoord(PLUNDER_LOST, x, y)) {
     count *= PLUNDER_LOOT_COUNT;
+    // 귀속 장부 — 단위는 **개수 증분**이다(`id 1` 의 상한 축이 `drop`, `catalysts.ts:241`).
+    // 바로 위 `id 0` 과 같은 모양: 배율 그대로가 아니라 `배율 - 1`(= 이 롤이 더 뱉은 몫)을 적는다.
+    // 이 줄이 없어 정산 화면의 `earned` 칸이 0 으로 남아 있었다(`missed` 는 아래 잠금 분기가 적는다).
+    creditCatalyst(state, CARD_PLUNDER, PLUNDER_LOOT_COUNT - 1);
     notifyCatalystFx(state, CARD_PLUNDER, CATALYST_FX.credit, x, y);
   }
   if (count === 1) return CATALYST_LOOT_NEUTRAL;
