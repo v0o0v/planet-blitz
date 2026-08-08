@@ -154,6 +154,15 @@ Write-Host "[OK] recorded in schema_migrations"
 #   This repo writes every comment in Korean. The catalyst script reported [FAIL] on a
 #   working gate because it grepped for '%duplicate%' while the comment read "중복 거부".
 #   Below we match only SQL identifiers and literals.
+#
+# ⚠️ CONSTANT REGEXES ARE ANCHORED ON `constant ... :=`, NOT `NAME[^0-9]*([0-9]+)`.
+#   The loose form was WRONG and the first run of this script proved it: it read
+#   ISSUE_CHANCE_CP as 30. pg_get_functiondef keeps the Korean comments, the comment
+#   above the declaration mentions "COMMISSION_ISSUE_CHANCE_CP" and later "30%", and
+#   [^0-9]* happily walked across the whole sentence to the first digits it found.
+#   The migration was already correct - the VERIFIER was broken, which is the exact
+#   trap the blueprint-cap lane hit from the other side (a probe that inserted NULL).
+#   Anchor on the declaration syntax so a mention inside prose can never match.
 
 Write-Host ""
 Write-Host "--- verification ---"
@@ -162,15 +171,15 @@ $bad = 0
 # 1. mirrored constants landed.
 $consts = Invoke-Sql @"
 select
-  (select substring(pg_get_functiondef(p.oid) from 'MAX_LOOT_MULT_CENTI[^0-9]*([0-9]+)')
+  (select substring(pg_get_functiondef(p.oid) from 'MAX_LOOT_MULT_CENTI[[:space:]]+constant[^:]*:=[[:space:]]*([0-9]+)')
      from pg_proc p where p.proname='issue_commission_for_run' and p.pronamespace='public'::regnamespace) as max_mult,
-  (select substring(pg_get_functiondef(p.oid) from 'CAP_COMMISSIONS_PER_DAY[^0-9]*([0-9]+)')
+  (select substring(pg_get_functiondef(p.oid) from 'CAP_COMMISSIONS_PER_DAY[[:space:]]+constant[^:]*:=[[:space:]]*([0-9]+)')
      from pg_proc p where p.proname='issue_commission_for_run' and p.pronamespace='public'::regnamespace) as day_cap,
-  (select substring(pg_get_functiondef(p.oid) from 'ISSUE_CHANCE_CP[^0-9]*([0-9]+)')
+  (select substring(pg_get_functiondef(p.oid) from 'ISSUE_CHANCE_CP[[:space:]]+constant[^:]*:=[[:space:]]*([0-9]+)')
      from pg_proc p where p.proname='issue_commission_for_run' and p.pronamespace='public'::regnamespace) as issue_cp,
-  (select substring(pg_get_functiondef(p.oid) from 'CAP_BLUEPRINTS_PER_HOUR[^0-9]*([0-9]+)')
+  (select substring(pg_get_functiondef(p.oid) from 'CAP_BLUEPRINTS_PER_HOUR[[:space:]]+constant[^:]*:=[[:space:]]*([0-9]+)')
      from pg_proc p where p.proname='grant_blueprints' and p.pronamespace='public'::regnamespace) as bp_hour,
-  (select substring(pg_get_functiondef(p.oid) from 'CAP_BLUEPRINTS_PER_DAY[^0-9]*([0-9]+)')
+  (select substring(pg_get_functiondef(p.oid) from 'CAP_BLUEPRINTS_PER_DAY[[:space:]]+constant[^:]*:=[[:space:]]*([0-9]+)')
      from pg_proc p where p.proname='grant_blueprints' and p.pronamespace='public'::regnamespace) as bp_day;
 "@
 Write-Host ("[OK] issue: MAX_LOOT_MULT_CENTI={0} CAP_COMMISSIONS_PER_DAY={1} ISSUE_CHANCE_CP={2}" -f `
