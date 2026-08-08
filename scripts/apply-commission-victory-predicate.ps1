@@ -191,9 +191,15 @@ if ([int]$carry.at_insert -le [int]$carry.at_day)  { Write-Host "[FAIL] inventor
 
 Write-Host ""
 Write-Host "--- verification: behaviour (executed, then rolled back) ---"
-$probe = Invoke-Sql @"
+# ⚠️ SINGLE-quoted here-string. The probe contains plpgsql dollar-quoting ($probe$) and no
+#   PowerShell variables. In a double-quoted here-string PowerShell expands $probe and $$;
+#   escaping that with BACKSLASHES does not work - PowerShell's escape char is the backtick, so
+#   the backslashes reach Postgres verbatim as `syntax error at or near "\"`. Both the OPENING
+#   and the CLOSING dollar-quote must be literal, and the terminator must be '@ to match.
+#   The first two runs of this script died on exactly these two mistakes, one after the other.
+$probe = Invoke-Sql @'
 begin;
-do \$probe\$
+do $probe$
 declare
   v_me uuid;
 begin
@@ -214,7 +220,7 @@ begin
   perform public.issue_commission_for_run('aaaaaaaa-0000-4000-8000-000000000004'::uuid, v_me,
     '{"victory":false,"finalTick":1000}'::jsonb);
 end
-\$probe\$;
+$probe$;
 select
   count(*) filter (where pve_run_id = 'aaaaaaaa-0000-4000-8000-000000000001')                        as a_anchor,
   count(*) filter (where pve_run_id = 'aaaaaaaa-0000-4000-8000-000000000001' and claimed_victory)    as a_win,
@@ -228,7 +234,7 @@ select
  where pve_run_id in ('aaaaaaaa-0000-4000-8000-000000000001','aaaaaaaa-0000-4000-8000-000000000002',
                       'aaaaaaaa-0000-4000-8000-000000000003','aaaaaaaa-0000-4000-8000-000000000004');
 rollback;
-"@
+'@
 $p = $probe
 if ($p -is [Array]) { $p = $p[-1] }
 Write-Host ("[OK] A both-true    : anchor={0} claimed_victory={1}  (expect 1 / 1)" -f $p.a_anchor, $p.a_win)
