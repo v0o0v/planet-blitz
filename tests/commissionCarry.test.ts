@@ -44,6 +44,9 @@ const WORLD_OPTIONAL_KEYS: readonly (keyof WorldState)[] = [
   // 오독한다.
   'catalystFx',
   'catalystLedger',
+  // 드랍 축 실측 계수기(2026-08-08 2차). 위 둘과 **같은 계약**이다 — 무촉매 런은 필드가 없고,
+  // 그 부재가 곧 "배율 1"이다(`catalystLootMultOf` 가 `undefined` 를 돌려주는 근거).
+  'catalystLootTally',
 ];
 
 function player(w: WorldState): Entity {
@@ -186,7 +189,12 @@ describe('① 전수 대조 — 분류 배열이 필드 전부를 덮는다', ()
     // 런 단위 파생 필드로 승격). **FRESH** 다 — `armorMaxStacks` 와 정확히 같은 부류로,
     // 승계된 `config.playerHp` 에서 `createWorld` 가 재도출하므로 승계 목록에 넣으면 정본이
     // 둘이 된다.
-    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(81);
+    // 81 → 82: `catalystLootTally`(드랍 축이 이번 런에서 **실제로** 만든 전리품 배율의 원재료
+    // — 롤 수 / 추가 레코드 수). 2026-08-08 2차 지시로 설계도·의뢰서 확률이 이 배율을 탄다.
+    // **FRESH** 이고 근거는 바로 위 `catalystLedger` 와 같다(촉매 런에는 구간 전환이 없다).
+    // ⚠️ 훗날 의뢰에 촉매를 들이면 **이 필드만은 이월이 정답**이다 — 배율은 런 전체의 비율이지
+    // 구간의 비율이 아니다. 그때 `catalystSlots` 와 함께 `WORLD_CARRY` 로 옮겨라.
+    expect(WORLD_CARRY.length + WORLD_RESET_ZERO.length + WORLD_FRESH.length).toBe(82);
     expect(ENTITY_CARRY.length + ENTITY_RESET_ZERO.length + ENTITY_FRESH.length).toBe(25);
   });
 });

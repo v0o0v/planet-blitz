@@ -68,6 +68,24 @@ export interface PveSettleSummary {
   xpTotal: number;
   /** 텔레메트리 — 이 런에서 주운 전리품 개수(`WorldState.loot.length`). 롤업 "평균 드랍 수" 열의 원천. */
   dropCount: number;
+  /**
+   * 촉매 **드랍 축 실측 배율**(centi, 100 = ×1.00). 서버 `issue_commission_for_run` 게이트 4b 가
+   * 의뢰서 발령 확률(30% base)을 이 값으로 스케일한다 — 2026-08-08 사용자 지시
+   * *"설계도와 의뢰서도 아이템이다"*.
+   *
+   * ## ⚠️ 위 `epoch` 와 **정반대의 판단**이다 — 그래서 근거를 여기 남긴다
+   * 행성 인기 배율은 **배율값을 안 보내고 epoch 만** 보낸다. 서버가 자기 스냅샷 표를 갖고 있어
+   * 재산정할 수 있기 때문이다. 드랍 축은 그럴 수 없다: 값이 **런 안에서 조건부 규칙이 실제로
+   * 몇 번 발동했는가**의 함수라(`catalystLootMultOf`), 서버가 재산정하려면 sim 을 재실행하거나
+   * 조건을 무시한 무조건 배율을 쓰는 수밖에 없다. 후자는 헌장 §상한 근거 규율이 금지한다.
+   *
+   * 그래서 이 값은 **클라 주장이고 위조 가능하다**. 유계는 세 겹이 진다: 서버측 형식 클램프
+   * ([100, {@link COMMISSION_MAX_LOOT_MULT_CENTI}]) · 기존 상한 셋(빈도·쿨다운·재고) ·
+   * 하루 발령 캡({@link CAP_COMMISSIONS_PER_DAY}). 시간 축을 더 못 조이는 이유는 후자의 주석.
+   *
+   * 미지정(무촉매·오프라인·구 클라) = 서버가 100 으로 접어 **종전과 정확히 같은 30%**.
+   */
+  catalystLootMultCenti?: number;
 }
 
 /** `planet_popularity_current` 한 행 — 행성별 확정 배율(centi)과 그 스냅샷의 epoch. */

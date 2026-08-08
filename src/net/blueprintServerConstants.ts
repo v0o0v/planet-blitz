@@ -19,14 +19,26 @@
  * (`CAP_RUNS_PER_HOUR`, `20260808000000_pve_run_registration.sql`), 설계도는 클리어당 3% ·
  * 최대 1장이다(`BLUEPRINT_RUN_CHANCE_CP`, `src/sim/drops.ts`).
  *
- *   시간당 기대 = 60 × 0.03 = **1.8장**. Poisson(1.8) 에서 P(X ≥ 12) ≈ 1.5e-6 (약 5.5σ).
+ *   시간당 기대 = 60 × **0.09** = **5.4장**. Poisson(5.4) 에서 P(X ≥ 20) ≈ 1.1e-6.
  *
  * 실측 런 길이가 2~5분이라 시간당 12~30런이 전형이고 60 은 캡이지 전형값이 아니다 —
  * 위 계산은 가장 관대한 쪽이다. 즉 이 상한은 **정직한 플레이를 벌하지 않는다.**
  *
- * SQL 미러: `CAP_BLUEPRINTS_PER_HOUR` (`20260808080000_blueprint_grant_cap.sql`).
+ * ## ⚠️ 2026-08-08(2차) — 3% 가 아니라 9% 인 이유, 그리고 12 → 20 인 이유
+ * 촉매 **드랍 축**이 설계도 게이트를 스케일하게 됐다(사용자 지시). 최대 배율은 전수 스윕
+ * 실측 **×3.0**(`scripts/catalystCapSweep.ts`, 공명 포함)이라 정직한 상한 확률이 3% → 9% 가
+ * 되고 시간당 기대가 1.8 → 5.4 로 **3배** 올랐다.
+ *
+ * 옛 캡 12 를 그대로 뒀다면 Poisson(5.4) P(X ≥ 12) ≈ **1e-2** — 최대 배율로 도는 정직한
+ * 플레이어의 100시간 중 1시간이 조용히 거부된다(이 RPC 는 fire-and-forget 이라 화면에
+ * 아무것도 안 뜬다). 즉 **기능이 "촉매를 부어도 안 는다"로 체감된다.**
+ *
+ * ⭐ 캡을 올렸는데 **비율은 오히려 조여진다**: 12/1.8 = 6.7배 → 20/5.4 = **3.7배**.
+ *    ADR-0026 은 절대 천장이 아니라 이 비율을 본다 — "캡을 올렸으니 약해졌다"는 오독이다.
+ *
+ * SQL 미러: `CAP_BLUEPRINTS_PER_HOUR` (`20260808090000_drop_axis_scales_issue_and_caps.sql`).
  */
-export const CAP_BLUEPRINTS_PER_HOUR = 12;
+export const CAP_BLUEPRINTS_PER_HOUR = 20;
 
 /**
  * 프로필당 **하루 설계도 적립 상한**(총 장수).
@@ -35,12 +47,15 @@ export const CAP_BLUEPRINTS_PER_HOUR = 12;
  * 쓸 수 있어 방어가 반쪽이 된다.
  *
  * ## 유도
- * 헤비 유저를 가장 관대하게 가정해 하루 16시간 × 60런 = 960런 → 기대 28.8장(sd 5.3).
- * 60 은 약 5.9σ 라 이 경우에도 벌하지 않는다.
+ * 헤비 유저를 가장 관대하게 가정해 하루 16시간 × 60런 = 960런 → 기대 **86.4장**(sd 8.87,
+ * 드랍 축 최대 배율 상시 = 클리어당 9%). 140 은 약 5.9σ 라 이 경우에도 벌하지 않는다.
  *
- * SQL 미러: `CAP_BLUEPRINTS_PER_DAY` (`20260808080000_blueprint_grant_cap.sql`).
+ * (2026-08-08 2차 이전: 3% 기준 기대 28.8 · 캡 60. 확률이 3배가 되며 함께 재유도했다 —
+ *  경위와 비율 계산은 {@link CAP_BLUEPRINTS_PER_HOUR} 주석.)
+ *
+ * SQL 미러: `CAP_BLUEPRINTS_PER_DAY` (`20260808090000_drop_axis_scales_issue_and_caps.sql`).
  */
-export const CAP_BLUEPRINTS_PER_DAY = 60;
+export const CAP_BLUEPRINTS_PER_DAY = 140;
 
 /**
  * 이 캡이 왜 생겼는지 — 한 문장으로 남긴다(값만 보면 임의값처럼 읽힌다).
@@ -52,4 +67,4 @@ export const CAP_BLUEPRINTS_PER_DAY = 60;
  * 시간당 12 · 하루 60 으로 닫는다.
  */
 export const BLUEPRINT_CAP_RATIONALE =
-  'ADR-0026 relative-bound: honest 3%/clear under axis-D 60 runs/h ⇒ ~1.8/h expected';
+  'ADR-0026 relative-bound: honest 9%/clear (3% x drop-axis cap 3.0) under axis-D 60 runs/h ⇒ ~5.4/h expected';

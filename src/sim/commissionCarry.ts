@@ -233,6 +233,11 @@ export const WORLD_FRESH = [
   // 별개로 `stepWorld` 첫머리에서 매 틱 비워지므로 구간을 넘길 것 자체가 없다.
   'catalystFx',
   'catalystLedger',
+  // 드랍 축 실측 계수기. 바로 위 장부와 **같은 근거**로 FRESH 다(촉매가 실린 런에는 구간
+  // 전환이 없다). 이월해도 관측 불가한 무연산이지만, 훗날 의뢰에 촉매를 들이면 이월이
+  // **정답이 된다** — 배율은 런 전체의 비율이지 구간의 비율이 아니기 때문이다. 그때는
+  // `catalystSlots` 와 함께 `WORLD_CARRY` 로 옮겨라(`copyKeys` 가 객체를 참조로 넘기는 것에 주의).
+  'catalystLootTally',
 ] as const satisfies readonly (keyof WorldState)[];
 
 // ---------------------------------------------------------------------------

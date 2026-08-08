@@ -24,6 +24,9 @@
  */
 
 import type { WorldState } from '../world.js';
+// 드랍 축 실측 배율의 **클램프 기준**(공명 포함 정본). 이 모듈이 데이터 층을 보는 유일한
+// 지점이고, `catalyst/resonance.ts` 가 같은 방향으로 이미 의존하므로 순환이 아니다.
+import { axisCapMultWithResonance } from '../../data/catalystResonance.js';
 
 // ---------------------------------------------------------------------------
 // 사건 종류
@@ -222,4 +225,76 @@ export function catalystContributionsOf(
   return led
     .map((r) => ({ id: r.id, fired: r.fired, earned: r.earned, missed: r.missed }))
     .sort((a, b) => a.id - b.id);
+}
+
+// ---------------------------------------------------------------------------
+// 드랍 축 **실측** 배율 — 설계도·의뢰서 확률의 입력 (2026-08-08 사용자 지시)
+// ---------------------------------------------------------------------------
+
+/**
+ * 이 런의 전리품 롤 계수. `base` = 굴린 롤 수(엘리트 게이트 통과 + 보스 확정),
+ * `bonus` = 드랍 축 배율이 **실제로 더 얹은** 추가 레코드 수(`bonusLootSeeds` 결과 길이).
+ *
+ * 원시값 둘뿐인 이유는 {@link CatalystContribution} 과 같다 — 정산이 sim 타입을 모른 채
+ * 비율만 읽어 간다.
+ */
+export interface CatalystLootTally {
+  base: number;
+  bonus: number;
+}
+
+/**
+ * 전리품 롤 1건과 그 롤이 파생한 추가 레코드 수를 계수한다(`world.ts` 의 두 드랍 지점 전용).
+ *
+ * ## ⚠️ 이 계수기는 자원도 드랍도 만들지 않는다
+ * {@link creditCatalyst} 와 같은 규율의 **장부**다. 레코드를 실제로 `state.loot` 에 넣는 것은
+ * 호출부이고, 여기 적힌 수는 정산이 "드랍 축이 이번 런에서 실제로 몇 배를 만들었나"를 읽는
+ * 유일한 근거다. 둘이 갈리면 화면과 실제가 조용히 어긋난다 — 호출부는 **push 한 수 그대로**
+ * 넘겨야 한다.
+ *
+ * 무촉매 런은 `catalystOn` 이 false 라 무연산이고 필드 자체가 생기지 않는다.
+ */
+export function creditLootCount(state: WorldState, bonus: number): void {
+  if (!state.catalystOn) return;
+  let tally = state.catalystLootTally;
+  if (tally === undefined) {
+    tally = { base: 0, bonus: 0 };
+    state.catalystLootTally = tally;
+  }
+  tally.base += 1;
+  tally.bonus += bonus;
+}
+
+/**
+ * 런 결과에 실을 **드랍 축 실측 배율**(≥1) — `(base + bonus) / base`.
+ *
+ * ## ⚠️ 주입 목록에서 파생하지 않는다 (헌장 §상한 근거 규율)
+ * `src/data/catalystDrops.ts` 의 촉매 드랍축이 밟았던 함정과 **같은 함정**이다: 카드를 꽂았다는
+ * 사실만으로 서는 배율은 곧 무조건 배율이다. 드랍 축 카드 다수가 조건부(`id 1` 은 강탈해 둔
+ * 엘리트에게만, `id 31` 은 용암 위에서 죽은 적에게만)라, 꽂고 조건을 한 번도 못 채우면 이
+ * 함수의 반환은 정확히 `undefined` 다 — 확률이 한 톨도 안 오른다.
+ *
+ * ## `undefined` 가 "배율 1" 이다
+ * 무촉매 런 · 드랍 축 미발동 런 · 전리품이 한 건도 안 나온 런 셋 다 `undefined` 다. 호출부는
+ * 그때 **필드를 아예 싣지 않아야** 한다(`catalystSettlement` 와 같은 규율) — 1.0 을 실으면
+ * 구 세이브·침공 런과 형상이 갈린다.
+ *
+ * ## ⚠️ 실측값은 축 상한을 **넘을 수 있다** — 그래서 클램프가 잉여가 아니다
+ * 드랍 축 규칙은 서로 **곱해진다**(`dropsOnLootRoll` 의 `count *= …`). 풍요 ×2 와 강탈 ×2 가
+ * 겹친 롤은 실측 ×4 인데 선언된 축 상한은 `1+(1.0+0.8)×0.5 = ×1.9` 다. 헌장 §경제 결합 규율의
+ * *"코드가 이미 자르는 값을 상한으로 적지 마라"* 는 **여기 해당하지 않는다** — 자르는 코드가
+ * 없었고, 이 줄이 그 자르는 코드다.
+ *
+ * 클램프 기준은 {@link import('../../data/catalystResonance.js').axisCapMultWithResonance} 다.
+ * `catalysts.ts` 의 `axisCapMult` 를 쓰면 **공명분을 빠뜨려** 과소 클램프가 되고, 드랍축 공명이
+ * 6종이라(불씨·인력·오폭·벼름·반사·마모·함몰) 그 누락이 흔하다.
+ */
+export function catalystLootMultOf(state: WorldState): number | undefined {
+  if (!state.catalystOn) return undefined;
+  const tally = state.catalystLootTally;
+  if (tally === undefined) return undefined;
+  if (tally.base <= 0 || tally.bonus <= 0) return undefined;
+  const raw = (tally.base + tally.bonus) / tally.base;
+  const cap = axisCapMultWithResonance(state.config.catalysts ?? [], 'drop');
+  return raw > cap ? cap : raw;
 }

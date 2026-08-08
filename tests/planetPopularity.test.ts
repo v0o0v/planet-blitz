@@ -438,12 +438,25 @@ describe('§7 배율이 닿으면 안 되는 축', () => {
     const sig = defSrc.slice(sigAt, defSrc.indexOf('{', sigAt));
     expect(sig).toContain('loot: readonly LootLike[]');
     expect(sig).toContain('victory = false');
-    // 배율을 어떤 이름으로든 되살리면 여기서 깨진다.
-    expect(sig).not.toMatch(/mult|Mult|centi|Centi/);
 
-    // 짝 단언: 유일한 프로덕션 호출부도 배율을 넘기지 않는다.
+    // ⚠️ **잠그는 대상이 "배율 일반"이 아니라 "행성 유래 배율"이다**(2026-08-08 2차에 좁혔다).
+    //    옛 단언은 `/mult|Mult|centi|Centi/` 로 이름에 mult 가 들어간 **모든** 인자를 막았다.
+    //    그런데 ADR-0038 이 지키는 불변은 "행성 인기 배율이 설계도 획득률에 닿지 않는다" 하나이고,
+    //    촉매 드랍 축 배율(`catalystLootMult`, 2026-08-08 2차 지시)은 **그 축이 아니다** —
+    //    행성과 무관하고, 드랍 **건수**가 아니라 게이트 확률에 직접 곱해진다.
+    //    넓은 정규식을 그대로 두면 관계없는 축이 이 테스트를 빨갛게 만들고, 그때 사람은
+    //    ADR-0038 을 재검토하는 대신 단언을 지우게 된다. 그래서 **행성 어휘만** 막는다.
+    expect(sig).not.toMatch(/planet|Planet|centi|Centi|popularity|Popularity/);
+
+    // 짝 단언: 유일한 프로덕션 호출부도 **행성 유래** 값을 넘기지 않는다.
+    // (세 번째 인자는 촉매 축이라 허용된다 — 위 사유.)
     const callSrc = read('../src/save/settlement.ts');
-    expect(callSrc).toContain('blueprintDropsFromLoot(result.loot, result.victory === true)');
+    const callAt = callSrc.indexOf('blueprintDropsFromLoot(');
+    expect(callAt, '호출부를 찾지 못했다').toBeGreaterThan(0);
+    const args = callSrc.slice(callAt, callSrc.indexOf(');', callAt));
+    expect(args).toContain('result.loot');
+    expect(args).toContain('result.victory === true');
+    expect(args).not.toMatch(/planetMult|Centi|popularity/);
   });
 
   it('설계도 획득률이 드랍 건수에 불변이다(배율이 실제로 하는 일)', () => {
