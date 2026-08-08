@@ -261,10 +261,22 @@ function runOnce(seed: number, stage: number, centi?: number, planet = 0, maxTic
  * 그래서 앞의 둘은 {@link WIRE_TICKS}, 자원만 {@link RAID_TICKS} 를 쓴다.
  */
 const WIRE_TICKS = 900;
-/** 습격(보급선)은 1,835틱쯤 처음 뜬다 — 자원 적용점은 그 뒤에만 밟힌다. 여유를 둔 값. */
+/** 보급선은 1,800틱에 뜨고 격추는 그 뒤다(시드 {@link RAID_SEED} 실측 1,814틱). 여유를 둔 값. */
 const RAID_TICKS = 2200;
 /** 배선 대조의 고정 시드. 이 시드는 900틱 안에 엘리트 드랍이 실제로 발생한다(실측 260틱). */
 const WIRE_SEED = 1001;
+/**
+ * **자원 적립점 전용 시드.** 이 축만 시드가 다른 이유는 적립 자체가
+ * *"봇이 보급선을 격추하는가"* 에 얹혀 있기 때문이다 — 보급선은 1,800틱에 떴서
+ * 1,200틱만 머무는데, 그 창 안에 봇이 그것을 실제로 쓰러 가느냐는 **조향 휴리스틱에
+ * 종속**이다. `WIRE_SEED`(1001)은 오래 동안 1,835틱에 격추했지만, 2026-08-08 오토파일럿에
+ * **④ 사선 확보**가 들어오자 그 시드에서만 보급선을 놓치게 됐다(적립 첫 도달이
+ * 1,835 → 4,254틱). ⚠️ **그건 결함이 아니라 이 단언의 관측 창이 파일럿에 종속이라는
+ * 뜻이다** — 하한을 낮추는 대신 **그 창을 실제로 밟는 시드로 바꿈**으로 고친다.
+ * 재선정은 표본 문제였다: 1001..1012 스캔에서 **8개**가 같은 창에서 비 1.200000 을 냈다
+ * (구조적 상한이 아니다). 1003 은 그중 첫 격추가 가장 이른 시드다(실측 1,814틱).
+ */
+const RAID_SEED = 1003;
 /**
  * **게이트를 포화시키는 비현실 배율**(×100 · ×200).
  *
@@ -276,13 +288,13 @@ const WIRE_SEED = 1001;
 const SATURATE = 10000;
 const SATURATE_X2 = 20000;
 
-/** 같은 (배율, 틱) 런을 여러 단언이 공유한다 — 이 파일의 실런은 전부 여기를 거친다. */
+/** 같은 (배율, 틱, 시드) 런을 여러 단언이 공유한다 — 이 파일의 실런은 전부 여기를 거친다. */
 const runCache = new Map<string, ReturnType<typeof runOnce>>();
-function wireRun(centi: number | undefined, ticks: number = WIRE_TICKS) {
-  const key = `${centi ?? 'neutral'}/${ticks}`;
+function wireRun(centi: number | undefined, ticks: number = WIRE_TICKS, seed: number = WIRE_SEED) {
+  const key = `${centi ?? 'neutral'}/${ticks}/${seed}`;
   let r = runCache.get(key);
   if (r === undefined) {
-    r = runOnce(WIRE_SEED, 11, centi, 0, ticks);
+    r = runOnce(seed, 11, centi, 0, ticks);
     runCache.set(key, r);
   }
   return r;
@@ -348,12 +360,12 @@ describe('§6 정규 경로 배선 — 배율이 실제 런에 도달한다', ()
   it('배율이 자원 적립 적용점에 도달한다', () => {
     // ⚠️ **`resources`(정수)가 아니라 `resourceMilli`(캐리 포함)를 본다.** 이유는 `runOnce`
     // 의 `resourceMilli` 주석 — 정수 지표는 습격 격추가 몇 건뿐일 때 ×1.2 를 통째로 삼킨다.
-    const base = wireRun(undefined, RAID_TICKS).resourceMilli;
+    const base = wireRun(undefined, RAID_TICKS, RAID_SEED).resourceMilli;
     expect(
       base,
       `중립 런의 자원이 0 — 습격이 한 번도 안 떴다(첫 습격 실측 1835틱, 상한 ${RAID_TICKS})`,
     ).toBeGreaterThan(0);
-    expect(wireRun(120, RAID_TICKS).resourceMilli / base).toBeCloseTo(1.2, 6);
+    expect(wireRun(120, RAID_TICKS, RAID_SEED).resourceMilli / base).toBeCloseTo(1.2, 6);
   });
 
   it('엘리트 드랍 게이트 확률이 배율에 정비례한다(단위)', () => {
