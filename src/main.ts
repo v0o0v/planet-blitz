@@ -79,7 +79,7 @@ import { PlanetSelectScreen } from './ui/pixi/planetSelect.js';
 import { ResultOverlayScreen } from './ui/pixi/resultOverlay.js';
 import { ControlTowerScreen } from './ui/pixi/controlTower.js';
 import { ModulesScreen } from './ui/pixi/modulesView.js';
-import { DefenseCommandScreen } from './ui/pixi/defenseCommand.js';
+import { DefenseCommandScreen, catalogName } from './ui/pixi/defenseCommand.js';
 
 import type { ControlTowerShowOpts, InvasionResultView } from './ui/controlTower.js';
 import { TitleScreen } from './ui/pixi/titleScreen.js';
@@ -87,6 +87,7 @@ import { RecordsArchiveScreen } from './ui/pixi/recordsArchive.js';
 import { IntroSlidesScreen } from './ui/pixi/introSlides.js';
 // 의뢰서 시스템 Phase E: 지시 수신소(PvE 출격구 #2 — 성계 지도와 별개, CONTEXT.md 정본).
 import { CommissionDeskScreen } from './ui/pixi/commissionDesk.js';
+import { commissionGradeLabel } from './ui/pixi/commissionDeskView.js';
 import {
   TutorialOverlay,
   FtueTracker,
@@ -155,6 +156,7 @@ import {
   flushPendingDailyRewardDeliveries,
   type DailyRewardNetDeps,
   fetchCommissionGrantsOnline,
+  fetchCommissionInventoryOnline,
   markCommissionGrantAppliedOnline,
   beginPveRunOnServer,
   grantRunDropsOnServer,
@@ -165,6 +167,7 @@ import {
 // 있다(`items` 테이블에 클라가 한 줄도 안 쓴다 — itemGrantDelivery.ts 머리 참조).
 import { deliverItemGrants } from './run/itemGrantDelivery.js';
 import type { ItemGrantDeliveryReport } from './run/itemGrantDelivery.js';
+import { newlyIssuedCommissions } from './run/commissionIssueDiff.js';
 // 의뢰 확정 지급물 배송(발급 원장 → 세이브). 발급은 서버가 하고 배송은 클라만 할 수 있다 —
 // `items` 는 클라 rw 미러라 서버가 심을 자리가 없다(commissionGrantDelivery.ts 머리 참조).
 import { deliverCommissionGrants } from './run/commissionGrantDelivery.js';
@@ -723,6 +726,21 @@ async function main(): Promise<void> {
    * **다음 런의 id 를 덮어쓰는 것**을 막는 유일한 장치다(그러면 그 런의 드랍이 지난 런에 적힌다).
    */
   let dropRunToken = 0;
+
+  /**
+   * **런 시작 시점의 의뢰서 재고 id 집합** — 이번 런에 발령된 의뢰서를 가려내는 기준선
+   * (사용자 요청 2026-08-09).
+   *
+   * 발령은 서버 `pve_runs` AFTER 트리거(`issue_commission_for_run`)라 정산 응답에 안 실리고,
+   * 발령 원장(`commission_issues`)은 RLS 정책이 0개라 클라가 **읽을 수 없다**(상한 타이밍
+   * 노출 방지 — 20260803000000 §2 주석). 남는 길은 읽을 수 있는 `commission_inventory` 의
+   * 전후 차집합뿐이다.
+   *
+   * `null` = 기준선 없음(오프라인·조회 실패·아직 도착 전) → **차집합을 계산하지 않는다.**
+   * 기준선 없이 빼면 재고 전체가 이번 런 발령분이 되어 화면이 정면으로 거짓을 말한다.
+   * `dropRunToken` 과 같은 세대 가드를 쓴다 — 늦게 온 응답이 다음 런의 기준선이 되면 안 된다.
+   */
+  let commissionIdsAtRunStart: ReadonlySet<string> | null = null;
 
   /** 화면 안 판정용 뷰 반폭(월드 단위). entityRenderer 가 월드↔디자인px 를 1:1 로 그려(줌 없음). */
   const VIEW_HALF_WIDTH = DESIGN_WIDTH / 2;
@@ -1631,6 +1649,19 @@ async function main(): Promise<void> {
       if (token !== dropRunToken) return; // 이미 다음 런이 시작됐다 — 이 응답은 남의 것이다.
       dropRunId = res.status === 'ok' ? res.runId : null;
     });
+    // ⭐ 의뢰서 발령 감지의 **기준선**(사용자 요청 2026-08-09). 발령은 서버 `pve_runs` AFTER
+    // 트리거라 정산 응답에 안 실린다 — 클라가 아는 유일한 길은 런 **시작 시** 재고를 찍어 두고
+    // 정산 뒤 다시 읽어 차집합을 내는 것이다.
+    //
+    // ⚠️ 여기서 찍는 이유가 있다: 정산 직전에 찍으면 그 조회가 정산 임계 경로에 끼어들어
+    // 결과 화면이 네트워크를 기다린다. 런은 분 단위라 여기서 보낸 조회는 여유롭게 끝난다.
+    // 실패하면 `null` 로 남고, 그러면 아래 차집합은 **아예 계산하지 않는다** — 기준선 없는
+    // 차집합은 "재고 전체가 이번 런 발령분"이 되어 화면이 거짓을 말한다.
+    commissionIdsAtRunStart = null;
+    void fetchCommissionInventoryOnline().then((rows) => {
+      if (token !== dropRunToken || rows === null) return;
+      commissionIdsAtRunStart = new Set(rows.map((r) => r.commissionId));
+    });
   }
 
   /**
@@ -2005,6 +2036,39 @@ async function main(): Promise<void> {
   }
 
   /**
+   * 이번 런에 **발령된 의뢰서**를 정산 화면에 싣는다(사용자 요청 2026-08-09).
+   *
+   * ## 왜 차집합인가 — 다른 길이 없다
+   * 발령은 `settle_pve_run` 이 만든 `pve_runs` 행의 AFTER 트리거가 한다. 그래서
+   *  ① 정산 RPC 응답에 발령 여부가 **안 실린다**(`SettlePveResult` 는 잔액 + settled 뿐),
+   *  ② 발령 원장 `commission_issues` 는 **RLS 정책이 0개**라 클라가 못 읽는다(의도 —
+   *     `skip_reason` 노출은 "언제 상한에 걸리는가"를 알려주는 재료다).
+   * 읽을 수 있는 것은 `commission_inventory`(본인 select 정책 있음)뿐이라, 런 시작 스냅샷과의
+   * 차집합이 유일한 관측면이다.
+   *
+   * ⚠️ **기준선이 없으면 아무것도 말하지 않는다.** 오프라인·조회 실패로 스냅샷이 없을 때
+   * 재고를 통째로 "이번 런 발령분"이라고 적으면 화면이 정면으로 거짓이 된다 — 이 리포가
+   * 반복해 대가를 치른 「모르는 것을 아는 것처럼 적는」 형태다. 침묵이 맞다.
+   *
+   * ⚠️ 발령은 승리+보스처치 런의 30%(base)라 **대부분의 런에서 0건**이다. 0건이면 줄을 안
+   * 그린다(조건부 스탬프 규율) — "발령 없음"을 매 런 적으면 그것이 잡음이다.
+   *
+   * 절대 throw 하지 않는다.
+   */
+  async function reportCommissionIssue(): Promise<void> {
+    const before = commissionIdsAtRunStart;
+    if (before === null) return; // 기준선 없음 — 위 ⚠️. 조회 왕복 자체를 아낀다.
+    const token = dropRunToken;
+    const rows = await fetchCommissionInventoryOnline();
+    if (token !== dropRunToken) return; // 이미 다음 런이 떠났다 — 이 결과는 남의 것이다.
+    // 판정은 순수 함수가 소유한다(`commissionIssueDiff.ts`) — 기준선 없이 빼는 사고를
+    // 단위 테스트가 짚을 수 있어야 하는데, 이 클로저 안에 적으면 영영 못 짚는다.
+    const fresh = newlyIssuedCommissions(before, rows);
+    if (fresh.length === 0) return;
+    resultOverlay.updateCommissionGains(fresh.map((r) => commissionGradeLabel(r.payload.grade)));
+  }
+
+  /**
    * 런 드랍 발급 → 배송(ADR-0050 §3 단계 1 「개수만 계약」).
    *
    * ## 왜 발급 응답을 바로 쓰지 않고 원장을 다시 읽는가
@@ -2319,7 +2383,7 @@ async function main(): Promise<void> {
                 : {}),
             },
             storyRewardCredits: storyReward,
-          });
+          }).then(() => reportCommissionIssue());
         } else {
           profile.credits += creditsGained + storyReward;
         }
@@ -2454,6 +2518,18 @@ async function main(): Promise<void> {
                 combatPower: totalCombatPower(o.itemsGained),
                 drops: o.itemsGained.map(resultDropOf),
                 ...(claimedServerDrops > 0 ? { dropsPending: true } : {}),
+                // 설계도 획득(사용자 요청 2026-08-09). 정산이 이미 손에 쥔 목록인데 화면에
+                // 닿는 경로가 없어 `grantBlueprintDrops` 로 **서버로만 흘러가고** 있었다 —
+                // 얻었는지 알려면 관제탑 → 방어 사령부까지 들어가 보유량을 세야 했다.
+                // 표시명은 여기서 한 번만 해석한다(`catalogName` 이 유일한 정본).
+                ...(o.blueprintsGained.length > 0
+                  ? {
+                      blueprintGains: o.blueprintsGained.map((b) => ({
+                        name: catalogName(b.kind, b.catalogId),
+                        count: b.count,
+                      })),
+                    }
+                  : {}),
               },
             }
           : {}),

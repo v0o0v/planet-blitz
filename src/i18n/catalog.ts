@@ -309,6 +309,8 @@ export const EN = {
   'catalyst.manage.filterSignature': 'Signature',
   'result.loot.catalysts': 'Catalysts',
   'result.loot.catalystList': 'Catalysts Gained',
+  'result.loot.blueprintList': 'Blueprints',
+  'result.loot.commissionList': 'Commissions Issued',
   // --- 의뢰 확정 지급물 판정(의뢰서 시스템 Phase E, verify-commission 응답) ---
   'result.commission.label': 'Commission Reward',
   'result.commission.pending': 'Confirming…',
@@ -2817,6 +2819,8 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.manage.filterSignature': '특산',
   'result.loot.catalysts': '촉매',
   'result.loot.catalystList': '획득 촉매',
+  'result.loot.blueprintList': '획득 설계도',
+  'result.loot.commissionList': '발령 의뢰서',
   // --- 의뢰 확정 지급물 판정(의뢰서 시스템 Phase E, verify-commission 응답) ---
   'result.commission.label': '의뢰 확정 보상',
   'result.commission.pending': '확인 중…',

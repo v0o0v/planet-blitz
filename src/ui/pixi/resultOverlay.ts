@@ -73,6 +73,12 @@ const LOOT_COLS = 2;
 /** key(우측 정렬) ↔ value(좌측 정렬) 사이 간격의 절반 — 열 중심에서 각각 이만큼 벌린다. */
 const ROW_HALF_GAP = 14;
 
+// 설계도·의뢰서 획득 줄(사용자 요청 2026-08-09).
+/** 한 줄 높이. **고정값이다** — 계측(`text.height`)은 헤드리스에서 터진다(renderGrantLines 주석). */
+const GRANT_LINE_H = 26;
+/** 한 줄에 이름 몇 개까지. 넘치면 "외 N개"로 접는다(촉매 칩 줄과 같은 규율). */
+const GRANT_MAX_NAMES = 3;
+
 // 획득 장비 그리드.
 const CELL = 88;
 const CELL_GAP = 10;
@@ -185,6 +191,25 @@ export class ResultOverlayScreen {
    *
    * 화면이 이미 닫혔거나(다음 런으로 진행) 정산 블록이 없으면(오염 런) 조용히 무시한다.
    */
+  /**
+   * 이번 런에 **발령된 의뢰서**를 반영해 다시 그린다(사용자 요청 2026-08-09).
+   *
+   * `updateDrops`·`updateCommission` 과 같은 사유로 별도 경로다: 발령은 서버 `pve_runs`
+   * AFTER 트리거라 정산 응답에 안 실리고, 클라는 런 시작 스냅샷과 정산 뒤 재고의 **차집합**
+   * 으로만 안다. 그 왕복이 끝난 뒤 호출부가 이 메서드로 실어 준다.
+   *
+   * 빈 배열이면 아무것도 안 그린다(발령률이 낮아 "0건"이 정상 — 매 런 "발령 없음"을 적으면
+   * 잡음이다). 화면이 닫혔거나 정산 블록이 없으면 조용히 무시한다.
+   */
+  updateCommissionGains(labels: readonly string[]): void {
+    const s = this.state;
+    if (s === null || !this.root.visible) return;
+    const st = s.settlement;
+    if (st === undefined) return;
+    this.state = { ...s, settlement: { ...st, commissionGains: [...labels] } };
+    this.render();
+  }
+
   updateDrops(drops: readonly ResultDrop[], combatPower: number): void {
     const s = this.state;
     if (s === null || !this.root.visible) return;
@@ -431,7 +456,64 @@ export class ResultOverlayScreen {
 
     const afterRows = ROW_TOP + rows * LOOT_STEP;
     const catH = this.renderCatalystChips(panel, st, afterRows);
-    this.renderDrops(panel, st, box.bottom, afterRows + catH);
+    const grantH = this.renderGrantLines(panel, st, afterRows + catH);
+    this.renderDrops(panel, st, box.bottom, afterRows + catH + grantH);
+  }
+
+  /**
+   * 설계도·의뢰서 획득 줄(사용자 요청 2026-08-09). 소비한 세로 높이를 돌려준다(0 = 안 그림) —
+   * 촉매 칩 줄과 같은 계약이라 아래 '획득 장비' 그리드가 그만큼 밀려 내려간다.
+   *
+   * ## 왜 아이콘 그리드가 아니라 텍스트 한 줄인가
+   * 이 패널의 세로는 '획득 장비' 그리드와 **공유**다(촉매 칩 줄이 이미 한 줄로 자기를 제한한
+   * 이유와 같다). 설계도·의뢰서는 런당 0~2건이라 칩 그리드를 세울 만큼 많지 않고, 대신
+   * **무엇을 얻었는지**가 전부라 이름이 곧 정보다. 한 줄이면 장비 그리드를 한 행도 안 뺏는
+   * 경우가 대부분이다.
+   *
+   * 둘 다 **없으면 줄 자체가 안 생긴다**(조건부 스탬프 규율) — 대부분의 런이 그렇다.
+   */
+  private renderGrantLines(panel: Container, st: SettlementSummary, topY: number): number {
+    const box = panelContent(LOOT_W, PANEL_H);
+    let y = topY;
+
+    /**
+     * 한 줄 = 제목 + 항목 최대 {@link GRANT_MAX_NAMES} 개 + "외 N개".
+     *
+     * ⚠️ **줄바꿈(wordWrap)을 쓰지 않고 개수로 자른다.** wordWrap 을 쓰면 접힌 줄 수를 알려고
+     * `text.height` 를 읽어야 하는데, 그것은 Pixi 캔버스 텍스트 계측을 강제해 헤드리스
+     * (테스트·CI)에서 `document.createElement is not a function` 으로 터진다. 계측 없이
+     * 세로를 아는 유일한 길이 **고정 행높이 + 개수 상한**이다. 촉매 칩 줄이 "한 줄만 그리고
+     * 나머지는 개수로 알린다"로 같은 결론에 먼저 도달했다.
+     */
+    const line = (label: string, items: readonly string[]): void => {
+      const shown = items.slice(0, GRANT_MAX_NAMES);
+      const hidden = items.length - shown.length;
+      const body = shown.join(', ') + (hidden > 0 ? `, ${t('result.drops.more', { n: hidden })}` : '');
+      const text = new Text({
+        resolution: 2,
+        text: `${label}  ${body}`,
+        style: { fontFamily: UI_FONT, fontSize: 18, fill: COLOR.cream, dropShadow: TEXT_SHADOW },
+      });
+      text.position.set(box.x, y);
+      panel.addChild(text);
+      y += GRANT_LINE_H;
+    };
+
+    const bps = st.blueprintGains ?? [];
+    if (bps.length > 0) {
+      line(
+        t('result.loot.blueprintList'),
+        bps.map((b) => (b.count > 1 ? `${b.name} ×${b.count}` : b.name)),
+      );
+    }
+
+    // 의뢰서는 **정산 뒤 서버 왕복**이 끝나야 채워진다(`updateCommissionGains`). 미도착과
+    // "0건"을 둘 다 침묵으로 접는다 — 발령률이 낮아 0건이 정상이라, "발령 없음"을 매 런
+    // 적으면 그것이 잡음이다.
+    const coms = st.commissionGains ?? [];
+    if (coms.length > 0) line(t('result.loot.commissionList'), coms);
+
+    return y === topY ? 0 : y - topY + 8;
   }
 
   /**
