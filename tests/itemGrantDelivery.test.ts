@@ -205,7 +205,7 @@ describe('멱등 — 같은 행이 두 번 배송되지 않는다', () => {
     const p = defaultProfile();
     const h = harness({ rows: [grantRow({ appliedAtMs: 1_700_000_000_000 })] });
     const report = await deliverItemGrants(p, h.deps);
-    expect(report).toEqual({ delivered: 0, marked: 0, held: 0, unresolved: 0 });
+    expect(report).toEqual({ delivered: 0, marked: 0, held: 0, unresolved: 0, deliveredItems: [] });
   });
 });
 
@@ -247,6 +247,7 @@ describe('오프라인 내성 — 절대 throw 하지 않는다', () => {
       marked: 0,
       held: 0,
       unresolved: 0,
+      deliveredItems: [],
     });
     expect(p.inventory.length).toBe(before);
   });
@@ -260,6 +261,7 @@ describe('오프라인 내성 — 절대 throw 하지 않는다', () => {
       marked: 0,
       held: 0,
       unresolved: 0,
+      deliveredItems: [],
     });
   });
 
