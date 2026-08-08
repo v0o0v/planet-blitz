@@ -187,6 +187,10 @@ export function commissionSealedLoadout(profile: Profile, rules?: CommissionEqui
     equippedItems(profile, rules),
     shipBonusBp(profile.lineage),
     typeId,
+    // ⚠️ 조종사 레벨(§R51)을 **여기도 반드시** 넘긴다. 의뢰 런은 PvE 경로라 `buildRunConfig` 가
+    // 이 배율을 적용하는데, 봉인만 안 넘기면 두 값이 갈려 서버 게이트 3 이 정상 출격을
+    // `commission-loadout-mismatch` 로 거부한다 — 이 함수 머리말의 계약이 바로 그것이다.
+    activeShip(profile).level,
   );
   return loadout;
 }
@@ -250,7 +254,27 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
   // 장비축 금지가 우회된다(affixes.md ⑤-2c) — 그래서 아래 두 파생이 **같은 배열**을 쓴다.
   const equippedForLoadout =
     pilot !== undefined ? pilot.equipped : equippedItems(profile, opts.commission?.constraints?.equipRules);
-  const { loadout } = computeLoadoutStats(equippedForLoadout, shipBonusBp(profile.lineage), typeId);
+  // 조종사 레벨 성장(§R51 — `loadout.ts` `PILOT_LEVEL_GROWTH_PER_LEVEL` 이 정본).
+  //
+  // ## ⚠️ 침공·예비역 소집은 **레벨 1**(= 무연산)이다 — 의도적 제외
+  // 이 배율은 PvE 축이다. 침공에 걸면 **한쪽에만 걸린다**: 방어측 수호는
+  // `retirementPayload`(`src/save/guardianLifecycle.ts`)가 레벨을 안 넘기고 넘길 수도 없다
+  // (`GuardianBuild` 에 레벨 칸이 없고, 넣으면 저장된 수호 행 전량의 재파생 + 서버 데이터
+  // 변경이 따라붙는다). 즉 공격측만 최대 ×4.69 를 받는 **비대칭 주입**이 된다.
+  //
+  // 침공 밴드는 바로 어제(PR#397) 중위 54.9 / 상한 55 로 맞춰진 상태다 — 여유가 0.1pp 미만이라
+  // 이 축을 흘리면 그 자체로 회귀다. 그리고 계측기(`src/bench/invasionBands.ts`)는 레벨 1
+  // 프로필과 리터럴 `GEAR_REFERENCE` 로 재므로 **밴드 테스트가 이 누출을 못 잡는다** — 이
+  // 저장소가 반복해 온 「조용한 미발현」의 정확한 형태라, 게이트가 아니라 여기서 막는다.
+  //
+  // ⭐ 여는 조건은 「침공에도 레벨을 넘기는 것」이 아니라 **방어측에 대응 축이 생기는 것**이다.
+  const pilotLevel = opts.invasion3 !== undefined || pilot !== undefined ? 1 : activeShip(profile).level;
+  const { loadout } = computeLoadoutStats(
+    equippedForLoadout,
+    shipBonusBp(profile.lineage),
+    typeId,
+    pilotLevel,
+  );
   // 스킬 어픽스 축별 레벨(ADR-0049, affixes.md ①-5) — `skillInvest` 와 완전히 분리된 이중
   // 벡터다. 전부 0이면 아래에서 필드 자체를 스탬프하지 않는다(조건부 스탬프, `planetMultCenti`
   // 선례) → 어픽스 없는 런의 config·해시가 바이트 불변이다.

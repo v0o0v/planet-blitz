@@ -290,6 +290,117 @@ function applyShipTypeBase(lo: LoadoutConfig, baseBp: ShipBaseBp): void {
 }
 
 /**
+ * **조종사 레벨 성장 배율의 단계당… 이 아니라 레벨당 공비.** §R51 「장비 축 포화」의 해답.
+ *
+ * ## 무엇이 신고됐나 — 레벨을 올려도 세지지 않는다
+ * 조사(2026-08-08) 실측: **Lv5 → Lv100 실효 전투력이 ×1.00** 이었다. 같은 기간 잡몹 HP 배율은
+ * **×1 → ×80.8**(`data/waves.ts` `stageHpMult`, 앵커 1/16/88). 그래서 「Lv100 조종사가 Lv50
+ * 조종사보다 약할 확률」이 **52.8%** — 사실상 동전 던지기였다.
+ *
+ * 원인은 셋이고 **전부 장비 축이 레벨을 안 본다는 한 가지 형태**다:
+ *  · `roll.ts` — 어픽스 롤 값이 아이템 레벨·단계와 무관(ADR-0037 **불가침**이라 안 건드린다)
+ *  · `world.ts` — `playerHp = 151 + maxHpAdd` 에 레벨 항이 없다
+ *  · 스킬 99점의 화력 기여가 +1.4%
+ *
+ * ## ⚠️ 왜 기체별 `baseBp` 성장이 아니라 **전 기체 공통 배율**인가
+ * 문자 그대로의 "`baseBp` 를 레벨로 키운다"는 **작동하지 않는다** — 스트라이커는 `baseBp` 4축이
+ * 전부 0 이고(`data/ships/striker.ts`) `tests/skills.test.ts` 가 그것을 계약으로 못박고 있다.
+ * 0 에 무엇을 곱해도 0 이다. 그리고 축마다 다른 성장을 주면 **로스터 밴드가 움직인다** —
+ * 명목표 SPREAD 는 1.323 이고 상한이 1.35 라 여유가 2% 뿐이다. 전 기체 공통 배율이면
+ * `powerSpread`(최대/최소 비)와 `relativeToStriker` 가 **정확히 불변**이다.
+ *
+ * ## 공비를 어떻게 골랐나 (`bench/gearLevelCurve.ts`, 시드 24 · 표준 빌드)
+ * 후보를 떠서 골랐다. 합격선은 「Lv100 < Lv50」 확률의 **한 자릿수 %**.
+ *
+ * | q(레벨당) | 단계당 | Lv5→100 배수 | 「Lv100<Lv50」 power | 〃 dps | 단계20 보스 TTK |
+ * |---|---|---|---|---|---|
+ * | 1.0000(현행) | 1.0000 | ×1.00 | **57.8%** | 54.3% | 65.4초 |
+ * | 1.0082 | 1.0417 | ×2.17 | 18.9% | 34.4% | 29.1초 |
+ * | **1.0164** | **1.0847** | **×4.69** | **2.8%** | 16.0% | **13.1초** |
+ * | 1.0248 | 1.1303 | ×10.25 | 0.2% | 6.9% | 5.8초 |
+ *
+ * **1.0164 를 골랐다.** 합격선을 여유 있게 넘는 가장 작은 후보이고, 값에 읽을 수 있는 근거가
+ * 있다: **단계당 1.0847 = √1.1761** — 즉 보스 HP 곡선(`src/sim/enemyScale.ts`
+ * `BOSS_HP_GROWTH_PER_STAGE`, PR#390)의 **로그 기준 절반 기울기**다. 깊은 단계일수록 보스전이
+ * 여전히 길어지되, 그 증가폭이 절반으로 줄어든다.
+ *
+ * ## ⚠️ 남은 것 두 가지 — 이 상수가 **혼자 해결하지 못한 축**
+ *  ① **dps 단독 축은 아직 16.0%** 다(power 는 2.8%). 화력만 보면 Lv100 이 Lv50 에게 지는 일이
+ *     여섯 판에 한 번 남는다. 남은 원인은 **어픽스 롤이 레벨과 무관**(위 ①-b)이고 그것은
+ *     ADR-0037 불가침이라 이 레인 밖이다.
+ *  ② **보스전이 짧아진다.** 위 표 마지막 열이 그 대가다 — 단계 20 보스가 65.4 → **13.1초**.
+ *     PR#390 의 보스 곡선은 *"플레이어 화력이 레벨과 무관하다"* 는 (당시 참이었던) 전제 위에
+ *     세워졌고, 이 상수가 그 전제를 깬다. **되돌릴 자리는 이 공비가 아니라
+ *     `BOSS_HP_GROWTH_PER_STAGE` 다** — 그 값은 사용자가 직접 정한 것이라 이 레인이 안 건드렸다.
+ *
+ * ## ⚠️ 침공에는 **안 걸린다** — 의도적 제외다
+ * `buildRunConfig` 가 침공 런(`invasion3`)·예비역 소집에는 레벨 1 을 넘긴다. 사유는
+ * 그 함수의 해당 주석이 정본이다(한 줄 요약: 방어측 수호에 대응 축이 없어 **비대칭 주입**이 된다).
+ *
+ * ## ⚠️ 리터럴이어야 한다 — 결정론
+ * `Math.pow`/`**` 는 IEEE-754 가 **정확 반올림을 요구하지 않는** 연산이라 플랫폼마다 마지막
+ * 비트가 갈릴 수 있고, 이 배수는 `LoadoutConfig` 를 타고 `hashWorld` 에 접힌다. 그래서
+ * `1.1761 ** (1/10)` 로 계산하지 말고 **리터럴을 정수 번 곱한다**(`enemyScale.ts`
+ * `bossStageHpMult` 와 같은 규율). 곱셈은 정확 반올림이 보장돼 어디서 돌려도 비트 동일이다.
+ */
+const PILOT_LEVEL_GROWTH_PER_LEVEL = 1.0164;
+
+/**
+ * 반복 곱의 상한 지수. **밸런스 값이 아니라 루프 가드**다 — 손상 세이브의 `level` 이 임의로
+ * 클 수 있다. 만렙은 100(`data/waves.ts` `LEVEL_CAP`)이라 200 은 도달 불가한 깊이다.
+ * ⚠️ 만렙 상수를 여기서 import 하지 않는다 — 이 파일은 leaf 규율이고, 이 값은 상한이지
+ * 만렙의 사본이 아니다(둘이 갈려도 거동이 안 바뀌는 것이 의도다).
+ */
+const PILOT_LEVEL_MAX_EXPONENT = 200;
+
+/**
+ * 조종사 레벨 → 성장 배율. **레벨 1 이 정확히 1** 이다(early-return — 곱을 한 번도 안 돌아야
+ * 기존 골든의 값이 **정확히** 불변이다. `bossStageHpMult`·`stageHpMult` 와 같은 규율).
+ *
+ * 정수 in / 실수 out. 손상 세이브 방어: 비유한·1 미만은 1 로 떨어진다.
+ */
+export function pilotLevelMult(level: number): number {
+  if (!Number.isFinite(level) || level <= 1) return 1;
+  const n0 = Math.trunc(level) - 1;
+  const n = n0 < PILOT_LEVEL_MAX_EXPONENT ? n0 : PILOT_LEVEL_MAX_EXPONENT;
+  let m = 1;
+  // ⚠️ 반복 곱이다(`Math.pow` 금지 — 위 §결정론).
+  for (let i = 0; i < n; i++) m *= PILOT_LEVEL_GROWTH_PER_LEVEL;
+  return m;
+}
+
+/**
+ * 조종사 레벨 성장을 로드아웃에 얹는다 — **피해와 HP 두 축**(사용자 결정 2026-08-08).
+ *
+ * ## ⚠️ 왜 **맨 끝**인가 (`applyShipTypeBase` 옆이 아니라)
+ * 이 함수는 `applyShipTypeBase` 의 형제로 설계됐지만 **호출 순서는 맨 끝**이다. 섀시 보정
+ * 자리에서 부르면 그 시점의 `maxHpAdd` 가 0 이라 **장비·계보가 준 HP 에는 배율이 안 걸린다** —
+ * 즉 HP 축만 반쪽이 된다. 맨 끝이면 `damageMult`·`maxHpAdd` 둘 다 «그 조종사의 최종 실효값»에
+ * 걸려 두 축의 성장률이 정확히 같다.
+ *
+ * 곱셈은 교환법칙이 성립하므로 `damageMult` 는 순서와 무관하지만 `maxHpAdd` 는 가산이라
+ * 순서가 값을 바꾼다. 그래서 이 주석이 필요하다.
+ *
+ * ## HP 를 «가산 축»에 어떻게 태우는가
+ * `maxHpAdd` 는 `world.ts` 에서 `playerHp(=BASE_HP_REF) + maxHpAdd` 로 소비되는 **가산**이다.
+ * 그래서 배율을 걸려면 기준 HP 까지 포함한 실효 HP 를 스케일한 뒤 그 증가분을 가산분에
+ * 되돌린다: `maxHpAdd += round((BASE_HP_REF + maxHpAdd) × (m - 1))`. 반올림은 **한 번**이다.
+ *
+ * ⚠️ 부수 효과: 격납고·인벤토리의 «체력 +N» 표시가 이제 레벨 성장분을 포함한다(장비만의 몫이
+ * 아니다). 두 화면 모두 «런과 같은 입력을 넘긴다»가 계약이라(hangar `computeStats` 주석)
+ * 이쪽을 택했다 — 표시를 장비 몫으로 되돌리려면 화면이 배율을 따로 빼야 하고, 그러면 화면과
+ * 런이 다시 갈린다.
+ *
+ * `m === 1`(레벨 1)이면 **무연산**이다 — 기존 런의 `LoadoutConfig` 가 바이트 불변이다.
+ */
+function applyPilotLevelScaling(lo: LoadoutConfig, level: number): void {
+  const m = pilotLevelMult(level);
+  if (m === 1) return;
+  lo.damageMult *= m;
+  lo.maxHpAdd += Math.round((BASE_HP_REF + lo.maxHpAdd) * (m - 1));
+}
+
+/**
  * 장착 장비를 파생 스탯 블록 + 메타 모드로 접는다. 아이템 순서는 무관하다(전부 합산).
  * `shipBonusBp`(계보 기체 가지, `data/lineage.ts` `shipBonusBp`)가 주어지면 마지막에
  * {@link applyShipLineageBonus} 로 겹친다 — 미지정/0 은 기존 결과와 완전 동일.
@@ -315,6 +426,12 @@ export function computeLoadoutStats(
   equipped: readonly Item[],
   shipBonusBp?: number,
   typeId: number = DEFAULT_SHIP_TYPE,
+  /**
+   * 조종사 레벨(§R51). **기본값 1 = 무연산**이라 이 인자를 안 넘기는 호출부는 기존과 바이트
+   * 동일하다 — 퇴역 수호 스냅샷(`retirementPayload`)이 그 경로이고, 그 불변이 침공 밴드를
+   * 지킨다({@link applyPilotLevelScaling} 위 §침공).
+   */
+  level: number = 1,
 ): ComputedLoadout {
   const lo = neutralLoadout();
   const shipType = shipTypeDef(typeId);
@@ -359,6 +476,8 @@ export function computeLoadoutStats(
   lo.lightning += sums.lightning;
   // 계보 기체 가지(M5, ADR-0007): 장비·스킬 위에 마지막으로 겹치는 계정 단위 배율.
   if (shipBonusBp !== undefined) applyShipLineageBonus(lo, shipBonusBp);
+  // 조종사 레벨 성장(§R51) — **반드시 맨 끝**이다(가산 축 `maxHpAdd` 의 순서 의존, 위 주석).
+  applyPilotLevelScaling(lo, level);
 
   const worldMods: WorldMods = {
     mineralFindMult: 1 + sums.mineralFindPct / 100,
