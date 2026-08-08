@@ -120,6 +120,43 @@ import { activeByWireId } from '../../../data/ships/actives/index.js';
 // 블록이 방어축이지만, 버블은 아크캐스터와 같이 두 번째가 **utility(표류)** 다. 설계서의
 // 서술 순서(파열→표류→피막)와 데이터가 우연히 일치하지만, 정본은 언제나 `trees` 배열이다.
 
+import {
+  burstWarheadDamage,
+  pressureTransferBp,
+  burstScatterCount,
+  burstScatterDamage,
+  crushImpactBp,
+  fullFilmDamageMultBp,
+  fireRecondenseStep,
+  staticBurstChainDamage,
+  residueMineCount,
+  residueMineDamage,
+  popTuningExtraBp,
+  chainPressurePerKill,
+  chainPressureCap,
+  reverseCurrentRadiusMultBp,
+  tensionWindowTicks,
+  tensionBonusBp,
+  blinkMagnetTicks,
+  blinkMagnetMultBp,
+  bareHullSpeedMultBp,
+  prismPerStackBp,
+  burstPropulsionRefund,
+  remoteForagerBp,
+  departureRippleRadius,
+  bareHullCurrentBp,
+  bareHullPullStep,
+  earlyCondenseTicks,
+  recondensePeriodTicks,
+  reflectiveFilmRadius,
+  pressureVentPushBp,
+  burstPhaseExtraIframes,
+  filmOfferingBp,
+  wallEchoMultBp,
+  hydrophobicEffBp,
+  lastBubbleShieldBp,
+} from './bubbleScaling.js';
+
 const enum Sk {
   /** PO1 파열 탄두 */ burstWarhead = 0,
   /** PO2 압력 전환 사출 */ pressureTransfer = 1,
@@ -286,14 +323,8 @@ function lv(state: WorldState, flat: Sk): number {
  * clamp 가 아니라 **공식 형태**가 그것을 보장한다(설계서 R2-4). clamp 를 덧붙이지 마라: 상한이
  * 두 곳(공식·clamp)에 생기면 밸런스 패스가 한쪽만 고쳐 조용히 갈린다.
  */
-function earlyCondenseTicks(level: number): number {
-  return Math.round((300 * level) / (level + 18));
-}
 
 /** FI2 회복 주기 = 6 + floor(72/(Lv+2)) 틱 (Lv1 = 30, Lv20 = 9, 점근 6). */
-function recondensePeriodTicks(level: number): number {
-  return 6 + Math.floor(72 / (level + 2));
-}
 
 // ---------------------------------------------------------------------------
 // 앵커 ⑨ — 시그니처 틱 진행(매 틱 정확히 한 번)
@@ -365,9 +396,6 @@ function blinkMagnetTick(state: WorldState): void {
  * **DR2 표면장력 세례 — 창 지속 틱.** ⚠️ 밸런스 각주(설계에 수치가 없다): 기본 60틱 + 3틱/Lv.
  * 문면의 *"짧은 창"* 만 있고 계단이 없어 이 배치가 정했다 — 출시 전 일괄 패스 대상이다.
  */
-function tensionWindowTicks(lvl: number): number {
-  return 60 + 3 * lvl;
-}
 
 /**
  * **DR2 표면장력 세례 — 창 효율 가산(bp).** ⚠️ 밸런스 각주: +20% + 2%p/Lv.
@@ -375,9 +403,6 @@ function tensionWindowTicks(lvl: number): number {
  * ⚠️ **FI8 과 곱으로 겹친다** — 설계서 R3-2 가 *"DR2 는 전 출처·유한 창, FI8 은 단일
  * 출처·상시"* 라 곱 중첩을 의도했다(앵커 ⑰ 의 case 주석이 그 인용의 정본).
  */
-function tensionBonusBp(lvl: number): number {
-  return 10000 + 2000 + 200 * lvl;
-}
 
 /**
  * **DR2 표면장력 세례(감소 절반)** — 창 잔여 틱을 1 깎는다.
@@ -485,7 +510,7 @@ function bareHullCurrentPulse(state: WorldState, player: Entity): void {
   if (dr10 < 1) return;
   if (player.aux0 !== 0 || !filmReady(player.aux1 + 1)) return;
   // 반올림은 게이트 안(공통 규율). 반경·변위 둘 다 좌표축이라 f64 로 남긴다.
-  const step = 60 + 6 * dr10;
+  const step = bareHullPullStep(dr10);
   const radius = state.magnetRadius * 2;
   const r2 = radius * radius;
   for (const e of state.entities) {
@@ -531,8 +556,8 @@ function chainWindowTick(state: WorldState): void {
   if (kills <= 0) return;
   // 처치당 2 + floor(Lv/2), 회당 상한 20 + 3×Lv(설계서 ② 표). 반올림은 게이트 안 — 여기 값은
   // 이미 정수 곱셈뿐이라 반올림이 필요 없다.
-  const perKill = 2 + Math.floor(po10 / 2);
-  const cap = 20 + 3 * po10;
+  const perKill = chainPressurePerKill(po10);
+  const cap = chainPressureCap(po10);
   const gain = Math.min(cap, kills * perKill);
   if (gain <= 0) return;
   // ⚠️ **가산**이다 — 다음 재생 전에 파열이 두 번(예: 강제 파열 후 대기 중 또 강제 파열) 일면
@@ -609,7 +634,7 @@ export function bubbleEnemyDamaged(state: WorldState, player: Entity, target: En
   if (po6 < 1) return;
   if (player.aux0 !== 0) return;
   if (target.kind !== 'enemy') return;
-  player.aux1 += 1 + Math.floor(po6 / 5);
+  player.aux1 += fireRecondenseStep(po6);
 }
 
 // ---------------------------------------------------------------------------
@@ -664,7 +689,7 @@ export function bubbleFilmBurst(
   // ── PO1 파열 탄두 — 파열 중심 반경 안 `enemy` 에게 즉발 18 + 4×Lv.
   const po1 = lv(state, Sk.burstWarhead);
   if (po1 >= 1) {
-    const dmg = 18 + 4 * po1;
+    const dmg = burstWarheadDamage(po1);
     const r2 = FILM_BURST_RADIUS * FILM_BURST_RADIUS;
     for (const e of state.entities) {
       if (e.dead || e.kind !== 'enemy') continue;
@@ -683,7 +708,7 @@ export function bubbleFilmBurst(
   // ── PO3 거품 산탄 파열 — 플레이어 중심 전방위 사출. 탄수 6 + floor(Lv/3) · 탄당 8 + 2×Lv.
   const po3 = lv(state, Sk.burstScatter);
   if (po3 >= 1) {
-    fanStrike(state, player, 6 + Math.floor(po3 / 3), 8 + 2 * po3, 360, {
+    fanStrike(state, player, burstScatterCount(po3), burstScatterDamage(po3), 360, {
       x: Math.cos(player.angle),
       y: Math.sin(player.angle),
     });
@@ -695,7 +720,7 @@ export function bubbleFilmBurst(
   //    전격과 두 벌이 된다.
   const po7 = lv(state, Sk.staticBurst);
   if (po7 >= 1) {
-    applyChain(state, player, 12 + 3 * po7);
+    applyChain(state, player, staticBurstChainDamage(po7));
   }
 
   // ── DR1 역류 수거 — 파열 중심 반경 안 젬을 **플레이어 위로 끌어온다**.
@@ -720,7 +745,7 @@ export function bubbleFilmBurst(
   const dr1 = lv(state, Sk.reverseCurrent);
   if (dr1 >= 1) {
     // 반올림은 게이트 안(공통 규율). 반경은 좌표축이라 f64 로 남긴다.
-    const radius = (FILM_BURST_RADIUS * (10000 + 800 * dr1)) / 10000;
+    const radius = (FILM_BURST_RADIUS * reverseCurrentRadiusMultBp(dr1)) / 10000;
     const r2 = radius * radius;
     for (const e of state.entities) {
       if (e.dead || e.kind !== 'gem') continue;
@@ -743,7 +768,7 @@ export function bubbleFilmBurst(
   //    `dashCooldown === 0` 동등 비교라 영영 걸리지 않는다(스트라이커 M3 와 같은 함정).
   const dr6 = lv(state, Sk.burstPropulsion);
   if (dr6 >= 1) {
-    const refund = 30 + 5 * dr6;
+    const refund = burstPropulsionRefund(dr6);
     player.dashCooldown = Math.max(0, player.dashCooldown - refund);
   }
 
@@ -762,7 +787,7 @@ export function bubbleFilmBurst(
   //    틱과, 덮어쓰지 않아 누적되는 틱이 갈린다.
   const fi5 = lv(state, Sk.burstPhase);
   if (fi5 >= 1) {
-    const want = state.config.hitIframes + 6 + 2 * fi5;
+    const want = state.config.hitIframes + burstPhaseExtraIframes(fi5);
     if (player.iframes < want) player.iframes = want;
   }
 
@@ -795,7 +820,7 @@ function wallEchoBp(state: WorldState): number {
   if (fi7 < 1) return 10000;
   if (state.wallContactTicks <= 0) return 10000;
   // +15% + 1.5%p/Lv (Lv1 = 1.165배 · Lv20 = 1.45배). 반경·변위에 **같은 배율**을 건다.
-  return 11500 + 150 * fi7;
+  return wallEchoMultBp(fi7);
 }
 
 /** 이번 파열의 **실효 목표 변위**. FI7 배율까지 {@link wallEchoBp} 를 거쳐 되짚는다. */
@@ -882,7 +907,7 @@ export function bubbleFilmBurstPost(
     const blocked = target - advance;
     if (blocked <= PO4_BLOCKED_EPS) continue;
     // 벽이 먹은 몫의 15% + 2%p/Lv 가 피해. 부족분은 좌표축(f64)이고 피해는 정수로 자른다.
-    const dmg = Math.round((blocked * (1500 + 200 * po4)) / 10000);
+    const dmg = Math.round((blocked * crushImpactBp(po4)) / 10000);
     if (dmg <= 0) continue;
     e.hp -= dmg;
     // ⚠️ `compact` 의 1차 게이트는 `e.dead` 다 — 여기서 안 세우면 압착으로만 죽은 적이
@@ -922,8 +947,8 @@ function bubbleResidueMines(state: WorldState, x: number, y: number, po8: number
   }
   if (live >= PO8_LIVE_CAP) return;
   // 기뢰 수 = 4 + ⌊Lv/4⌋(설계서 ② 레벨 스케일). 피해 = 10 + 2×Lv.
-  const mineCount = 4 + Math.floor(po8 / 4);
-  const dmg = 10 + 2 * po8;
+  const mineCount = residueMineCount(po8);
+  const dmg = residueMineDamage(po8);
   for (let i = 0; i < mineCount && live < PO8_LIVE_CAP; i++) {
     const ang = (TWO_PI * i) / mineCount;
     const mine = spawnBullet(
@@ -980,7 +1005,7 @@ export function bubblePickupRadius(
   if (dr8 < 1) return;
   // 자석 반경의 10% + 1%p/Lv 를 더한다. 배율은 정수 bp · 나눗셈 1회(ADR-0005) ·
   // 반올림 없이 f64 로 남긴다(반경은 좌표축이다).
-  const bonus = (state.magnetRadius * (1000 + 100 * dr8)) / 10000;
+  const bonus = (state.magnetRadius * remoteForagerBp(dr8)) / 10000;
   const cap = params.radius * DR8_RADIUS_CAP_MULT;
   const want = params.radius + bonus;
   params.radius = want < cap ? want : cap;
@@ -1056,7 +1081,7 @@ export function bubbleVolleyParams(
     const excessBp = Math.round(((params.speed - PO2_SPEED_BASE) * 10000) / PO2_SPEED_BASE);
     if (excessBp > 0) {
       // 반올림은 **게이트 안에서만**(공통 규율). 미투자 런은 이 줄에 도달하지 않는다.
-      const gainBp = Math.round((excessBp * (2000 + 200 * po2)) / 10000);
+      const gainBp = Math.round((excessBp * pressureTransferBp(po2)) / 10000);
       params.damage = (params.damage * (10000 + gainBp)) / 10000;
     }
   }
@@ -1065,7 +1090,7 @@ export function bubbleVolleyParams(
   const po5 = lv(state, Sk.fullFilmPierce);
   if (po5 >= 1 && player.aux0 >= state.filmCapacity) {
     if (params.ballisticsUsed) params.pierce += 1;
-    params.damage = (params.damage * (10600 + 150 * po5)) / 10000;
+    params.damage = (params.damage * fullFilmDamageMultBp(po5)) / 10000;
   }
 }
 
@@ -1107,14 +1132,14 @@ export function bubbleFilmAbsorbed(
   //    소거 수에 대한 보상은 없다(FI10 과 같은 규약 — 부수효과만).
   const fi3 = lv(state, Sk.reflectiveFilm);
   if (fi3 >= 1) {
-    clearEnemyBullets(state, player, 80 + 8 * fi3);
+    clearEnemyBullets(state, player, reflectiveFilmRadius(fi3));
   }
 
   // ── FI4 압력 배출 — 흡수량 비례 소형 밀어내기. 변위 = 흡수량 × (1.2 + 0.15×Lv) · 반경 120.
   const fi4 = lv(state, Sk.pressureVent);
   if (fi4 >= 1 && player.aux0 > 0) {
     // 배율은 정수 bp · 나눗셈 1회(ADR-0005). 변위 자체는 좌표라 f64 로 해시된다.
-    const push = (absorbed * (12000 + 1500 * fi4)) / 10000;
+    const push = (absorbed * pressureVentPushBp(fi4)) / 10000;
     const r2 = FI4_VENT_RADIUS * FI4_VENT_RADIUS;
     for (const e of state.entities) {
       // 대상 `enemy` 한정 — 침공 방어체(prop·facility*)는 배치 좌표가 소켓 계약이고 벽은
@@ -1202,7 +1227,7 @@ export function bubbleFilmOfferingConsume(state: WorldState): number {
   writeSlot(state.skillStage, BubbleStage.offeringPool, 0);
   if (pool <= 0) return 0;
   // 40% + 4%p/Lv(설계서 ②). 반올림은 게이트 안.
-  return Math.round((pool * (4000 + 400 * fi6)) / 10000);
+  return Math.round((pool * filmOfferingBp(fi6)) / 10000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1247,7 +1272,7 @@ export function bubbleFilmEntry(state: WorldState, player: Entity, dmg: number):
   const progress = Math.floor((player.aux1 * state.filmCapacity) / FILM_PERIOD_TICKS);
   const shield = Math.min(
     state.filmCapacity,
-    Math.floor((progress * (6000 + 300 * fi9)) / 10000),
+    Math.floor((progress * lastBubbleShieldBp(fi9)) / 10000),
   );
   if (shield <= 0) return;
   player.aux0 = shield;
@@ -1290,7 +1315,7 @@ export function bubbleFilmEfficiency(
   if (fromHazard) {
     const fi8 = lv(state, Sk.hydrophobicCoat);
     // 200% + 10%p/Lv — 정수 산술만(나눗셈 0회). 레벨은 `skillLv` 가 정수로 준다.
-    if (fi8 >= 1) eff = 20000 + 1000 * fi8;
+    if (fi8 >= 1) eff = hydrophobicEffBp(fi8);
   }
   // ── DR2 표면장력 세례 — **전 출처** · 유한 창. FI8 과 **곱**으로 겹친다(설계서 R3-2).
   //    ⚠️ 창 잔여 틱을 여기서 깎지 마라 — 이 앵커는 *피격이 있는 틱에만* 불려 창이 사실상
@@ -1350,7 +1375,7 @@ export function bubbleActiveFired(
       // 반올림은 게이트 안(공통 규율). **`round` 이지 `floor` 가 아니다** — Lv1 의 +5% 는
       // 만재(내구 60 · 분모 4 = 15발)에서도 0.75발이라, `floor` 면 설계서가 약속한
       // *"1레벨: 액티브 2종 즉시 강화"* 가 저레벨 구간에서 통째로 무연산이 된다.
-      const extra = Math.round((baseCount * (400 + 100 * po9)) / 10000);
+      const extra = Math.round((baseCount * popTuningExtraBp(po9)) / 10000);
       if (extra > 0) {
         // 피해·확산·관통은 핸들러와 동일하게 def 에서 되읽는다 — 여기 숫자를 적으면
         // 레지스트리와 두 벌이 된다.
@@ -1400,7 +1425,7 @@ export function bubbleActiveFired(
     const dr9 = lv(state, Sk.departureRipple);
     if (dr9 >= 1) {
       // 반올림은 게이트 안. 반경은 좌표축이라 f64 로 남긴다(막 보정은 정확히 3/2 배).
-      const base = 100 + 8 * dr9;
+      const base = departureRippleRadius(dr9);
       const radius = player.aux0 > 0 ? (base * 3) / 2 : base;
       const r2 = radius * radius;
       for (const e of state.entities) {
@@ -1451,7 +1476,7 @@ export function bubbleActiveFired(
     if (dr3 >= 1) {
       // 갱신은 **대입**이다(가산 아님). 가산이면 쿨다운이 짧은 무대에서 도약을 연달아 써
       // 창이 무한히 길어진다 — 설계의 억제(액티브 쿨다운)를 우회한다.
-      writeSlot(state.skillStage, BubbleStage.blinkMagnet, 90 + 6 * dr3);
+      writeSlot(state.skillStage, BubbleStage.blinkMagnet, blinkMagnetTicks(dr3));
     }
   }
 }
@@ -1492,7 +1517,7 @@ export function bubbleGemMagnetParams(
     const stacks = state.combo < DR5_COMBO_CAP ? state.combo : DR5_COMBO_CAP;
     if (stacks > 0) {
       // 배율은 정수 bp · 나눗셈 1회(ADR-0005). 반경은 좌표축이라 f64 로 남긴다.
-      params.radius = (params.radius * (10000 + stacks * (150 + 15 * dr5))) / 10000;
+      params.radius = (params.radius * (10000 + stacks * prismPerStackBp(dr5))) / 10000;
     }
   }
 
@@ -1505,7 +1530,7 @@ export function bubbleGemMagnetParams(
   const dr3 = lv(state, Sk.blinkMagnetize);
   if (dr3 >= 1 && readSlot(state.skillStage, BubbleStage.blinkMagnet) > 0) {
     // 배율은 정수 bp · 나눗셈 1회(ADR-0005). 반경은 좌표축이라 f64 로 남긴다.
-    params.radius = (params.radius * (13000 + 300 * dr3)) / 10000;
+    params.radius = (params.radius * blinkMagnetMultBp(dr3)) / 10000;
   }
 
   // ── DR10 공막 유속(흡인 절반) — 막이 없는 동안 젬이 **한 틱에 더 멀리** 끌려온다.
@@ -1523,7 +1548,7 @@ export function bubbleGemMagnetParams(
   if (dr10 >= 1 && player.aux0 === 0) {
     const r2 = params.radius * params.radius;
     // 반올림은 게이트 안. bp 는 정수, 변위는 좌표축이라 f64 다.
-    const bonusBp = 2000 + 300 * dr10;
+    const bonusBp = bareHullCurrentBp(dr10);
     for (const e of state.entities) {
       if (e.dead || e.kind !== 'gem') continue;
       const dx = player.x - e.x;
@@ -1570,7 +1595,7 @@ export function bubblePlayerMoveParams(
   if (player.aux0 !== 0) return;
   params.slowTicks = 0;
   // 이속 +4% + 0.8%p/Lv. 배율은 정수 bp · 나눗셈 1회(ADR-0005) · 반올림은 게이트 안.
-  params.speedMult = (params.speedMult * (10400 + 80 * dr4)) / 10000;
+  params.speedMult = (params.speedMult * bareHullSpeedMultBp(dr4)) / 10000;
 }
 
 // ---------------------------------------------------------------------------

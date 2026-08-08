@@ -104,9 +104,14 @@ const FILE_SHIP: Readonly<Record<string, string>> = {
   // CH2 만 여기 산다 — `applyChain` 앵커가 `status.ts` 에 있고, `arccaster.ts` 는 그 파일을
   // 값으로 import 하므로 같은 파일에 두면 런타임 순환이 된다(그 파일 헤더가 근거).
   'arccasterChain.ts': 'arccaster',
+  // 앵커가 한 칸도 없는 **레벨 스케일 전용** 모듈(`strikerScaling.ts` 항목과 같은 사유).
+  'arccasterScaling.ts': 'arccaster',
   'bruiser.ts': 'bruiser',
+  'bruiserScaling.ts': 'bruiser',
   'bubble.ts': 'bubble',
+  'bubbleScaling.ts': 'bubble',
   'hatchling.ts': 'hatchling',
+  'hatchlingScaling.ts': 'hatchling',
   'mallow.ts': 'mallow',
   // SQ9 의 **탕감** 두 경로만 여기 산다 — 만료 앵커가 `status.ts` 안이고 `mallow.ts` 는
   // 그 파일을 값으로 import 하므로 같은 파일에 두면 런타임 순환이 된다(그 파일 헤더가 근거).

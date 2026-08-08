@@ -97,6 +97,43 @@ import { skillLv } from '../../items/skills.js';
 // 방어축이지만, 아크캐스터는 두 번째가 **탄막(utility)** 이다. 설계서의 서술 순서(연쇄→탄막→방벽)와
 // 데이터가 우연히 일치하지만, 정본은 언제나 `data/ships/{ship}.ts` 의 `trees` 배열이다.
 
+import {
+  CAPACITOR_KILLS,
+  guidedArcChainBp,
+  endpointBurstBp,
+  endpointBurstRadius,
+  entryLanceDamage,
+  entryLancePierce,
+  potentialSnipeBp,
+  potentialSnipePierce,
+  overkillCarryBp,
+  residualBoltCostTicks,
+  groundedPierceBp,
+  boltSalvageMultBp,
+  primedStrikeBp,
+  redeploySalvoCount,
+  redeploySalvoDamage,
+  stillMagnetMaxBp,
+  stillSpotterRefundShots,
+  sweepLaneHalfWidth,
+  staticComboPeriod,
+  killCapacitorBonusCount,
+  insulatedMountCutBp,
+  marchFireDecayPeriod,
+  salvoDoctrineMultBp,
+  staticRepulsorRadius,
+  staticRepulsorPush,
+  lightningRodChainDamage,
+  phaseCouplingCutBp,
+  surplusShieldCap,
+  groundTetherCutBp,
+  chargeBackflowHealBp,
+  bufferCondenserBp,
+  repairPeriodTicks,
+  repulseHullRadius,
+  terminalGroundIframes,
+} from './arccasterScaling.js';
+
 const enum Sk {
   /** CH1 유도 낙뢰 */ guidedArc = 0,
   /** CH3 종말점 방전 */ endpointBurst = 2,
@@ -202,9 +239,6 @@ function backflowCooldownTicks(level: number): number {
 }
 
 /** BR8 회복 주기 = 20 + 1200/(Lv+14) 틱 (Lv1 = 100, Lv20 ≈ 55, 점근 20). */
-function repairPeriodTicks(level: number): number {
-  return 20 + Math.floor(1200 / (level + 14));
-}
 
 // ---------------------------------------------------------------------------
 // 앵커 ③ — 젬 수거
@@ -223,7 +257,7 @@ export function arccasterGemCollected(state: WorldState, player: Entity): void {
   if (ba3 < 1) return;
   // 정지 술어 = `aux0 > 0`(입력 기반 적립의 파생 — 설계서 「핵심 문법」).
   if (player.aux0 <= 0) return;
-  const refund = (2 + Math.floor(ba3 / 2)) * FIRE_CD_Q;
+  const refund = stillSpotterRefundShots(ba3) * FIRE_CD_Q;
   const floorQ = -FIRE_CD_Q + 1;
   const next = player.cooldown - refund;
   player.cooldown = next < floorQ ? floorQ : next;
@@ -257,14 +291,14 @@ export function arccasterPlayerDamaged(
   // ── BR2 피뢰 접지 — 반격 연쇄 15 + 4×Lv. 연쇄 부여 3종 중 피격축.
   const br2 = lv(state, Sk.lightningRod);
   if (br2 >= 1) {
-    applyChain(state, player, 15 + 4 * br2);
+    applyChain(state, player, lightningRodChainDamage(br2));
   }
 
   // ── BR7 완충 콘덴서 — 깎인 피해를 aux0 으로 전환(600 클램프 유지).
   //    폭 k 가산이 90 을 건너뛰어도 CH4 는 **통과 판정**이라 발화한다(설계서 「핵심 문법」).
   const br7 = lv(state, Sk.bufferCondenser);
   if (br7 >= 1 && dmg > 0) {
-    const gain = Math.round((dmg * (5000 + 500 * br7)) / 10000);
+    const gain = Math.round((dmg * bufferCondenserBp(br7)) / 10000);
     if (gain > 0) {
       const t = player.aux0 + gain;
       player.aux0 = t >= OVERCHARGE_TICK_CAP ? OVERCHARGE_TICK_CAP : t;
@@ -282,7 +316,7 @@ export function arccasterPlayerDamaged(
       const hpBefore = hpAfter + dmg;
       const gate10 = player.maxHp * 3; // = maxHp × 30% × 10 — 양변에 10 을 곱해 비교
       if (hpBefore * 10 > gate10 && hpAfter * 10 <= gate10) {
-        const heal = Math.round((player.aux0 * (500 + 50 * br6)) / 10000);
+        const heal = Math.round((player.aux0 * chargeBackflowHealBp(br6)) / 10000);
         player.aux0 = 0;
         if (heal > 0) {
           const t = player.hp + heal;
@@ -300,7 +334,7 @@ export function arccasterPlayerDamaged(
   if (br10 >= 1 && lethalSurvived && player.targetX === 0) {
     player.targetX = 1;
     player.aux0 = OVERCHARGE_TICK_CAP;
-    player.iframes += 2 + Math.floor(br10 / 2);
+    player.iframes += terminalGroundIframes(br10);
   }
 }
 
@@ -329,13 +363,13 @@ export function arccasterDamageChain(
   // ① 감소 A — BR3: 방벽 액티브(buff) 지속 중. 15% + 1%p/Lv.
   const br3 = lv(state, Sk.phaseCoupling);
   if (br3 >= 1 && (state.activeBuff0 > 0 || state.activeBuff1 > 0)) {
-    out -= Math.round((out * (1500 + 100 * br3)) / 10000);
+    out -= Math.round((out * phaseCouplingCutBp(br3)) / 10000);
   }
   // ① 감소 B — BR5: 벽 접촉 **×** 정지 이중 조건. 12% + 1.2%p/Lv.
   //    스트라이커 S4 와 같은 벽 훅이지만 `aux0 > 0`(정지) 이 이 기체만의 결속 변형이다.
   const br5 = lv(state, Sk.groundTether);
   if (br5 >= 1 && state.wallContactTicks > 0 && player.aux0 > 0) {
-    out -= Math.round((out * (1200 + 120 * br5)) / 10000);
+    out -= Math.round((out * groundTetherCutBp(br5)) / 10000);
   }
   // ① 감소 C — BA8「절연 포좌」의 **뒤 절반**: 해저드(용암·박격 장판) 출처 피해 경감.
   //    15% + 1.5%p/Lv. 앞 절반(감속 장판 위 적립 2배)은 앵커 ⑳ 에 있다.
@@ -349,7 +383,7 @@ export function arccasterDamageChain(
   //    설계-코드 어긋남으로 보고했고 문서는 고치지 않았다.
   const ba8 = lv(state, Sk.insulatedMount);
   if (ba8 >= 1 && hasDamageSource(sources, DamageSource.hazard)) {
-    out -= Math.round((out * (1500 + 150 * ba8)) / 10000);
+    out -= Math.round((out * insulatedMountCutBp(ba8)) / 10000);
   }
   // ② 흡수 — BR4: 적립분이 HP 보다 먼저 소모된다. 적립은 앵커 ⑨ 가 한다.
   const br4 = lv(state, Sk.surplusShield);
@@ -394,10 +428,10 @@ export function arccasterSignatureStep(state: WorldState, player: Entity): void 
         state,
         player,
         1,
-        30 + 6 * ch4,
+        entryLanceDamage(ch4),
         0,
         { x: Math.cos(player.angle), y: Math.sin(player.angle) },
-        { pierce: 3 + Math.floor(ch4 / 5) },
+        { pierce: entryLancePierce(ch4) },
       );
     }
     writeSlot(state.skillStage, ArccasterStage.entryAux0Seen, cur);
@@ -407,7 +441,7 @@ export function arccasterSignatureStep(state: WorldState, player: Entity): void 
   //    aux0 이 600 에 고정돼도 "≥190 인 매 틱" 술어라 적립이 계속된다(600 고정의 수혜 스킬).
   const br4 = lv(state, Sk.surplusShield);
   if (br4 >= 1 && player.aux0 >= OVERCHARGE_APEX_TICKS) {
-    const cap = 20 + 4 * br4;
+    const cap = surplusShieldCap(br4);
     const stored = readSlot(state.skillStage, ArccasterStage.surplusStore);
     if (stored < cap) writeSlot(state.skillStage, ArccasterStage.surplusStore, stored + 1);
   }
@@ -424,9 +458,9 @@ export function arccasterSignatureStep(state: WorldState, player: Entity): void 
   //    넉백 규율(7.1): 속도 대입이 아니라 **좌표 직접 변위**.
   const br1 = lv(state, Sk.staticRepulsor);
   if (br1 >= 1 && state.tick % 45 === 0 && overcharged(player)) {
-    const radius = 140 + 8 * br1;
+    const radius = staticRepulsorRadius(br1);
     const r2 = radius * radius;
-    const push = 20 + 3 * br1;
+    const push = staticRepulsorPush(br1);
     for (const e of state.entities) {
       if (e.kind !== 'enemy' || e.dead) continue;
       const dx = e.x - player.x;
@@ -448,7 +482,7 @@ export function arccasterSignatureStep(state: WorldState, player: Entity): void 
   // ── BR9 척력 외피 — 무적프레임 동안 몸 주변 적탄 소거. 반경 32 + 4×Lv.
   const br9 = lv(state, Sk.repulseHull);
   if (br9 >= 1 && player.iframes > 0) {
-    clearEnemyBullets(state, player, 32 + 4 * br9);
+    clearEnemyBullets(state, player, repulseHullRadius(br9));
   }
 }
 
@@ -457,7 +491,6 @@ export function arccasterSignatureStep(state: WorldState, player: Entity): void 
 // ---------------------------------------------------------------------------
 
 /** BA7 이 한 번 장전되는 데 필요한 처치 수(설계서 고정값 — 레벨로 안 변한다). */
-const CAPACITOR_KILLS = 6;
 
 /**
  * **BA7 연발 축전기(충전부)** — 처치 6기마다 다음 볼리 한 번을 장전한다.
@@ -538,7 +571,7 @@ export function arccasterVolleyParams(
   if (ba7 >= 1) {
     const charge = readSlot(state.skillStage, ArccasterStage.killCapacitorCharge);
     if (charge >= CAPACITOR_KILLS) {
-      params.count += 2 + Math.floor(ba7 / 5);
+      params.count += killCapacitorBonusCount(ba7);
       writeSlot(state.skillStage, ArccasterStage.killCapacitorCharge, 0);
     }
   }
@@ -548,7 +581,7 @@ export function arccasterVolleyParams(
   const ba10 = lv(state, Sk.salvoDoctrine);
   if (ba10 >= 1) {
     params.count *= 2;
-    const multBp = 20000 - Math.round((6000 * ba10) / (ba10 + 10));
+    const multBp = salvoDoctrineMultBp(ba10);
     params.cooldownQ = Math.round((params.cooldownQ * multBp) / 10000);
   }
 }
@@ -585,10 +618,10 @@ export function arccasterBulletExpiredLife(state: WorldState, bullet: Entity): v
   if (ch3 < 1) return;
   const base = bullet.aux1;
   if (base <= 0) return;
-  const damage = Math.round((base * (2500 + 200 * ch3)) / 10000);
+  const damage = Math.round((base * endpointBurstBp(ch3)) / 10000);
   if (damage <= 0) return;
   // 좌표는 **이번 틱 적분이 끝난 마지막 위치**다(호출부 주석이 근거) — 스폰 지점이 아니다.
-  blastDamageAt(state, bullet.x, bullet.y, 50 + 5 * ch3, damage);
+  blastDamageAt(state, bullet.x, bullet.y, endpointBurstRadius(ch3), damage);
 }
 
 // ---------------------------------------------------------------------------
@@ -621,7 +654,7 @@ export function arccasterEnemyDamaged(
     // `source.damage` 를 올리기 **전**에 읽는다(순서를 바꾸면 같은 명중이 두 번 증폭된다).
     const ch1 = lv(state, Sk.guidedArc);
     if (ch1 >= 1) {
-      const chain = Math.round((source.damage * (2000 + 200 * ch1)) / 10000);
+      const chain = Math.round((source.damage * guidedArcChainBp(ch1)) / 10000);
       if (chain > 0) applyChain(state, target, chain);
     }
     // CH8 접지 관통로 — 관통을 소모할 때마다 +6% + 0.6%p/Lv. 이 앵커가 관통 차감 **직전**이라
@@ -633,7 +666,7 @@ export function arccasterEnemyDamaged(
     // 그 경로를 첫 명중 1회로 묶는다(설계서 CH8 의 "자이로는 중첩 곱 금지"의 코드 형태).
     const ch8 = lv(state, Sk.groundedPierce);
     if (ch8 >= 1 && source.phase === 0) {
-      const gain = Math.round((source.damage * (600 + 60 * ch8)) / 10000);
+      const gain = Math.round((source.damage * groundedPierceBp(ch8)) / 10000);
       if (gain > 0) source.damage += gain;
     }
   }
@@ -648,7 +681,7 @@ export function arccasterEnemyDamaged(
   if (source.aux0 === ARC_PRIMED_MARK && (target.kind === 'enemy' || target.kind === 'boss')) {
     const ch10 = lv(state, Sk.primedStrike);
     if (ch10 >= 1) {
-      const chain = Math.round((source.damage * (2500 + 200 * ch10)) / 10000);
+      const chain = Math.round((source.damage * primedStrikeBp(ch10)) / 10000);
       if (chain > 0) applyChain(state, target, chain);
     }
   }
@@ -659,7 +692,7 @@ export function arccasterEnemyDamaged(
   const overkill = -target.hp;
   if (overkill <= 0) return;
   // 이월 비율 = 40% + 3%p/Lv (Lv20 = 100%). 반올림은 게이트 안이다.
-  const carried = Math.round((overkill * (4000 + 300 * ch6)) / 10000);
+  const carried = Math.round((overkill * overkillCarryBp(ch6)) / 10000);
   if (carried > 0) source.damage += carried;
 }
 
@@ -710,11 +743,11 @@ export function arccasterBulletHitParams(
   if (flown * 100 < life0 * SNIPE_FLIGHT_PCT) return;
   if (target.kind !== 'enemy' && target.kind !== 'boss') return;
   // 피해 증폭 = 25% + 2.5%p/Lv (Lv20 = +75%). 반올림은 게이트 안이다.
-  const amp = Math.round((params.damage * (2500 + 250 * ch5)) / 10000);
+  const amp = Math.round((params.damage * potentialSnipeBp(ch5)) / 10000);
   if (amp > 0) params.damage += amp;
   if (bullet.targetY === 0) {
     bullet.targetY = 1;
-    params.pierce += 1 + Math.floor(ch5 / 8);
+    params.pierce += potentialSnipePierce(ch5);
   }
 }
 
@@ -744,7 +777,7 @@ export function arccasterEliteLootRarity(
   const ch9 = lv(state, Sk.boltSalvage);
   if (ch9 < 1) return rarityMult;
   if (!overcharged(player)) return rarityMult;
-  return (rarityMult * (10500 + 250 * ch9)) / 10000;
+  return (rarityMult * boltSalvageMultBp(ch9)) / 10000;
 }
 
 // ---------------------------------------------------------------------------
@@ -793,7 +826,7 @@ export function arccasterOverchargeAccrual(
     const ba9 = lv(state, Sk.marchFire);
     if (ba9 >= 1) {
       out.still = true;
-      out.delta = state.tick % (2 + Math.floor(ba9 / 2)) === 0 ? -1 : 0;
+      out.delta = state.tick % marchFireDecayPeriod(ba9) === 0 ? -1 : 0;
     }
   }
 }
@@ -819,7 +852,7 @@ export function arccasterComboDecay(state: WorldState, player: Entity): boolean 
   const ba5 = lv(state, Sk.staticCombo);
   if (ba5 < 1) return false;
   if (!overcharged(player)) return false;
-  return state.tick % (2 + Math.floor(ba5 / 4)) !== 0;
+  return state.tick % staticComboPeriod(ba5) !== 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -919,7 +952,7 @@ function arccasterDischargeFired(
   if (spent <= 0) return;
   // 여진탄 1발당 요구 정지 틱 = 60 − 2×Lv (Lv1 = 58, Lv20 = 20). 하한 10 은 어픽스로 레벨이
   // 20을 넘겼을 때 분모가 0/음수로 무너지는 것을 막는다(설계 수치가 아니라 방어다).
-  const perBolt = Math.max(10, 60 - 2 * ch7);
+  const perBolt = residualBoltCostTicks(ch7);
   let count = Math.floor(spent / perBolt);
   if (count <= 0) return;
   if (count > RESIDUAL_BOLT_CAP) count = RESIDUAL_BOLT_CAP;
@@ -964,9 +997,9 @@ function arccasterBlinkFired(
   //    360×(n−1)/n 이 균등 분포의 정본이다.
   const ba1 = lv(state, Sk.redeploySalvo);
   if (ba1 >= 1) {
-    let count = 6 + Math.floor(ba1 / 2);
+    let count = redeploySalvoCount(ba1);
     if (count > REDEPLOY_SALVO_CAP) count = REDEPLOY_SALVO_CAP;
-    fanStrike(state, player, count, 18 + 3 * ba1, (360 * (count - 1)) / count, dir);
+    fanStrike(state, player, count, redeploySalvoDamage(ba1), (360 * (count - 1)) / count, dir);
   }
 
   // ── BA4 소거 항로 — 출발→착지 선분에서 폭 안에 든 젬·전리품을 플레이어 자리로 당긴다.
@@ -979,7 +1012,7 @@ function arccasterBlinkFired(
   //    `d2 > 0.0001` 이 거짓이 되어 속도를 0 으로 두고 좌표를 안 움직인다.
   const ba4 = lv(state, Sk.sweepLane);
   if (ba4 >= 1) {
-    const halfWidth = 60 + 4 * ba4;
+    const halfWidth = sweepLaneHalfWidth(ba4);
     const w2 = halfWidth * halfWidth;
     for (const e of state.entities) {
       if (e.dead) continue;
@@ -1031,6 +1064,6 @@ export function arccasterGemMagnetParams(
   const still = player.aux0;
   if (still <= 0) return;
   const t = still > OVERCHARGE_APEX_TICKS ? OVERCHARGE_APEX_TICKS : still;
-  const gainBp = Math.floor((t * (2000 + 200 * ba2)) / OVERCHARGE_APEX_TICKS);
+  const gainBp = Math.floor((t * stillMagnetMaxBp(ba2)) / OVERCHARGE_APEX_TICKS);
   params.radius = (params.radius * (10000 + gainBp)) / 10000;
 }
