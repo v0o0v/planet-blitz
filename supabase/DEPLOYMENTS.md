@@ -50,6 +50,47 @@
 
 </details>
 
+## ✅ 적용 완료 — 촉매 축 미러 + 공명 마이그레이션 (2026-08-08, ADR-0052 / PR#380)
+
+`20260808060000_catalyst_axis_mirror_resonance.sql` 을 원격 적용했다
+(`scripts/apply-catalyst-axis-mirror-migration.ps1`). 사후 검증 실측:
+
+```
+catalyst_defs        rows=48  null_axis=0  null_mult=0  empty_tags=0  tags>2=0  cap>2.6=0
+cap_axis 분포        drop 17 · rarity 10 · resource 9 · xp 8 · catalystDrop 4
+catalyst_resonances  rows=12  tags=6  bad_tier=0
+catalyst_cap_resource_mult_max()  = 3.2      (구 2.2 — 48C3 전수 스윕 자원축 실측 3.2000)
+consume 게이트       duplicate=True  signature=True  compose_0.5=True
+실행 권한            consume_catalysts: authenticated=True  anon=False
+```
+
+`cap_axis` 의 `drop 17 / resource 9` 는 `id 16`·`id 34` 의 상한 축을 자원→드랍으로 옮긴
+사용자 판정(2026-08-08)이 서버까지 반영됐다는 뜻이다.
+
+### ⚠️ EF 재배포는 **불필요**했다 — 해시로 확정했다
+
+`src/sim/**` 을 광범위하게 고친 레인인데도 두 함수 다 배포본과 **바이트 동일**이다.
+ADR-0050 이후 두 EF 가 sim 을 안 싣기 때문이다(이 파일 위쪽 §해소됨 절이 그 사실의 정본이다).
+
+```
+verify-invasion    배포본 3,399 B  =  새 번들 3,399 B   sha 6267F36E02B5E9DE31C85B338C0E5A004199BB54F9050531CDFEA7806CD9439A
+verify-commission  배포본 5,721 B  =  새 번들 5,721 B   sha D47C7749821845E15F0769C092000583D77D9743CFA6BB021A781566336A17BF
+```
+
+⛔ **이 레인이 처음에 「EF 재배포 필수」라고 잘못 보고했다.** 원인은 `supabase/functions/AGENTS.md`
+와 배포 스킬 문서가 **재실행 삭제 이전 문장을 그대로 갖고 있었기 때문**이고, 정작 정본인 이 파일은
+맞게 적혀 있었다. 두 문서를 이 커밋에서 고쳤다.
+→ **재배포 판정은 문장이 아니라 아래 §해시 대조로만 하라.**
+
+### ⚠️ 적용 스크립트의 검증기가 통과할 수 없는 검사를 갖고 있었다
+
+`(e) 중복 거부` 게이트를 `pg_get_functiondef(...) ilike '%duplicate%'` 로 찾고 있었다. 이 리포는
+전면 한글이라 그 게이트의 주석은 *"중복 거부"* 이고 코드는 `count(distinct cid) <> v_len` 이다 —
+**영단어 `duplicate` 가 등장할 수 없어 게이트가 멀쩡한데도 매번 `[FAIL]` 을 냈다**(첫 원격 적용에서
+실제로 그랬다). 실제 식별자(`v_distinct`)를 보도록 고쳤다.
+**통과할 수 없는 검증기는 없는 것보다 나쁘다 — 다음 레인에게 빨간 줄을 무시하도록 가르친다.**
+`%signature%` 가 살아남은 것은 `SIGNATURE_CAP` 이 영문 상수명이라서였을 뿐이다.
+
 ## ✅ 적용 완료 — 아이템 서버 원장 레인 마이그레이션 6건 (2026-08-08)
 
 **ADR-0050 §3 단계 1·2 의 서버측이 전부 원격에 올라갔다.** 적용 스크립트는

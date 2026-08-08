@@ -1,6 +1,6 @@
 {
   "//": "verify-commission Edge Function (의뢰서 서버 축, 서버 계약 rev3 §7). sloppy-imports(unstable)로 verifyCommissionCore 가 src/sim·src/run 의 .js specifier 를 .ts 에 resolve해 공유 소스를 무수정 import(verify-invasion 과 동일 패턴).",
-  "//deploy": "배포는 `deno task bundle` 후 dist.index.js를 index.ts로 치환해 올린다 — sloppy-imports를 CLI 배포 번들러가 못 따라가고 `--entrypoint` 플래그도 없다. src/sim·src/run/commission* 이 바뀌면 재배포가 필수다. 절차 정본: .omc/skills/planet-blitz-supabase-deploy-workflow.md · 요약: 리포 루트 README.md '서버 배포' 절.",
+  "//deploy": "배포는 `deno task bundle` 후 dist.index.js를 index.ts로 치환해 올린다 — sloppy-imports를 CLI 배포 번들러가 못 따라가고 `--entrypoint` 플래그도 없다. ⚠️ 재배포 조건은 이 함수 자신 또는 src/run/commission* 이 바뀔 때다 — 이 줄은 2026-08-08 까지 'src/sim 이 바뀌면 필수'라고 적어 같은 파일 index.ts:5('src/sim 을 싣지 않는다', ADR-0050 §1)와 모순돼 있었다. 판정 근거는 문장이 아니라 배포본↔새 번들 해시 대조다. 절차 정본: .omc/skills/planet-blitz-supabase-deploy-workflow.md · 요약: 리포 루트 README.md '서버 배포' 절.",
   "unstable": ["sloppy-imports"],
   "lock": false,
   "tasks": {

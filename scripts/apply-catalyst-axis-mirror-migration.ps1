@@ -177,9 +177,18 @@ if ($null -eq $clamp.v) { Write-Host "[FAIL] clamp function missing"; $bad++ }
 
 # 6. consume_catalysts really grew the two new gates. Body-text checks, same
 #    technique the guard-function checks in the shop migration use.
+#
+# WARNING: match on IDENTIFIERS the SQL actually contains, never on English prose.
+#   The first version of this check looked for '%duplicate%'. This repo writes all
+#   comments in Korean, so gate (e) reads "-- (e) 중복 거부" and the code is
+#   count(distinct cid) <> v_len -- the word "duplicate" can never appear. The check
+#   therefore reported [FAIL] on a migration whose gate was present and working
+#   (2026-08-08, first remote apply). A verifier that cannot pass is worse than no
+#   verifier: it trains the next lane to ignore a red line.
+#   'signature' survives only because SIGNATURE_CAP is an English constant name.
 $gates = Invoke-Sql @"
 select
-  (pg_get_functiondef(p.oid) ilike '%duplicate%')  as has_duplicate_gate,
+  (pg_get_functiondef(p.oid) ilike '%v_distinct%') as has_duplicate_gate,
   (pg_get_functiondef(p.oid) ilike '%signature%')  as has_signature_gate,
   (pg_get_functiondef(p.oid) ilike '%0.5%')        as has_compose_factor
   from pg_proc p
