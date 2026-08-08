@@ -46,29 +46,65 @@ function src(rel: string): string {
   return new TextDecoder().decode(readFileSync(url.pathname.replace(/^\/([A-Za-z]:)/, '$1')));
 }
 
-/** rare 이상 드랍만 설계도를 낸다 — 파생이 실제로 터지는 표본을 시드 스윕으로 만든다. */
-function lootSweep(planet: number, count: number): LootRecord[] {
+/**
+ * rare 이상 드랍만 설계도를 낸다 — 파생이 실제로 터지는 표본을 시드 스윕으로 만든다.
+ *
+ * ⚠️ `run` 인자는 런 단위 3% 게이트(2026-08-08) 때문에 생겼다. 게이트는 레코드가 몇 건이든
+ * **런당 한 번**만 굴리므로, count 를 키워도 표본이 늘지 않는다 — 늘려야 할 축은 런이다.
+ */
+function lootSweep(planet: number, count: number, run = 0): LootRecord[] {
   const out: LootRecord[] = [];
   for (let i = 0; i < count; i++) {
-    out.push({ seed: (i * 2654435761) >>> 0, rarity: 2, planet, stage: 1 } as LootRecord);
+    out.push({
+      seed: (run * 0x9e3779b1 + i * 2654435761) >>> 0,
+      rarity: 2,
+      planet,
+      stage: 1,
+    } as LootRecord);
   }
   return out;
 }
 
 describe('M7b 통합 — 정산 → 설계도 파생', () => {
   it('settleRun 이 설계도 목록을 실제로 내놓는다(배선 누락이면 항상 빈 배열)', () => {
-    const profile = loadProfile();
-    const loot = lootSweep(0, 60);
-    const out = settleRun(profile, { victory: true, loot, xpTotal: 0, resources: 0, planet: 0, stage: 1 });
-    expect(Array.isArray(out.blueprintsGained)).toBe(true);
-    expect(out.blueprintsGained.length).toBeGreaterThan(0);
+    let hits = 0;
+    for (let run = 0; run < 600; run++) {
+      const out = settleRun(loadProfile(), {
+        victory: true,
+        loot: lootSweep(0, 3, run),
+        xpTotal: 0,
+        resources: 0,
+        planet: 0,
+        stage: 1,
+      });
+      expect(Array.isArray(out.blueprintsGained)).toBe(true);
+      hits += out.blueprintsGained.length;
+    }
+    expect(hits).toBeGreaterThan(0);
+  });
+
+  it('클리어하지 않은 런은 설계도를 내지 않는다(2026-08-08 클리어 게이트)', () => {
+    // settlement.ts 가 `result.victory === true` 를 넘기는 배선의 짝. 위 테스트가 "클리어면
+    // 나온다"를 재고 이 테스트가 "패배면 안 나온다"를 잰다 — 둘이 함께 있어야 게이트가
+    // 배선 누락과 구분된다(둘 다 0 이면 축이 죽은 것이고, 지금은 위가 >0 이다).
+    for (let run = 0; run < 600; run++) {
+      const out = settleRun(loadProfile(), {
+        victory: false,
+        loot: lootSweep(0, 3, run),
+        xpTotal: 0,
+        resources: 0,
+        planet: 0,
+        stage: 1,
+      });
+      expect(out.blueprintsGained).toEqual([]);
+    }
   });
 
   it('정산이 내놓는 목록은 순수 파생과 정확히 같다(두 진실 금지)', () => {
     const profile = loadProfile();
     const loot = lootSweep(1, 40);
     const out = settleRun(profile, { victory: true, loot, xpTotal: 0, resources: 0, planet: 1, stage: 1 });
-    expect(out.blueprintsGained).toEqual(blueprintDropsFromLoot(loot));
+    expect(out.blueprintsGained).toEqual(blueprintDropsFromLoot(loot, 1, true));
   });
 
   it('같은 런을 두 번 정산하면 같은 설계도가 나온다(결정론 — RNG 미소비)', () => {

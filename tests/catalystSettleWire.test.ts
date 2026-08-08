@@ -431,8 +431,11 @@ describe("③ 도박 강 '청산' — 패배 소멸", () => {
       readFileSync(fileURLToPath(new URL('../src/save/settlement.ts', import.meta.url))),
     );
     // 설계도 파생도 원본을 계속 읽는다(`id 18` 압류와 같은 계층).
-    expect(src).toContain('blueprintDropsFromLoot(result.loot,');
+    // ⚠️ 2026-08-08 클리어 게이트로 호출이 여러 줄이 됐다 — 인자 첫 줄만 본다.
+    expect(src).toMatch(/blueprintDropsFromLoot\(\s*result\.loot,/);
     expect(src).not.toContain('blueprintDropsFromLoot(settledLoot');
+    // 클리어 게이트 배선. 지우면 기본값 false 라 설계도 축 전체가 조용히 죽는다.
+    expect(src).toContain('result.victory === true');
   });
 });
 

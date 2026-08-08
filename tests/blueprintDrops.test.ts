@@ -16,6 +16,7 @@ import {
   rollEliteDrop,
   DEFAULT_DROP_ODDS,
   DEFAULT_BLUEPRINT_CHANCE_CP,
+  BLUEPRINT_RUN_CHANCE_CP,
   RARITY_MAGIC,
   RARITY_RARE,
   RARITY_UNIQUE,
@@ -202,14 +203,79 @@ describe('행성별 특산 설계도 분배', () => {
   });
 });
 
+/**
+ * 합성 런 N 회를 돌려 지급 목록을 모은다(런 단위 3% 게이트 이후의 표준 표본 만들기).
+ *
+ * ⚠️ **한 런에 레코드를 300개 밀어 넣는 옛 방식은 이제 표본이 아니다.** 게이트는 레코드가
+ * 몇 건이든 런당 한 번만 굴리므로, 레코드를 늘려도 기대 건수는 0.03 에서 꿈쩍 안 하고
+ * 분포만 바뀐다. 표본을 늘리려면 **런 수**를 늘려야 한다.
+ */
+function sampleRuns(
+  runs: number,
+  mk: (run: number) => LootLike[],
+): ReturnType<typeof blueprintDropsFromLoot> {
+  const out: ReturnType<typeof blueprintDropsFromLoot> = [];
+  for (let run = 0; run < runs; run++) out.push(...blueprintDropsFromLoot(mk(run), 1, true));
+  return out;
+}
+
 describe('정산 입력(blueprintDropsFromLoot)', () => {
   it('행성 파밍 결과가 그 행성 특산으로만 나온다', () => {
-    const loot: LootLike[] = [];
-    for (let seed = 1; seed <= 300; seed++) loot.push({ seed, rarity: RARITY_UNIQUE, planet: 1 });
-    const grants = blueprintDropsFromLoot(loot);
+    const grants = sampleRuns(600, (run) => [
+      { seed: (run * 0x9e3779b1 + 1) >>> 0, rarity: RARITY_UNIQUE, planet: 1 },
+    ]);
     expect(grants.length).toBeGreaterThan(0);
     const allowed = new Set(PLANET_BLUEPRINTS[1]!.map((e) => `${e.kind}:${e.catalogId}`));
     for (const g of grants) expect(allowed.has(`${g.kind}:${g.catalogId}`)).toBe(true);
+  });
+
+  it('클리어하지 않은 런은 설계도 0(2026-08-08 클리어 게이트)', () => {
+    // 지시 첫 줄 "의뢰서와 설계도는 클리어 할때만 먹을 수 있게 한다"의 클라 측 관문.
+    // ⚠️ 기본값이 false 다 — settlement.ts 가 victory 를 넘기는 배선이 지워지면 축 전체가
+    //    조용히 죽는다. 그래서 "0이다"만 재는 것으로는 부족하고 아래 짝 단언이 함께 선다.
+    const loot: LootLike[] = [];
+    for (let seed = 1; seed <= 200; seed++) loot.push({ seed, rarity: RARITY_UNIQUE, planet: 3 });
+    expect(blueprintDropsFromLoot(loot, 1, false)).toEqual([]);
+    // 같은 입력이 클리어면 표본에서 반드시 나온다(위 0 이 게이트 때문임을 증명).
+    expect(sampleRuns(600, (run) => [
+      { seed: (run * 0x9e3779b1 + 7) >>> 0, rarity: RARITY_UNIQUE, planet: 3 },
+    ]).length).toBeGreaterThan(0);
+  });
+
+  it('런당 획득률이 약 3% 이고 드랍 건수에 불변이다', () => {
+    // 새 계약의 본체. BLUEPRINT_RUN_CHANCE_CP 하나가 총량을 정하고, 레코드 수·행성·등급은
+    // "어느 설계도인가"만 바꾼다. 1건짜리 런과 12건짜리 런의 획득률이 같아야 한다.
+    const N = 4000;
+    const rate = (mk: (run: number) => LootLike[]): number =>
+      sampleRuns(N, mk).length / N;
+    const thin = rate((run) => [
+      { seed: (run * 0x9e3779b1 + 3) >>> 0, rarity: RARITY_UNIQUE, planet: 2 },
+    ]);
+    const fat = rate((run) =>
+      Array.from({ length: 12 }, (_, i) => ({
+        seed: (run * 0x9e3779b1 + i * 0x85ebca6b + 3) >>> 0,
+        rarity: i % 2 === 0 ? RARITY_RARE : RARITY_UNIQUE,
+        planet: 2,
+      })),
+    );
+    const target = BLUEPRINT_RUN_CHANCE_CP / 10000;
+    expect(thin).toBeGreaterThan(target * 0.6);
+    expect(thin).toBeLessThan(target * 1.4);
+    expect(fat).toBeGreaterThan(target * 0.6);
+    expect(fat).toBeLessThan(target * 1.4);
+  });
+
+  it('한 런은 최대 1장이다', () => {
+    // 게이트가 통과해도 추첨은 한 번뿐 — 구 모델의 "런당 0~N개"가 여기서 닫힌다.
+    for (let run = 0; run < 3000; run++) {
+      const loot = Array.from({ length: 8 }, (_, i) => ({
+        seed: (run * 0x9e3779b1 + i * 0xc2b2ae35 + 5) >>> 0,
+        rarity: RARITY_UNIQUE,
+        planet: 3,
+      }));
+      const total = blueprintDropsFromLoot(loot, 1, true).reduce((s, g) => s + g.count, 0);
+      expect(total).toBeLessThanOrEqual(1);
+    }
   });
 
   it('같은 설계도는 장수로 합쳐진다', () => {
@@ -223,9 +289,16 @@ describe('정산 입력(blueprintDropsFromLoot)', () => {
   });
 
   it('노말·매직만 있는 런은 설계도 0(잡몹 파밍으로는 못 얻는다)', () => {
-    const loot: LootLike[] = [];
-    for (let seed = 1; seed <= 500; seed++) loot.push({ seed, rarity: RARITY_MAGIC, planet: 3 });
-    expect(blueprintDropsFromLoot(loot)).toEqual([]);
+    // 클리어 게이트를 열어 둔 채로 재야 한다 — false 로 재면 무엇 때문에 0 인지 안 갈린다.
+    expect(
+      sampleRuns(600, (run) =>
+        Array.from({ length: 30 }, (_, i) => ({
+          seed: (run * 0x9e3779b1 + i + 1) >>> 0,
+          rarity: RARITY_MAGIC,
+          planet: 3,
+        })),
+      ),
+    ).toEqual([]);
   });
 
   it('같은 런 입력이면 항상 같은 지급 목록', () => {
@@ -234,7 +307,25 @@ describe('정산 입력(blueprintDropsFromLoot)', () => {
       { seed: 22, rarity: RARITY_UNIQUE, planet: 2 },
       { seed: 33, rarity: RARITY_RARE, planet: 3 },
     ];
-    expect(blueprintDropsFromLoot(loot)).toEqual(blueprintDropsFromLoot(loot));
+    expect(blueprintDropsFromLoot(loot, 1, true)).toEqual(blueprintDropsFromLoot(loot, 1, true));
+  });
+
+  it('레코드 순서가 바뀌면 결과가 바뀔 수 있다(fold 순서 계약)', () => {
+    // rollRunBlueprint 주석이 못박은 계약을 실제로 잰다 — 호출부가 loot 를 정렬·필터해서
+    // 넘기기 시작하면 같은 런이 다른 설계도를 내고, 리플레이 대조가 조용히 갈린다.
+    const mk = (n: number): LootLike[] =>
+      Array.from({ length: 4 }, (_, i) => ({
+        seed: (n * 0x9e3779b1 + i * 0x7f4a7c15 + 1) >>> 0,
+        rarity: RARITY_UNIQUE,
+        planet: 3,
+      }));
+    let differs = 0;
+    for (let n = 0; n < 400; n++) {
+      const fwd = JSON.stringify(blueprintDropsFromLoot(mk(n), 1, true));
+      const rev = JSON.stringify(blueprintDropsFromLoot([...mk(n)].reverse(), 1, true));
+      if (fwd !== rev) differs++;
+    }
+    expect(differs).toBeGreaterThan(0);
   });
 });
 

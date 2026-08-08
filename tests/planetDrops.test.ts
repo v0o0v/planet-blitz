@@ -72,14 +72,26 @@ function supplySets(tables: readonly (readonly BlueprintSpecialty[])[]): Set<str
 
 describe('① 설계도 드랍 결정론', () => {
   it('같은 시드 목록 → 직렬화 바이트가 동일하다', () => {
-    const loot: LootLike[] = [];
-    for (let seed = 1; seed <= 500; seed++) {
-      loot.push({ seed, rarity: seed % 2 === 0 ? RARITY_RARE : RARITY_UNIQUE, planet: seed % PLANETS.length });
+    // ⚠️ 런 단위 3% 게이트(2026-08-08) 이후 **한 런은 대개 빈 목록**이다. 그래서 "비지 않음"은
+    //    런을 여러 번 돌려서 재고, 결정론은 각 런에서 바이트 대조로 잰다. 옛 방식(레코드 500개를
+    //    한 런에 밀어 넣기)은 게이트를 한 번만 통과하므로 표본이 되지 않는다.
+    let nonEmpty = 0;
+    for (let run = 0; run < 400; run++) {
+      const loot: LootLike[] = [];
+      for (let i = 1; i <= 5; i++) {
+        const seed = (run * 0x9e3779b1 + i * 0x85ebca6b) >>> 0;
+        loot.push({
+          seed,
+          rarity: i % 2 === 0 ? RARITY_RARE : RARITY_UNIQUE,
+          planet: i % PLANETS.length,
+        });
+      }
+      const a = JSON.stringify(blueprintDropsFromLoot(loot, 1, true));
+      const b = JSON.stringify(blueprintDropsFromLoot(loot, 1, true));
+      expect(b).toBe(a);
+      if (a.length > 2) nonEmpty++;
     }
-    const a = JSON.stringify(blueprintDropsFromLoot(loot));
-    const b = JSON.stringify(blueprintDropsFromLoot(loot));
-    expect(b).toBe(a);
-    expect(a.length).toBeGreaterThan(2);
+    expect(nonEmpty).toBeGreaterThan(0);
   });
 
   it('규칙 파생 자체가 순수하다(두 번 돌려도 같은 표)', () => {
@@ -336,26 +348,34 @@ describe('⑥ 정규 경로 통합(createWorld → stepWorld → 정산 입력)'
     const state = runForLoot(0xc6fd, BOSS_PLANET);
     expect(state.loot.length).toBeGreaterThan(0);
     for (const rec of state.loot) expect(rec.planet).toBe(BOSS_PLANET);
-    const grants = blueprintDropsFromLoot(state.loot);
+    const grants = blueprintDropsFromLoot(state.loot, 1, true);
     const allowed = supplySets(PLANET_BLUEPRINTS)[BOSS_PLANET]!;
     for (const g of grants) {
       expect(allowed.has(key(g)), `행성 밖 설계도 ${key(g)}`).toBe(true);
       expect(g.count).toBeGreaterThanOrEqual(1);
     }
-    // 표본이 작으면 0건일 수 있으므로 건수는 강제하지 않는다. 대신 같은 loot 를 시드로
-    // 부풀려 최소 1건이 실제로 나오는지 확인한다(경로가 죽어 있으면 여기서 0이 된다).
-    const inflated = state.loot.flatMap((r) =>
-      Array.from({ length: 40 }, (_, i) => ({ ...r, seed: (r.seed + i * 0x9e3779b1) >>> 0, rarity: RARITY_UNIQUE })),
-    );
-    expect(blueprintDropsFromLoot(inflated).length).toBeGreaterThan(0);
+    // 표본이 작으면 0건일 수 있으므로 건수는 강제하지 않는다. 대신 **런을 여러 번 흉내내서**
+    // 최소 1건이 실제로 나오는지 확인한다(경로가 죽어 있으면 여기서 0이 된다).
+    // ⚠️ 옛 버전은 한 런의 레코드를 40배로 부풀렸다 — 런 단위 게이트에서는 그래도 확률이
+    //    3% 그대로라 이 단언이 97% 확률로 실패한다. 부풀릴 축은 레코드가 아니라 **런**이다.
+    let hits = 0;
+    for (let run = 0; run < 600; run++) {
+      const loot = state.loot.map((r) => ({
+        ...r,
+        seed: (r.seed + run * 0x9e3779b1) >>> 0,
+        rarity: RARITY_UNIQUE,
+      }));
+      hits += blueprintDropsFromLoot(loot, 1, true).length;
+    }
+    expect(hits).toBeGreaterThan(0);
   });
 
   it('같은 시드의 두 실런이 같은 설계도를 낸다(런 단위 결정론)', () => {
     const a = runForLoot(0xc6d2, 1);
     const b = runForLoot(0xc6d2, 1);
     expect(JSON.stringify(b.loot)).toBe(JSON.stringify(a.loot));
-    expect(JSON.stringify(blueprintDropsFromLoot(b.loot))).toBe(
-      JSON.stringify(blueprintDropsFromLoot(a.loot)),
+    expect(JSON.stringify(blueprintDropsFromLoot(b.loot, 1, true))).toBe(
+      JSON.stringify(blueprintDropsFromLoot(a.loot, 1, true)),
     );
   });
 });

@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   CAP_ISSUE_ATTEMPTS_PER_HOUR,
+  COMMISSION_ISSUE_CHANCE_CP,
   CAP_CONSUME_PER_HOUR,
   CAP_VERIFY_ATTEMPTS,
   CAP_COMMISSION_CREDITS,
@@ -175,5 +176,73 @@ describe('AC-G2 확장 — source 집합 일치 (값이 아니라 집합)', () =
     for (const s of GRANT_CURRENCY_CLIENT_SOURCES) {
       expect(isGrantCurrencyClientSource(s)).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 발령 확률 게이트 (2026-08-08) — 재정의 마이그레이션이 정본이다
+// ---------------------------------------------------------------------------
+
+/**
+ * ⚠️ 위 블록들은 **원본** 마이그레이션(20260803000000)을 읽는다. 발령 함수는 그 뒤로 두 번
+ * `create or replace` 됐고(20260803030000 구간 재조정 · 20260808070000 발령 확률), 실제
+ * 데이터베이스가 도는 것은 **마지막 것**이다. 그래서 이 블록만 새 파일을 읽는다 —
+ * 원본을 읽으면 "고쳤는데 테스트가 옛 본문을 보고 통과"하는 형태가 된다.
+ */
+const ISSUE_RATE_MIGRATION = fileURLToPath(
+  new URL('../supabase/migrations/20260808070000_commission_issue_rate.sql', import.meta.url),
+);
+
+function issueRateSql(): string {
+  return new TextDecoder().decode(readFileSync(ISSUE_RATE_MIGRATION));
+}
+
+describe('발령 확률 게이트 SQL ↔ TS 미러', () => {
+  it('ISSUE_CHANCE_CP == COMMISSION_ISSUE_CHANCE_CP', () => {
+    const code = stripLineComments(issueRateSql());
+    const m = /ISSUE_CHANCE_CP\s+constant\s+[\w ]+:=\s*([0-9]+)/.exec(code);
+    expect(m, 'SQL 상수 ISSUE_CHANCE_CP 를 찾지 못함').not.toBeNull();
+    expect(Number(cap(m, 1, 'ISSUE_CHANCE_CP'))).toBe(COMMISSION_ISSUE_CHANCE_CP);
+  });
+
+  it("skip_reason check 에 'roll' 이 있다", () => {
+    // 없으면 4b 의 update 가 check 위반 -> 서브트랜잭션 롤백 -> 앵커까지 소멸(fail-closed).
+    // 증상은 warning 하나뿐이고 화면상으론 "발령률 0%" 라 조용하다. 여기서 못 박는다.
+    const m = /check\s*\(skip_reason in \(([^)]*)\)\)/.exec(issueRateSql());
+    expect(m, 'skip_reason check 제약을 찾지 못함').not.toBeNull();
+    const labels = cap(m, 1, 'skip_reason 라벨')
+      .split(',')
+      .map((s) => s.trim().replace(/^'|'$/g, ''))
+      .sort();
+    expect(labels).toEqual(['cooldown', 'not-victory', 'rate', 'roll', 'stock']);
+  });
+
+  it('게이트가 재고 상한 뒤 · 계급 롤 앞에 있다', () => {
+    // 순서가 계약이다: 앞으로 옮기면 빈도 상한이 세는 claimed_victory 행이 롤에 좌우돼
+    // 위조 처리량 방어가 새고, 뒤로 옮기면 이미 굽힌 payload 를 버리게 된다.
+    const code = stripLineComments(issueRateSql());
+    const stock = code.indexOf("skip_reason = 'stock'");
+    const roll = code.indexOf("skip_reason = 'roll'");
+    const grade = code.indexOf('v_roll := random()');
+    expect(stock).toBeGreaterThan(0);
+    expect(roll).toBeGreaterThan(stock);
+    expect(grade).toBeGreaterThan(roll);
+  });
+
+  it('게이트 롤과 계급 롤이 서로 다른 random() 호출이다', () => {
+    // 하나를 재사용하면 계급 분포가 [0.3, 1) 로 잘려 1급(<0.55)이 사라진다.
+    const code = stripLineComments(issueRateSql());
+    expect(code).toContain('floor(random() * 10000)::int >= ISSUE_CHANCE_CP');
+    expect(code).toContain('v_roll := random()');
+  });
+
+  it('롤 실패 경로는 next_eligible_at 을 전진시키지 않는다', () => {
+    // 쿨다운 누적기의 불변은 "**발령된** 런들의 주장 시간 합 ≤ 실제 경과"다. 미발령 런이
+    // 지평을 밀면 그 불변이 깨지고 정직한 플레이어의 다음 발령이 부당하게 밀린다.
+    const code = stripLineComments(issueRateSql());
+    const roll = code.indexOf("skip_reason = 'roll'");
+    const horizon = code.indexOf('next_eligible_at = greatest(now(), v_horizon)');
+    expect(horizon).toBeGreaterThan(roll); // 전진은 게이트보다 뒤(= 6단계 발령)에서만.
+    expect(code.slice(roll, horizon)).toContain('return;');
   });
 });

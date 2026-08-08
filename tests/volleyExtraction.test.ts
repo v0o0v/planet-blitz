@@ -23,8 +23,21 @@
  * **교환 대조를 재생성보다 먼저 했다** — 레인이 바꾼 밸런스 상수 14개를 전부 되돌리자 6건이
  * 옛 값으로 복원됐다(동일 6 / 발산 0). 아래 ⚠️ 가 요구하는 "회귀 조사 먼저" 를 그렇게 지켰다.
  *
+ * ## 재동결 — 2026-08-08 (조우 확률 확정)
+ * 같은 날 두 번째 재동결이고, 이번에도 6건 전량이 갈렸다. 원인은 **`ENCOUNTER_SPAWN_PROB`
+ * 0.02 → 0.20** 하나다. 이 픽스처는 90틱만 도는데 조우 스폰 틱은 1800~9000 이라 조우가
+ * 실제로 뜨지는 않지만, `rollEncounter` 가 런 시작에 굴린 **예약 레코드가 월드 상태에
+ * 실려 `hashWorld` 에 접힌다** — 시드 777 이 2% 에서는 미당첨, 20% 에서는 당첨이라 6건이
+ * 한꺼번에 움직였다.
+ *
+ * **교환 대조를 재생성보다 먼저 했다**: `ENCOUNTER_SPAWN_PROB` 만 0.02 로 되돌리자 6건이
+ * 옛 값으로 전량 복원됐다(동일 6 / 발산 0). 같은 레인의 다른 두 축(설계도 런 게이트 ·
+ * 의뢰서 발령 확률)은 이 해시에 **닿지 않음이 그 대조로 증명됐다** — 둘 다 정산·서버
+ * 레이어라 sim 해시 밖이라는 설계 주장과 실측이 일치한다.
+ *
  * ⚠️ 이 해시들이 갈리면 **골든 재생성이 아니라 회귀 조사가 먼저다** — 이 픽스처는
  * `src/sim/**` 를 하나도 안 만졌다(순수 리팩터), 그런데도 갈렸다면 그 자체가 결함 증거다.
+ * 위 두 번의 재동결이 지킨 절차가 그것이다: **먼저 되돌려서 귀속을 확정하고, 그 다음에 언다.**
  */
 
 import { describe, it, expect } from 'vitest';
@@ -78,27 +91,27 @@ function runHash(weaponType: number, uniqueMask = 0): string {
 
 describe('W2b emitVolley 추출 — 해시 비트 동일 (배치7 F2b)', () => {
   it('발칸(기본) — 부채꼴 분기', () => {
-    expect(runHash(WEAPON_VULCAN)).toBe('637d07af');
+    expect(runHash(WEAPON_VULCAN)).toBe('5ee28ead');
   });
 
   it('스프레드 — 부채꼴 분기(발칸과 같은 갈래, 무기 베이스라인만 다르다)', () => {
-    expect(runHash(WEAPON_SPREAD)).toBe('2fb38b3');
+    expect(runHash(WEAPON_SPREAD)).toBe('283fca91');
   });
 
   it('스프레드 + 쌍둥이 항성(유니크) — 부채꼴 분기의 배율 갈래', () => {
-    expect(runHash(WEAPON_SPREAD, 1 << UQ_TWIN_STAR_BIT)).toBe('9f294d78');
+    expect(runHash(WEAPON_SPREAD, 1 << UQ_TWIN_STAR_BIT)).toBe('d918ac06');
   });
 
   it('레일건 — 단발 분기', () => {
-    expect(runHash(WEAPON_RAILGUN)).toBe('fef4e7ff');
+    expect(runHash(WEAPON_RAILGUN)).toBe('34e7595d');
   });
 
   it('미사일 — 유도탄 분기(`MISSILE_MARK` 스탬프 포함)', () => {
-    expect(runHash(WEAPON_MISSILE)).toBe('9647e279');
+    expect(runHash(WEAPON_MISSILE)).toBe('c153e4b7');
   });
 
   it('빔 — 정지 세그먼트 분기(`reach` 별도 인자 경로)', () => {
-    expect(runHash(WEAPON_BEAM)).toBe('6dca0b60');
+    expect(runHash(WEAPON_BEAM)).toBe('f028d3fe');
   });
 });
 

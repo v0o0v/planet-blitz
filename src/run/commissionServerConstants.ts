@@ -29,6 +29,26 @@
 export const CAP_ISSUE_ATTEMPTS_PER_HOUR = 20;
 
 /**
+ * **의뢰서 발령 확률**(centi-percent). 3000 = 30%.
+ *
+ * 자격(`victory` + `bossKilled` + `MIN_BOSS_KILL_TICKS`)과 세 상한(빈도·쿨다운·재고)을 전부
+ * 통과한 런에 대해서만 굴린다 → 실효 **"런 클리어시 30%"**.
+ *
+ * ## 왜 이 축이 새로 생겼나 (2026-08-08 사용자 지시)
+ * 종전에는 상한을 통과하면 100% 발령이라 "발령 확률"이라는 축 자체가 없었다. 그래서 빈도를
+ * 실제로 정하던 것은 **방어 상수들**(`CAP_ISSUE_ATTEMPTS_PER_HOUR` · 쿨다운 누적기)이었다 —
+ * 방어와 밸런스가 한 손잡이에 얹혀 있어서 어느 쪽을 위해 값을 움직이는지 구분되지 않았다.
+ * 이 상수가 그 둘을 분리한다: **방어는 상한들이, 빈도는 이 값 하나가** 진다.
+ *
+ * ⚠️ 계급 확률표(0.55/0.20/0.18/0.07)는 이 축과 **직교**다 — 총량만 바꾸고 등급 비중은
+ * 종전 그대로다. 그 표는 여전히 SQL 안에만 살고 TS 미러가 없다(별도 과제).
+ *
+ * SQL 미러: `ISSUE_CHANCE_CP` (`issue_commission_for_run` 4b 단계,
+ * `20260808070000_commission_issue_rate.sql`).
+ */
+export const COMMISSION_ISSUE_CHANCE_CP = 3000;
+
+/**
  * 프로필당 **시간당 출격 상한**(서버 계약 §5-2 ②).
  *
  * 상한을 **행 생성 지점**(`consume_commission`)에 둔다. `mark_commission_active` 는 상태

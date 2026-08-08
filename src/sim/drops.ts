@@ -73,12 +73,39 @@ export const DEFAULT_DROP_ODDS: DropOdds = {
 // ---------------------------------------------------------------------------
 
 /**
- * 등급 코드별 설계도 동반 확률(centi-percent). 인덱스 = rarityCode.
+ * 등급 코드별 설계도 **상대 가중치**(centi-percent 형태). 인덱스 = rarityCode.
  *
  * normal·magic 은 0 이다 — 설계도는 **엘리트·보스 드랍 중심**(기획 §4)이고, 잡몹은 애초에
  * 젬만 떨군다. 엘리트/보스가 rare 이상을 뽑았을 때만 설계도가 따라붙는다.
+ *
+ * ⚠️ **2026-08-08 의미 변경: 절대 확률 → 상대 가중치.** 예전에는 이 값이 "이 레코드 하나에
+ * 설계도가 동반될 확률"이었고, 그래서 런당 획득 확률이 드랍 건수·단계·행성 배율에 따라
+ * 흔들렸다(실측 약 7%~14%, 최대 N개). 지금은 런 단위 게이트
+ * {@link BLUEPRINT_RUN_CHANCE_CP} 가 "설계도가 나오는가"를 정확히 한 번 정하고, 이 표는
+ * **통과했을 때 어느 레코드가 뽑히는가**의 가중치로만 쓰인다({@link rollRunBlueprint}).
+ * 즉 rare:unique 비중(그리고 행성별 편차)은 종전 그대로 보존되고, 총량만 3% 로 고정된다.
+ *
+ * 표를 바꾸면 이제 **획득률이 아니라 등급 비중이** 바뀐다. 총량을 바꾸려면
+ * {@link BLUEPRINT_RUN_CHANCE_CP} 를 건드려야 한다.
  */
 export const DEFAULT_BLUEPRINT_CHANCE_CP: readonly number[] = [0, 0, 600, 2500];
+
+/**
+ * **런 1회(클리어)당 설계도가 나올 확률**(centi-percent). 300 = 3%.
+ *
+ * ## 왜 런 단위 게이트인가 (2026-08-08 사용자 지시)
+ * 구 모델은 레코드마다 {@link DEFAULT_BLUEPRINT_CHANCE_CP} 를 굴렸다. 그래서 "런당 확률"이
+ * 어디에도 적혀 있지 않았고 — 드랍 건수 × 단계 품질 곡선 × 행성 인기 배율의 곱으로 창발했다.
+ * 실측 재구성치가 단계 1 카르곤 약 7.2%, 단계 21 아르케 약 14.2% 로, **의도한 값이 아니라
+ * 다른 손잡이들이 흘려보낸 잔여값**이었다. 지시는 "런 클리어시 3%, 그 안의 등급 확률은 원래대로"
+ * 였으므로 축을 둘로 쪼갠다:
+ *   - **총량** = 이 상수 하나 (드랍 건수·단계·행성 배율 전부와 무관하게 정확히 3%)
+ *   - **분포** = 기존 cp 표 + 행성 특산 weight 표 (건드리지 않았다)
+ *
+ * 클리어 런은 보스 확정 드랍(항상 rare 이상, ADR-0035)을 반드시 1건 갖기 때문에 후보가
+ * 비는 일이 없다 — 그래서 "3%"가 근사치가 아니라 **정확히 3%** 다.
+ */
+export const BLUEPRINT_RUN_CHANCE_CP = 300;
 
 /**
  * 설계도 드랍 1건의 **불투명 코드**. sim 은 방어체 카탈로그를 몰라야 하므로 여기까지가
@@ -99,10 +126,13 @@ function mix32(x: number, salt: number): number {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
-/** 판정 축별 salt — 세 축이 같은 시드에서 서로 독립적으로 갈리게 한다. */
+/** 판정 축별 salt — 각 축이 같은 시드에서 서로 독립적으로 갈리게 한다. */
 const SALT_GATE = 0x9e3779b9;
 const SALT_INDEX = 0x7f4a7c15;
 const SALT_SEED = 0x2545f491;
+/** 런 단위 게이트·가중 추첨 salt(2026-08-08). 위 세 축과 겹치면 상관이 생긴다. */
+const SALT_RUN_GATE = 0x94d049bb;
+const SALT_RUN_PICK = 0xff51afd7;
 
 /**
  * 이미 확정된 장비 드랍 1건에 설계도가 동반되는지 판정한다(순수).
@@ -124,6 +154,72 @@ export function rollBlueprintDrop(drop: DropRoll, odds: DropOdds = DEFAULT_DROP_
   const seed = drop.seed >>> 0;
   if (mix32(seed, SALT_GATE) % 10000 >= chanceCp) return null;
   return { tableIndex: mix32(seed, SALT_INDEX) % size, seed: mix32(seed, SALT_SEED) };
+}
+
+/** {@link rollRunBlueprint} 입력 1건 — 런이 남긴 드랍 레코드 하나의 추첨 자격. */
+export interface BlueprintCandidate {
+  /** 그 드랍의 확정 시드. 해시 입력이자 뽑혔을 때의 파생 원천. */
+  readonly seed: number;
+  /** 상대 가중치(등급별 cp). 0 이하면 후보에서 빠진다 — normal·magic 이 그렇다. */
+  readonly weightCp: number;
+  /** 그 드랍이 난 행성의 특산 테이블 크기. 0 이하면 후보에서 빠진다. */
+  readonly tableSize: number;
+}
+
+/**
+ * **런 1회의 설계도 추첨**(순수) — 게이트 1회 + 가중 추첨 1회, 결과는 0개 아니면 1개다.
+ *
+ * ## 왜 RNG 를 소비하지 않는가
+ * {@link rollBlueprintDrop} 과 같은 규율이다. `dropRng` 에서 한 번이라도 더 뽑으면 드랍
+ * 스트림 전체가 밀려 모든 기존 fixture 와 해시가 갈린다. 그래서 이미 확정된 드랍 시드들을
+ * murmur3 finalizer 로 접어 게이트·추첨 두 축을 만든다 — 새 결정론 입력이 0 이므로
+ * `hashWorld` 도 `LootRecord` 스키마도 한 바이트 변하지 않는다.
+ *
+ * ⚠️ **접는 순서가 계약이다.** `cands` 의 순회 순서가 fold 결과를 바꾼다 — 호출부는 항상
+ * `LootRecord` 배열 순서(= 수거 순서, 보스는 꼬리) 그대로 넘겨야 재현성이 선다.
+ *
+ * ⚠️ 후보가 하나도 없으면(= 전부 magic 이하이거나 테이블이 빈 행성) null 이다. 클리어 런은
+ * 보스 확정 드랍이 항상 rare 이상이라 이 경로로 새지 않는다 — 미클리어 런을 애초에 넘기지
+ * 않는 것이 호출부(`blueprintDropsFromLoot`)의 책임이다.
+ *
+ * @returns 뽑힌 후보의 `cands` 인덱스와 그 설계도 코드. 게이트 실패·후보 없음이면 null.
+ */
+export function rollRunBlueprint(
+  cands: readonly BlueprintCandidate[],
+  chanceCp: number = BLUEPRINT_RUN_CHANCE_CP,
+): { pick: number; code: BlueprintDropCode } | null {
+  if (!(chanceCp > 0)) return null;
+  const eligible = (c: BlueprintCandidate): boolean =>
+    c.weightCp > 0 && Number.isInteger(c.tableSize) && c.tableSize > 0;
+
+  // 1. 후보 시드를 접어 이 런 고유의 32비트를 만든다(게이트·추첨이 여기서 갈라진다).
+  let fold = 0x9e3779b9;
+  let total = 0;
+  for (const c of cands) {
+    if (!eligible(c)) continue;
+    fold = mix32(fold ^ (c.seed >>> 0), SALT_RUN_GATE);
+    total += c.weightCp;
+  }
+  if (total <= 0) return null;
+
+  // 2. 총량 게이트 — 여기 하나가 "런당 3%"의 전부다.
+  if (fold % 10000 >= chanceCp) return null;
+
+  // 3. 가중 추첨 — 등급 비중(rare:unique)과 행성 편차가 여기서 보존된다.
+  let pick = mix32(fold, SALT_RUN_PICK) % total;
+  for (let i = 0; i < cands.length; i++) {
+    const c = cands[i];
+    if (c === undefined || !eligible(c)) continue;
+    if (pick < c.weightCp) {
+      const seed = c.seed >>> 0;
+      return {
+        pick: i,
+        code: { tableIndex: mix32(seed, SALT_INDEX) % c.tableSize, seed: mix32(seed, SALT_SEED) },
+      };
+    }
+    pick -= c.weightCp;
+  }
+  return null; // 도달 불가(total 이 곧 가중치 합) — 방어적 착지.
 }
 
 // ---------------------------------------------------------------------------
