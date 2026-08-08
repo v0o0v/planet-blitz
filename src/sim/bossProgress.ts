@@ -32,6 +32,12 @@ import {
   chaseNormalSegments,
 } from './modes/chase.js';
 import { shrinkRingCleared } from './modes/shrink.js';
+// `id 33` 안전 원 중심·즉사 창 잠금(미소지면 `0`·`false` → 종전 값과 동일).
+import {
+  berdanSafeCenterX,
+  berdanSafeCenterY,
+  berdanCollapseLocked,
+} from './catalyst/shared.js';
 import { midClashCleared } from './modes/midClash.js';
 import { midClashGateActive } from './waves.js';
 
@@ -150,7 +156,13 @@ export function bossProgress(state: WorldState): BossProgress | undefined {
     segmentFrac = to > from ? clamp01((current - from) / (to - from)) : 0;
   } else if (mode === PLANET_MODE.shrink) {
     gate = 'ring';
-    segmentFrac = shrinkRingCleared(state) ? 1 : 0;
+    // 전진 게이트(`waves.ts`)와 **같은 술어**여야 한다 — 갈리면 게이지가 넘어가지도 않을 칸을
+    // 가득 찬 것으로 보여 준다(`id 33` 즉사 창이 정확히 그 상황을 만든다).
+    segmentFrac =
+      !berdanCollapseLocked(state) &&
+      shrinkRingCleared(state, berdanSafeCenterX(state), berdanSafeCenterY(state))
+        ? 1
+        : 0;
   } else {
     gate = 'kills';
     goal = w.segmentKillGoal;

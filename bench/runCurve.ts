@@ -31,9 +31,14 @@
  * `dash:false` 로 동결돼 있다(`src/sim/autopilot.ts`). `src/sim/measurePilot.ts` 가 이미
  * "쿨다운 0 이면 누른다" 정책의 측정 전용 파일럿을 제공하므로 그것을 그대로 쓴다(정책은
  * `autopilot.ts` 를 고치지 않고도 이 파일 안에서만 바꿀 수 있다). base·cat 두 런이 같은
- * 파일럿을 쓰므로 비교는 여전히 촉매 유무만의 차이다. 단 `id 1`(plunder — 엘리트/보스를
- * **몸으로 부딪혀야** 강탈)처럼 접촉 자체가 필요한 카드는 `measurePilotInput` 으로도 못 잰다
- * — 그 파일럿도 카이팅 조향(`pilotSteer`)이라 근접전을 만들지 않는다. 자세한 사유는 아래 보고.
+ * 파일럿을 쓰므로 비교는 여전히 촉매 유무만의 차이다.
+ *
+ * ⚠️ 정확히는 `bench/contactPilot.ts` 의 `contactPilotInput` 을 쓴다 — `measurePilotInput` 을
+ * 감싼 얇은 겹이다. `id 1`(plunder — 엘리트/보스를 **몸으로 부딪혀야** 강탈)처럼 접촉 자체가
+ * 필요한 카드는 카이팅 조향(`pilotSteer`)으로는 원리적으로 못 잰다(접촉이 0회다). 그래서
+ * **`id 1` 이 실린 런에서만** 강탈 대상으로 직진하는 분기가 켜진다. 게이트가 가장 바깥이라
+ * 그 카드가 없는 런의 프레임은 종전과 **비트 동일**하다 — `tests/contactPilot.test.ts` ① 이
+ * 그것을 잠근다.
  *
  * ## 왜 이 파일이 생겼는가 — "조용한 성공"이 있었다 (2026-08-06)
  * 곡선 스윕은 원래 `src/bench/rosterBench.ts` 의 `main()` 안 `--curve` 분기였고, 그 분기는
@@ -74,7 +79,8 @@ import { defaultProfile, activeShip } from '../src/save/profile.js';
 import { buildRunConfig } from '../src/run/runConfig.js';
 import { createWorld, stepWorld } from '../src/sim/world.js';
 import { hashWorld } from '../src/sim/replay.js';
-import { beginMeasureRun, measurePilotInput } from '../src/sim/measurePilot.js';
+import { beginMeasureRun } from '../src/sim/measurePilot.js';
+import { contactPilotInput } from './contactPilot.js';
 import { catalystById, SLOT_CAP } from '../src/data/catalysts.js';
 
 interface NodeProcess {
@@ -191,7 +197,7 @@ function runPaired(
 
     let sawBoss = false;
     for (let i = 0; i < MAX_TICKS; i++) {
-      stepWorld(state, measurePilotInput(state));
+      stepWorld(state, contactPilotInput(state));
       if (state.wave.boss) sawBoss = true;
       if (state.victory || state.gameOver) break;
     }
@@ -327,10 +333,13 @@ function asciiRatioTable(points: readonly RatioPoint[], catalysts: readonly numb
   );
   console.log('     is actually loading the catalyst ids into the run config either way.');
   console.log(
-    'AUTOPILOT NOTE this sweep uses measurePilotInput (dash+actives on cooldown), not the frozen',
+    'AUTOPILOT NOTE this sweep uses contactPilotInput (measurePilotInput + contact steering when',
   );
   console.log(
-    '     autopilotInput -- see report for why (dash-gated catalysts measure as 0 gain otherwise).',
+    '     catalyst id 1 is loaded), not the frozen autopilotInput -- see report for why',
+  );
+  console.log(
+    '     (dash-gated catalysts measure as 0 gain, and id 1 needs body contact, otherwise).',
   );
 }
 
@@ -407,7 +416,7 @@ function main(): void {
     console.error(
       `[runCurve] CATALYST SWEEP catalysts=[${catalysts.join(',')}] ship=${ship} planet=${planet} ` +
         `seeds=${seeds.length}/${ROSTER_SEEDS.length} levels=${levels.join(',')} maxTicks=${MAX_TICKS} ` +
-        '(paired base vs catalyst runs; measurePilotInput, not frozen autopilot)',
+        '(paired base vs catalyst runs; contactPilotInput, not frozen autopilot)',
     );
     const t0 = Date.now();
     const points = runPairedCurveSweep({

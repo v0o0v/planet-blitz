@@ -130,6 +130,9 @@ export const EN = {
   'result.loot.power': 'Combat Power',
   'result.loot.overflow': 'Storage Full',
   'result.loot.overflowVal': '{n} (no space)',
+  'result.loot.debtRepaid': 'Debt Repaid',
+  'result.loot.debtSeized': 'Loot Seized',
+  'result.loot.debtSeizedVal': '{n} (unpaid debt)',
   'result.tip.power': 'Combat Power {n}',
   'result.drops.title': 'New Gear',
   'result.drops.none': 'No new gear this run.',
@@ -411,6 +414,16 @@ export const EN = {
   'catalyst.warn.conflict': 'Reduced by another catalyst',
   'catalyst.warn.badgeVoid': 'VOID',
   'catalyst.warn.badgeConflict': 'CLASH',
+  // 축소의 결 — `src/data/catalystConflicts.ts` 의 `CatalystConflictReason` 과 1:1.
+  // ⚠️ "무효"가 아니라 **축소**로 쓴다(런 안에서는 축소된 채로라도 작동한다).
+  'catalyst.warn.reason.sharedField': 'Same axis pulled both ways',
+  'catalyst.warn.reason.choice': 'The choice itself is gone',
+  'catalyst.warn.reason.material': 'Competing for the same material',
+  'catalyst.warn.reason.ground': 'No ground left to hold',
+  'catalyst.warn.reason.aim': 'Auto-aim gets split',
+  'catalyst.warn.reason.precondition': 'Trigger condition broken',
+  'catalyst.warn.reason.priority': 'The other one resolves first',
+  'catalyst.warn.reason.overlap': 'Its gain is subsumed',
 
   // --- 픽커 슬롯·거부 사유(유니크 주입 — 같은 카드는 한 장뿐) ---
   'catalyst.picker.slotEmpty': 'Empty',
@@ -508,7 +521,7 @@ export const EN = {
     'At the raid, resources scatter onto enemies in a blue-white glow; a kill hardens them into a crystal on the ground.',
   'catalyst.foundry.name': 'Foundry',
   'catalyst.foundry.rule':
-    'Every third kill raises a turret, but while any stand, your own damage is split down by that many turrets.',
+    'Every third kill raises a turret and enemies felled while one stands drop extra loot, but your own damage is split down by that many turrets.',
   'catalyst.foundry.signal':
     'Metal folds up into a turret on every third kill, and the HUD firepower gauge dips per turret standing.',
   'catalyst.greed.name': 'Greed',
@@ -602,7 +615,7 @@ export const EN = {
     'A warning ring marks the next spot 3 seconds ahead, then a white burst wipes out every enemy inside on the jump.',
   'catalyst.berdan-royal-jelly.name': 'Berdan Royal Jelly',
   'catalyst.berdan-royal-jelly.rule':
-    'Jelly is left behind as the safe zone shrinks — enemies that eat it slow down and pay triple resources on death, but the rest speed up.',
+    'Jelly is left behind as the safe zone shrinks — enemies that eat it slow down and drop extra loot when killed, but the rest speed up.',
   'catalyst.berdan-royal-jelly.signal':
     'A golden jelly trail lines the shrink edge; enemies that feed on it turn gold and sluggish while others flush red and quicken.',
   'catalyst.berdan-hive-queen.name': 'Berdan Hive Queen',
@@ -2590,6 +2603,9 @@ export const KO: Record<MessageKey, string> = {
   'result.loot.power': '전투력',
   'result.loot.overflow': '보관 실패',
   'result.loot.overflowVal': '{n}개 (공간 부족)',
+  'result.loot.debtRepaid': '부채 상환',
+  'result.loot.debtSeized': '전리품 압류',
+  'result.loot.debtSeizedVal': '{n}점 (미상환 부채)',
   'result.tip.power': '전투력 {n}',
   'result.drops.title': '새 장비',
   'result.drops.none': '이번 런에는 새 장비가 없습니다.',
@@ -2861,6 +2877,16 @@ export const KO: Record<MessageKey, string> = {
   'catalyst.warn.conflict': '다른 촉매가 축소시킴',
   'catalyst.warn.badgeVoid': '무효',
   'catalyst.warn.badgeConflict': '충돌',
+  // 축소의 결 — `src/data/catalystConflicts.ts` 의 `CatalystConflictReason` 과 1:1.
+  // ⚠️ "무효"가 아니라 **축소**로 쓴다(런 안에서는 축소된 채로라도 작동한다).
+  'catalyst.warn.reason.sharedField': '같은 축을 반대로 당깁니다',
+  'catalyst.warn.reason.choice': '고르는 행위가 사라집니다',
+  'catalyst.warn.reason.material': '같은 재료를 다툽니다',
+  'catalyst.warn.reason.ground': '머무를 자리가 없어집니다',
+  'catalyst.warn.reason.aim': '자동 조준이 나뉩니다',
+  'catalyst.warn.reason.precondition': '발동 조건이 깨집니다',
+  'catalyst.warn.reason.priority': '다른 쪽이 먼저 처리됩니다',
+  'catalyst.warn.reason.overlap': '이득이 겹쳐 묻힙니다',
 
   // --- 픽커 슬롯·거부 사유(유니크 주입 — 같은 카드는 한 장뿐) ---
   'catalyst.picker.slotEmpty': '빈 슬롯',
@@ -2948,7 +2974,7 @@ export const KO: Record<MessageKey, string> = {
     '보급 습격 순간 자원이 적들에게 달라붙어 청백색으로 빛나고, 처치하면 결정으로 굳어 바닥에 박힌다.',
   'catalyst.foundry.name': '제련소',
   'catalyst.foundry.rule':
-    '적 셋을 처치할 때마다 포탑이 하나 서지만, 포탑이 서 있는 동안에는 네 공격력이 포탑 수만큼 나뉘어 줄어든다.',
+    '적 셋을 처치할 때마다 포탑이 하나 서고 포탑이 서 있는 동안 쓰러진 적은 전리품을 더 뱉지만, 그동안 네 공격력이 포탑 수만큼 나뉘어 줄어든다.',
   'catalyst.foundry.signal': '처치 셋째마다 금속이 접히며 포탑이 솟고, HUD 화력 게이지가 포탑 수만큼 내려간다.',
   'catalyst.greed.name': '탐욕',
   'catalyst.greed.rule':
@@ -3024,7 +3050,7 @@ export const KO: Record<MessageKey, string> = {
     '점프 3초 전 다음 자리에 예고 링이 그려지고, 점프 순간 원 안의 적이 일제히 소멸하며 백색 파열이 터진다.',
   'catalyst.berdan-royal-jelly.name': '베르단 여왕 젤리',
   'catalyst.berdan-royal-jelly.rule':
-    '안전 원이 조여든 자리에 젤리가 남아 먹은 적은 느려지고 죽으면 자원을 세 배 뱉지만, 못 먹은 적은 더 빨라진다.',
+    '안전 원이 조여든 자리에 젤리가 남아 먹은 적은 느려지고 죽으면 전리품을 더 뱉지만, 못 먹은 적은 더 빨라진다.',
   'catalyst.berdan-royal-jelly.signal':
     '수축 흔적을 따라 황금 젤리 띠가 깔리고, 먹은 적은 금빛으로 굼떠지며 못 먹은 적은 붉게 가속한다.',
   'catalyst.berdan-hive-queen.name': '베르단 군체 여왕',

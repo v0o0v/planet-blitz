@@ -31,6 +31,11 @@
 import type { Entity } from '../entities.js';
 import { PLANET_MODE, type PlanetMode } from '../planetMode.js';
 import { isContaminationNode } from './contamination.js';
+// 촉매 목표물 등재(ADR-0052). `catalyst/shared.ts` 는 리프다(`entities.js`·`data/` 만 값으로
+// 끌고 `world.js` 는 type-only) — 이 방향 import 로 순환이 생기지 않는다.
+// ⚠️ `modes/AGENTS.md` 의 "모드는 드랍·아이템을 안 건드린다" 규율과 충돌하지 않는다: 여기서
+//    들여오는 것은 **조준 대상 판정** 하나이고 드랍·촉매 상태를 읽지 않는다.
+import { isCatalystObjective } from '../catalyst/shared.js';
 
 /**
  * 이 엔티티가 **무대 진행·승리 조건인 파괴 대상**인가. 참이면 자동 조준 대상이고 봇의 이동
@@ -42,7 +47,19 @@ export function isObjectiveDestructible(e: Entity): boolean {
   // 되고, 이 파일이 경고하는 "목록이 갈린다" 를 오히려 부른다 — 목록에서 뺀다. 추격의 목표는
   // 이제 파괴물이 아니라 **미확보 대피소**이고, 그 조준·추적은 파괴 대상이 아니므로 여기가
   // 아니라 봇 이동(`autopilot.ts nearestObjective`)이 따로 다룬다.
-  return isContaminationNode(e);
+  // 촉매 목표물 등재(`catalyst/shared.ts` 의 `isCatalystObjective` 가 정본). **등재는 둘이다** —
+  // `id 19` 광석 · `id 41` 관문. 둘 다 **부수는 것이 규칙**이고, `id 19` 는 *"그동안 자동 조준이
+  // 그쪽에 묶인다"* 가 규칙 문장에 적힌 **대가**라 빼면 카드가 순수 이득이 된다.
+  //
+  // ⛔ `id 21` 결정 · `id 23` 씨앗/나무는 **일부러 뺐다**(`isCatalystEnemyOnlyObject`). 규칙이
+  //    *"적이 밟으면"* 이라 파괴 주체가 적뿐인데, 이 게임은 수동 조준이 없어 등재하면 플레이어가
+  //    자기 보상을 갉는 것을 **피할 방법이 없다**. 사유 전문은 그 술어 주석이 정본이다.
+  //    되돌리려면 규칙 문장(`src/i18n/catalog.ts`)부터 고쳐라.
+  // ⚠️ `id 47` 블록은 마커가 없다 — 블록 브레이크 벽은 `kind === 'wall'` 이라 이 틀 밖이다.
+  // ⚠️ 여기를 채우는 레인은 **제외 쪽(`isCatalystShadow`)과 같이** 봐라 — 등재와 제외는 한 쌍이고,
+  //    쌍 유지 3목록(조준 술어 · 충돌 격자 등록 · 아군탄 화이트리스트)을 하나만 고치면 무적
+  //    차폐물이 된다(이 파일 헤더의 사고 4건이 그 부류다).
+  return isContaminationNode(e) || isCatalystObjective(e);
 }
 
 /**

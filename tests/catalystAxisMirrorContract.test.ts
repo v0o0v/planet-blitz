@@ -36,6 +36,9 @@ import {
   RESONANCE_STRONG_COUNT,
   RESONANCE_WEAK_COUNT,
 } from '../src/data/catalystResonance.js';
+import { EN, KO, type MessageKey } from '../src/i18n/catalog.js';
+import { FOUNDRY_LOOT_MULT } from '../src/sim/catalyst/resource.js';
+import { JELLY_LOOT_MULT } from '../src/sim/catalyst/berdan.js';
 
 // ---------------------------------------------------------------------------
 // 마이그레이션 유효 정의 추출 (출처: tests/catalystShopContract.test.ts:34-82 — 같은 관용구)
@@ -376,5 +379,64 @@ describe('catalyst_cap_resource_mult_max — 단일 선언 지점', () => {
     expect(Number(m![1])).toBeGreaterThanOrEqual(1);
     expect(raw.match(/create or replace function public\.catalyst_cap_resource_mult_max\(\)/g))
       .toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑦ 축 이전 4자리 대조 — `id 16 foundry` · `id 34 berdan-royal-jelly`
+// ---------------------------------------------------------------------------
+//
+// ## 왜 이 절이 따로 필요한가
+// 위 ①②는 **TS ↔ SQL 두 자리**만 대조한다. 그런데 축은 네 자리에 적혀 있다 —
+// 데이터(`cap.axis`) · i18n 규칙문(화면에 보이는 문장) · sim 배율 상수(실제로 도달하는 값) ·
+// 서버 시드. 2026-08-08 사용자 판정으로 두 카드가 **자원 → 드랍**으로 옮겨갔는데, 그중 한
+// 자리만 남으면 *"화면과 규칙이 갈린다"* 는 이 리포가 반복해 밟은 형태 그대로다.
+//
+// ⚠️ 이 절은 **두 카드만** 잰다. 전 카드에 "규칙문이 자기 축의 낱말을 담는가"를 걸면 축이
+// 연출로만 드러나는 카드들(등급 승격·촉매 드랍)에서 거짓 빨강이 난다.
+
+describe('축 이전 4자리 대조 (2026-08-08 사용자 판정 — 자원 → 드랍)', () => {
+  const MOVED: readonly { id: number; mult: number; simMult: number }[] = [
+    { id: 16, mult: 1.8, simMult: FOUNDRY_LOOT_MULT },
+    { id: 34, mult: 2.4, simMult: JELLY_LOOT_MULT },
+  ];
+
+  it('① 데이터 — 두 카드의 `cap.axis` 가 drop 이다', () => {
+    for (const m of MOVED) {
+      const def = CATALYSTS.find((c) => c.id === m.id);
+      expect(def, `id ${m.id} 가 카탈로그에 없다`).toBeDefined();
+      expect(def!.cap.axis, `id ${m.id}`).toBe('drop');
+      expect(def!.cap.mult, `id ${m.id}`).toBe(m.mult);
+    }
+  });
+
+  it('② sim — 전리품 배율 상수가 선언 상한과 **같은 값**이다(배율이 상한을 못 넘는다)', () => {
+    for (const m of MOVED) {
+      const def = CATALYSTS.find((c) => c.id === m.id)!;
+      expect(m.simMult, `id ${m.id}`).toBe(def.cap.mult);
+    }
+  });
+
+  it('③ 서버 시드 — cap_axis 가 drop 이고 resource_mult 는 중립원 1 이다', () => {
+    const rows = capSeedRows();
+    for (const m of MOVED) {
+      const row = rows.find((r) => r.id === m.id);
+      expect(row, `id ${m.id} 시드 행이 없다`).toBeDefined();
+      expect(row!.capAxis, `id ${m.id}`).toBe('drop');
+      expect(row!.capMult, `id ${m.id}`).toBe(m.mult);
+      expect(row!.resourceCap, `id ${m.id}`).toBe(1);
+    }
+  });
+
+  it('④ i18n — KO/EN 규칙문이 전리품을 말하고 **자원을 더는 말하지 않는다**', () => {
+    const slugOf = (id: number) => CATALYSTS.find((c) => c.id === id)!.slug;
+    for (const m of MOVED) {
+      const ko = KO[`catalyst.${slugOf(m.id)}.rule` as MessageKey];
+      const en = EN[`catalyst.${slugOf(m.id)}.rule` as MessageKey];
+      expect(ko, `id ${m.id} ko`).toContain('전리품');
+      expect(ko, `id ${m.id} ko 에 자원 조항이 남아 있다`).not.toContain('자원');
+      expect(en.toLowerCase(), `id ${m.id} en`).toContain('loot');
+      expect(en.toLowerCase(), `id ${m.id} en 에 자원 조항이 남아 있다`).not.toContain('resource');
+    }
   });
 });

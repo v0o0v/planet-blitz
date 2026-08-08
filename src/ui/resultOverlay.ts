@@ -59,6 +59,16 @@ export interface SettlementSummary {
    * 개별 아이콘 칩으로 편다. 비었거나 없으면 칩 줄 자체를 그리지 않는다.
    */
   catalystDropList?: readonly { readonly id: number; readonly qty: number }[];
+  /**
+   * `id 18 mercantile` 이 **런 자원에서 갚은** 액수(ADR-0052). > 0 일 때만 줄이 선다.
+   *
+   * ⚠️ {@link SettlementSummary.debtSeized} 와 **반드시 갈려 보여야 한다**(명세의 `신호:` 칸).
+   * 한 줄로 합치면 "자원이 왜 줄었나"와 "장비가 왜 사라졌나"가 구분되지 않고, 그러면 빚 카드를
+   * 받을지 말지가 정보 없는 도박이 된다.
+   */
+  debtRepaid?: number;
+  /** 미상환분 때문에 **이 런의 전리품에서** 압류된 점수. > 0 일 때만 줄이 선다. */
+  debtSeized?: number;
 }
 
 /**
@@ -234,6 +244,15 @@ export class ResultOverlay {
       loot.appendChild(row(t('result.loot.skillPoints'), `+${st.skillPointsGained}`));
       loot.appendChild(row(t('result.loot.credits'), `+${st.creditsGained}`));
       loot.appendChild(row(t('result.loot.power'), `+${st.combatPower}`, 'power'));
+      // `id 18 mercantile` — 상환분과 압류분은 **두 줄로 갈라** 적는다(SettlementSummary 주석).
+      if (st.debtRepaid !== undefined && st.debtRepaid > 0) {
+        loot.appendChild(row(t('result.loot.debtRepaid'), `-${st.debtRepaid}`));
+      }
+      if (st.debtSeized !== undefined && st.debtSeized > 0) {
+        loot.appendChild(
+          row(t('result.loot.debtSeized'), t('result.loot.debtSeizedVal', { n: st.debtSeized })),
+        );
+      }
       if (st.overflow > 0) {
         loot.appendChild(row(t('result.loot.overflow'), t('result.loot.overflowVal', { n: st.overflow })));
       }

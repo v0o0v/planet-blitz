@@ -50,7 +50,7 @@ import {
   catalystById,
   catalystIconFallbackKey,
   catalystIconKey,
-  catalystVoidOnMode,
+  catalystVoidOnPlanet,
   normalizeCatalystArray,
   SIGNATURE_CAP,
   SLOT_CAP,
@@ -60,8 +60,14 @@ import {
   RESONANCE_STRONG_COUNT,
   RESONANCE_WEAK_COUNT,
   resolveResonance,
+  resonanceVoidOnPlanet,
   tagCounts,
+  type ResonanceDef,
 } from '../../data/catalystResonance.js';
+import {
+  catalystConflicts,
+  type CatalystConflictReason,
+} from '../../data/catalystConflicts.js';
 import {
   catalystCapLine,
   catalystName,
@@ -82,6 +88,7 @@ import {
 import { planetById } from '../../../data/planets.js';
 import { DESIGN_WIDTH, DESIGN_HEIGHT } from '../../render/app.js';
 import { t } from '../../i18n/index.js';
+import type { MessageKey } from '../../i18n/catalog.js';
 import { COLOR, UI_FONT, TEXT_SHADOW } from './theme.js';
 import { loadUiTextures, type UiTextures } from './uiTextures.js';
 import { makeScrollArea } from './scrollArea.js';
@@ -192,7 +199,7 @@ const BADGE = 0x8affc0;
 const RESONANCE_COLOR = 0x8affc0;
 const WARN_COLOR = 0xb9b3a6;
 /**
- * 경고 2단의 색(헌장 §축소 작동 규율) — **회색 = 이 행성에서 무효**(구조적, `voidOnModes`) /
+ * 경고 2단의 색(헌장 §축소 작동 규율) — **회색 = 이 행성에서 무효**(구조적, `voidOnPlanets`) /
  * **노랑 = 촉매 간 충돌**(축소 작동, 런타임 판정).
  *
  * ⚠️ 둘 다 **경고일 뿐**이다. sim 이 그 카드를 끄는 근거가 아니고, 런 안에서는 축소된 형태로라도
@@ -200,6 +207,20 @@ const WARN_COLOR = 0xb9b3a6;
  */
 const WARN_VOID_COLOR = 0x9a94a8;
 const WARN_CONFLICT_COLOR = 0xffd45e;
+/**
+ * 축소의 결 → i18n 키. **전수 매핑**이라 `Record` 로 둔다 — 결을 늘리면 여기서 타입 에러가
+ * 나고(`tests/catalystConflicts.test.ts` 도 잡는다), 문구 없는 결이 조용히 새는 일이 없다.
+ */
+const CONFLICT_REASON_KEY: Record<CatalystConflictReason, MessageKey> = {
+  sharedField: 'catalyst.warn.reason.sharedField',
+  choice: 'catalyst.warn.reason.choice',
+  material: 'catalyst.warn.reason.material',
+  ground: 'catalyst.warn.reason.ground',
+  aim: 'catalyst.warn.reason.aim',
+  precondition: 'catalyst.warn.reason.precondition',
+  priority: 'catalyst.warn.reason.priority',
+  overlap: 'catalyst.warn.reason.overlap',
+};
 /** 태그 칩 바탕/글자. */
 const TAG_CHIP_FACE = 0x2a2440;
 const TAG_CHIP_TEXT = 0xcfc6ff;
@@ -869,7 +890,7 @@ export class CatalystPicker {
       colW,
       t('catalyst.warn.head'),
       WARN_COLOR,
-      this.warningRows(ids),
+      this.warningRows(ids, reso),
     );
   }
 
@@ -904,21 +925,35 @@ export class CatalystPicker {
   /**
    * 경고 2단(헌장 §축소 작동 규율).
    *
-   *  - **회색** = 이 행성에서 구조적으로 무효(`def.voidOnModes`, 데이터가 미리 안다).
-   *  - **노랑** = 촉매 간 충돌로 축소 작동(런타임 판정).
+   *  - **회색** = 이 행성에서 구조적으로 무효(데이터가 미리 안다). **카드와 공명 둘 다** 낸다 —
+   *    카드는 `def.voidOnPlanets`, 공명은 `ResonanceDef.voidOnPlanets` 다.
+   *  - **노랑** = 촉매 간 충돌로 축소 작동(`catalystConflicts.ts` 가 판정 정본).
    *
-   * ⚠️ 노랑 판정 목록은 **아직 비어 있다** — 어떤 조합이 서로를 축소시키는지는 sim 배선 레인이
-   * 훅을 얹으면서 정한다. 여기 자리와 색만 만들어 두고, 그 레인이 판정을 채운다.
-   * ⚠️ 어느 쪽이든 **경고일 뿐**이다. sim 은 이 목록을 근거로 카드를 끄지 않는다.
+   * ## ⚠️ 공명 회색 줄이 없으면 «3장을 바치고 아무 일도 안 일어난다»가 된다
+   * 공명은 카드 셋을 같은 태그로 맞춰야 뜨는 **가장 비싼 선택**인데, 2026-08-08 이전에는
+   * `ResonanceDef` 에 무효 칸이 아예 없어 «침식 강 함몰은 베르단·니플헤임에서 안 뜬다»를
+   * 픽커가 낼 수단이 **존재하지 않았다**. sim 게이트(`subsidenceActive`)와 이 줄이 지금은
+   * 같은 데이터 한 칸을 읽으므로 화면과 규칙이 갈릴 수 없다.
+   *
+   * ⚠️ **둘은 섞이지 않는다.** 회색은 카드↔행성이고 노랑은 카드↔카드(또는 카드↔공명)다 —
+   * 한 카드가 이 행성에서 무효라는 것과 다른 카드가 그것을 깎는다는 것은 다른 사실이라 두 줄로
+   * 나온다. 회색이 노랑을 먹거나 그 반대가 되면 "왜 경고인가"가 한쪽으로 뭉개진다.
+   *
+   * ⚠️ 노랑은 **발동한 공명 하나**만 근거로 삼는다(`resolveResonance` 가 정본). 조건은 맞지만
+   * 우선순위에 밀려 안 뜬 공명까지 세면 없는 충돌을 경고하게 된다.
+   *
+   * ⚠️ 어느 쪽이든 **경고일 뿐**이다. sim 은 이 목록을 근거로 카드를 끄지 않는다 — 무효도
+   * 충돌도 런 안에서는 **축소된 형태로라도 작동한다**(헌장 §축소 작동 규율). 그래서 문구도
+   * "무효화됨"이 아니라 축소의 결이다.
    */
-  private warningRows(ids: readonly number[]): readonly PickerRow[] {
+  private warningRows(ids: readonly number[], reso: ResonanceDef | null): readonly PickerRow[] {
     const planet = this.opts?.planet;
     if (planet === undefined) return [];
     const rows: PickerRow[] = [];
     for (const id of ids) {
       const def = catalystById(id);
       if (def === undefined) continue;
-      if (catalystVoidOnMode(def, planet)) {
+      if (catalystVoidOnPlanet(def, planet)) {
         rows.push({
           label: stripEmoji(catalystName(def)),
           value: t('catalyst.warn.voidOnPlanet'),
@@ -926,7 +961,31 @@ export class CatalystPicker {
         });
       }
     }
-    // 노랑(촉매 간 충돌)은 배선 레인이 채운다 — 지금 채워 넣으면 근거 없는 경고가 된다.
+
+    // 회색(공명) — 카드 줄 **뒤**다. 공명은 카드 셋의 결과라 원인(카드)을 먼저 읽고 결과를
+    // 읽는 순서가 맞고, 순서를 뒤집으면 "왜 무효인가"의 근거가 아래에 오게 된다.
+    if (reso !== null && resonanceVoidOnPlanet(reso, planet)) {
+      rows.push({
+        label: stripEmoji(resonanceName(reso)),
+        value: t('catalyst.warn.voidOnPlanet'),
+        color: WARN_VOID_COLOR,
+      });
+    }
+
+    // 노랑 — 지금 고른 조합(부분 선택 포함)에서 **실제로 발동하는** 충돌만.
+    for (const hit of catalystConflicts(ids, reso)) {
+      const names = hit.ids.map((id) => {
+        const def = catalystById(id);
+        return def === undefined ? String(id) : stripEmoji(catalystName(def));
+      });
+      // 카드↔공명이면 상대는 공명 이름이다(태그+단으로 식별된 것 = 지금 뜬 그 공명).
+      if (hit.kind === 'resonance' && reso !== null) names.push(stripEmoji(resonanceName(reso)));
+      rows.push({
+        label: names.join(' ↔ '),
+        value: t(CONFLICT_REASON_KEY[hit.reason]),
+        color: WARN_CONFLICT_COLOR,
+      });
+    }
     return rows;
   }
 
@@ -1011,7 +1070,7 @@ export class CatalystPicker {
   /**
    * 셀 상태 한 줄 — 우선순위는 **회색 무효 경고 > 주입됨 > 거부 사유**.
    *
-   * ⚠️ 무효 경고(`voidOnModes`)가 거부 사유보다 위인 이유: 이 행성에서 구조적으로 무효인 카드도
+   * ⚠️ 무효 경고(`voidOnPlanets`)가 거부 사유보다 위인 이유: 이 행성에서 구조적으로 무효인 카드도
    * **넣을 수는 있다**(헌장 §축소 작동 규율 — 무효화는 경고로만 존재하고 런 안에서는 축소된
    * 형태로라도 작동한다). 그래서 "왜 회색인가"가 "왜 못 넣는가"보다 먼저 읽혀야 한다.
    *
@@ -1019,7 +1078,7 @@ export class CatalystPicker {
    */
   private cellStatus(def: CatalystDef): { text: string; color: number } | null {
     const planet = this.opts?.planet;
-    if (planet !== undefined && catalystVoidOnMode(def, planet)) {
+    if (planet !== undefined && catalystVoidOnPlanet(def, planet)) {
       return { text: `${t('catalyst.warn.badgeVoid')} · ${t('catalyst.warn.voidOnPlanet')}`, color: WARN_VOID_COLOR };
     }
     if (this.injectedCountOf(def.id) > 0) return { text: t('catalyst.picker.injected'), color: BADGE };

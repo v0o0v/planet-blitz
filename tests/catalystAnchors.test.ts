@@ -47,6 +47,21 @@ const hoisted = vi.hoisted(() => ({
   dashPierced: [] as { x: number; y: number }[],
   /** `onResourceGrantedCatalyst` 가 받은 인자 기록. */
   resourceGrants: [] as { amount: number; x: number; y: number }[],
+  /**
+   * 신규 앵커 일곱(배선 기반 레인)의 계측.
+   *
+   * ⚠️ 전부 **`world.ts` 호출부**에서 관측된다. 이 저장소의 규율이 그것이다 — 앵커 A 안에서
+   * 앵커 B 를 부르면 지역 바인딩을 타 `vi.mock` 이 그 호출을 **영영 못 본다**(`onDashSwept`
+   * 가 실제로 0 을 냈다). 그래서 일곱 모두 호출을 호출부로 올려 두었다.
+   */
+  lootRolls: [] as { rarity: number; count: number; elite: boolean }[],
+  waveAdvances: [] as { prev: number; next: number }[],
+  /** 세우면 `onLootCollectedCatalyst` 가 `true` 를 돌려준다(= `state.loot` push 억제). */
+  forceLootSuppress: false,
+  /** 세우면 `onDestructibleDestroyedCatalyst` 가 `true` 를 돌려준다(= 기본 젬 억제). */
+  forceDestructibleSuppress: false,
+  /** 세우면 `onEnemyStepCatalyst` 가 원본 대신 이 배율을 돌려준다. */
+  forceEnemyStepMult: null as number | null,
 }));
 
 vi.mock('../src/sim/catalystHooks.js', async (orig) => {
@@ -85,6 +100,23 @@ vi.mock('../src/sim/catalystHooks.js', async (orig) => {
         });
       }
       if (name === 'onBossDeathCatalyst' && hoisted.forceBossSuppress) return true;
+      if (name === 'onLootRollCatalyst') {
+        hoisted.lootRolls.push({
+          rarity: args[1] as number,
+          count: args[2] as number,
+          elite: args[5] as boolean,
+        });
+      }
+      if (name === 'onWaveAdvancedCatalyst') {
+        hoisted.waveAdvances.push({ prev: args[1] as number, next: args[2] as number });
+      }
+      if (name === 'onLootCollectedCatalyst' && hoisted.forceLootSuppress) return true;
+      if (name === 'onDestructibleDestroyedCatalyst' && hoisted.forceDestructibleSuppress) {
+        return true;
+      }
+      if (name === 'onEnemyStepCatalyst' && hoisted.forceEnemyStepMult !== null) {
+        return hoisted.forceEnemyStepMult;
+      }
       return fn(...args);
     };
   }
@@ -163,6 +195,11 @@ beforeEach(() => {
   hoisted.forceBossSuppress = false;
   hoisted.dashPierced = [];
   hoisted.resourceGrants = [];
+  hoisted.lootRolls = [];
+  hoisted.waveAdvances = [];
+  hoisted.forceLootSuppress = false;
+  hoisted.forceDestructibleSuppress = false;
+  hoisted.forceEnemyStepMult = null;
 });
 
 // ---------------------------------------------------------------------------
@@ -193,6 +230,14 @@ describe('계측 이음매', () => {
       'onResourceGrantedCatalyst',
       'onBossDeathCatalyst',
       'catalystSettlementOf',
+      // 배선 기반 레인 — 신규 앵커 일곱.
+      'onLootRollCatalyst',
+      'onLootCollectedCatalyst',
+      'onWaveAdvancedCatalyst',
+      'onEnemyContactCatalyst',
+      'onEnemyStepCatalyst',
+      'onDestructibleDestroyedCatalyst',
+      'stepCatalystHazards',
     ]) {
       expect(typeof (mod as Record<string, unknown>)[name], name).toBe('function');
     }
@@ -698,5 +743,289 @@ describe('id 24 chainreaction — 받은 피해가 가장 가까운 적에게 �
     stepWorld(s, idle);
     const used = s.catalystSlots.flatMap((v, i) => (v !== 0 ? [i] : []));
     expect(used, '배정표(catalystSlots.ts)와 어긋난 칸을 썼다').toEqual([7, 8]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ④ 신규 앵커 일곱 (배선 기반 레인) — **호출부 계측**
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 계측은 전부 `world.ts` **호출부**에서 일어난다. 앵커 안에서 다른 앵커를 부르면 지역
+// 바인딩을 타 `vi.mock` 이 그 호출을 못 본다(`onDashSweptCatalyst` 주석의 실측).
+//
+// ⚠️ **무촉매 런에서도 호출 자체는 일어난다** — 이 저장소의 계약은 "게이트는 함수 안에 있다"
+// 이고(위 절 「무촉매 런에서도 호출은 일어난다」), 그래야 계측이 배선 유실을 잡는다. 무촉매
+// 런에서 0 이어야 하는 것은 **효과**다: 반환형 앵커는 인자를 그대로 돌려주고, 해저드 단계는
+// 루프가 0회다. 그 물증의 정본은 `scripts/catalystByteInvariance.ts` 의 sha256 이다.
+
+const { spawnLoot, spawnDestructible, spawnHazard } = await import('../src/sim/entities.js');
+const { HAZARD_CATALYST, CATALYST_HAZARD_LIVE_CAP, spawnCatalystHazard } = await import(
+  '../src/sim/catalyst/shared.js'
+);
+
+/** 무촉매 런(대조군). 촉매 배열 자체가 없다. */
+function noCatalyst(seed: number): WorldState {
+  return createWorld(seed, { ...DEFAULT_CONFIG });
+}
+
+describe('신규 앵커 — 전리품 등급·개수 롤', () => {
+  function killBoss(state: WorldState): void {
+    const b = blankEntity('boss');
+    b.x = 900;
+    b.y = 900;
+    b.radius = 90;
+    b.hp = 0;
+    b.dead = true;
+    addEntity(state, b);
+    stepWorld(state, idle);
+  }
+
+  it('보스 확정 드랍 지점에서 `onLootRollCatalyst` 가 한 번 불린다 (elite=false)', () => {
+    const s = withCatalyst(0xcb01);
+    killBoss(s);
+    expect(count('onLootRollCatalyst')).toBe(1);
+    expect(hoisted.lootRolls[0]?.elite).toBe(false);
+  });
+
+  it('음성 대조: 드랍이 없는 틱에는 0 이다', () => {
+    const s = withCatalyst(0xcb02);
+    stepWorld(s, idle);
+    expect(count('onLootRollCatalyst')).toBe(0);
+  });
+
+  it('무촉매 런도 같은 지점에서 불리고, **배율이 인자 그대로**라 드랍이 종전과 같다', () => {
+    const s = noCatalyst(0xcb03);
+    killBoss(s);
+    expect(count('onLootRollCatalyst')).toBe(1);
+    // 무촉매 기본값 — `catalystMods` 가 중립(1)이라 인자가 그대로 왔다.
+    expect(hoisted.lootRolls[0]?.rarity).toBe(1);
+    expect(hoisted.lootRolls[0]?.count).toBe(1);
+    expect(s.loot.length).toBe(1);
+  });
+});
+
+describe('신규 앵커 — 전리품 수거(=`state.loot` push 억제 채널)', () => {
+  function pickUpLoot(state: WorldState): void {
+    const p = player(state);
+    addEntity(state, spawnLoot(state, p.x, p.y, 0x1234, 2));
+    stepWorld(state, idle);
+  }
+
+  it('전리품을 주운 틱에 `onLootCollectedCatalyst` 가 불리고, 억제 안 하면 종전대로 실린다', () => {
+    const s = withCatalyst(0xcb10);
+    pickUpLoot(s);
+    expect(count('onLootCollectedCatalyst')).toBe(1);
+    expect(s.loot).toHaveLength(1);
+  });
+
+  it('⭐ `true` 를 돌려주면 `state.loot` 에 **안 실린다** (id 3·id 15 의 필수 분기)', () => {
+    hoisted.forceLootSuppress = true;
+    const s = withCatalyst(0xcb11);
+    pickUpLoot(s);
+    expect(count('onLootCollectedCatalyst')).toBe(1);
+    expect(s.loot, '억제가 push 를 못 막았다 — 앵커가 push 뒤에 서 있다').toHaveLength(0);
+  });
+
+  it('음성 대조: 전리품이 없으면 0 이다', () => {
+    const s = withCatalyst(0xcb12);
+    stepWorld(s, idle);
+    expect(count('onLootCollectedCatalyst')).toBe(0);
+  });
+});
+
+describe('신규 앵커 — 세그먼트 전진', () => {
+  it('`state.wave.segmentIndex` 가 **변한 틱에만** 불리고, 인자가 전후 값과 일치한다', () => {
+    const s = withCatalyst(0xcb20);
+    const transitions: { prev: number; next: number }[] = [];
+    for (let t = 0; t < 2400; t++) {
+      const prev = s.wave.segmentIndex;
+      stepWorld(s, idle);
+      const next = s.wave.segmentIndex;
+      if (next !== prev) transitions.push({ prev, next });
+    }
+    expect(count('onWaveAdvancedCatalyst')).toBe(transitions.length);
+    expect(hoisted.waveAdvances).toEqual(transitions);
+  });
+
+  it('음성 대조: 세그먼트가 안 변한 첫 틱에는 0 이다', () => {
+    const s = withCatalyst(0xcb21);
+    stepWorld(s, idle);
+    expect(s.wave.segmentIndex).toBe(0);
+    expect(count('onWaveAdvancedCatalyst')).toBe(0);
+  });
+});
+
+describe('신규 앵커 — 접촉 판정', () => {
+  it('접촉한 틱에 `onEnemyContactCatalyst` 가 불린다', () => {
+    const s = withCatalyst(0xcb30);
+    const p = player(s);
+    plantEnemy(s, p.x, p.y, 5);
+    stepWorld(s, idle);
+    expect(count('onEnemyContactCatalyst')).toBeGreaterThan(0);
+  });
+
+  it('⭐ **무적 중에도 불린다** (id 1 강탈이 대시 무적 파고들기로 성립해야 한다)', () => {
+    const s = withCatalyst(0xcb31);
+    const p = player(s);
+    p.iframes = 60;
+    plantEnemy(s, p.x, p.y, 5);
+    stepWorld(s, idle);
+    expect(
+      count('onEnemyContactCatalyst'),
+      '앵커가 무적 조기 반환 **뒤**에 서 있다 — id 1 이 구조적으로 0회가 된다',
+    ).toBeGreaterThan(0);
+    // 무적 짝(`onContactInvuln`)도 같은 틱에 불렸다 = 순서가 뒤집히지 않았다.
+    expect(count('onContactInvuln')).toBeGreaterThan(0);
+  });
+
+  it('음성 대조: 떨어져 있으면 0 이다', () => {
+    const s = withCatalyst(0xcb32);
+    const p = player(s);
+    plantEnemy(s, p.x + 4000, p.y + 4000, 5);
+    stepWorld(s, idle);
+    expect(count('onEnemyContactCatalyst')).toBe(0);
+  });
+});
+
+describe('신규 앵커 — 적 이동 배율', () => {
+  it('살아 있는 적마다 매 틱 한 번 불린다', () => {
+    const s = withCatalyst(0xcb40);
+    const p = player(s);
+    plantEnemy(s, p.x + 600, p.y);
+    plantEnemy(s, p.x + 800, p.y);
+    const before = count('onEnemyStepCatalyst');
+    stepWorld(s, idle);
+    expect(count('onEnemyStepCatalyst') - before).toBeGreaterThanOrEqual(2);
+  });
+
+  it('⭐ 반환 배율이 실제 이동에 도달한다 (0 을 돌려주면 적이 멈춘다)', () => {
+    const s = withCatalyst(0xcb41);
+    const p = player(s);
+    const e = plantEnemy(s, p.x + 600, p.y);
+    hoisted.forceEnemyStepMult = 0;
+    const x0 = e.x;
+    const y0 = e.y;
+    for (let t = 0; t < 10; t++) stepWorld(s, idle);
+    expect(e.x, '반환값이 뒤에서 삼켜졌다').toBe(x0);
+    expect(e.y).toBe(y0);
+  });
+
+  // ⚠️ "적이 없으면 0" 은 쓸 수 없다 — 첫 틱에 `updateWaves` 가 이미 적을 낳는다. 대신 **같은
+  // 시드 두 런의 차분**으로 잰다(웨이브 스폰이 동일하므로 차이는 심은 적 수뿐이다).
+  it('음성 대조(차분): 심은 적 수만큼만 호출이 는다', () => {
+    const base = withCatalyst(0xcb42);
+    stepWorld(base, idle);
+    const baseline = count('onEnemyStepCatalyst');
+
+    for (const k of Object.keys(hoisted.calls)) delete hoisted.calls[k];
+    const s = withCatalyst(0xcb42);
+    const p = player(s);
+    // ⚠️ `enemyType` 을 유효한 값으로 세워야 한다 — `blankEntity` 기본값은 정의표에 없어
+    // `enemyDefFor` 가 `undefined` 를 돌려주고, 그 적은 이동 단계에서 통째로 건너뛰어진다
+    // (앵커도 안 불린다). 이 자리를 빼먹으면 계측이 조용히 0 을 낸다.
+    plantEnemy(s, p.x + 600, p.y).enemyType = 0;
+    plantEnemy(s, p.x + 800, p.y).enemyType = 0;
+    stepWorld(s, idle);
+    expect(count('onEnemyStepCatalyst') - baseline).toBe(2);
+  });
+});
+
+describe('신규 앵커 — 파괴물 파괴', () => {
+  function breakOne(state: WorldState): void {
+    const d = spawnDestructible(state, 900, 900, 48, 30, 5);
+    // `compact` 의 첫 줄이 `if (!e.dead) { survivors.push; continue; }` 라 **둘 다** 필요하다 —
+    // 실제 파괴 경로(아군탄 명중)도 hp 를 0 으로 만들면서 `dead` 를 같이 세운다.
+    d.hp = 0;
+    d.dead = true;
+    stepWorld(state, idle);
+  }
+
+  it('파괴된 틱에 불리고, 억제 안 하면 기본 젬이 종전대로 나온다', () => {
+    const s = withCatalyst(0xcb50);
+    breakOne(s);
+    expect(count('onDestructibleDestroyedCatalyst')).toBe(1);
+    expect(s.entities.some((e) => e.kind === 'gem')).toBe(true);
+  });
+
+  it('⭐ `true` 를 돌려주면 기본 젬이 **안 나온다**', () => {
+    hoisted.forceDestructibleSuppress = true;
+    const s = withCatalyst(0xcb51);
+    breakOne(s);
+    expect(count('onDestructibleDestroyedCatalyst')).toBe(1);
+    expect(s.entities.some((e) => e.kind === 'gem')).toBe(false);
+  });
+
+  it('음성 대조: 파괴가 없는 틱에는 0 이다', () => {
+    const s = withCatalyst(0xcb52);
+    stepWorld(s, idle);
+    expect(count('onDestructibleDestroyedCatalyst')).toBe(0);
+  });
+});
+
+describe('신규 앵커 — 촉매 해저드 per-tick 피해', () => {
+  /** 촉매 해저드 하나(즉시 활성 · 지속형). */
+  function plantCatalystHazard(state: WorldState, x: number, y: number, dmg: number): Entity {
+    const h = spawnCatalystHazard(state, x, y, 200, 0, 600, dmg, true);
+    if (h === undefined) throw new Error('상한에 걸렸다');
+    return h;
+  }
+
+  it('매 틱 한 번 불린다 (`resolveCollisions` 의 새 단계)', () => {
+    const s = withCatalyst(0xcb60);
+    stepWorld(s, idle);
+    expect(count('stepCatalystHazards')).toBe(1);
+    stepWorld(s, idle);
+    expect(count('stepCatalystHazards')).toBe(2);
+  });
+
+  it('⭐ 반경 안 적의 hp 를 깎고, 죽으면 **`dead` 를 세운다**(좀비 회귀 차단)', () => {
+    const s = withCatalyst(0xcb61);
+    const p = player(s);
+    const e = plantEnemy(s, p.x + 300, p.y);
+    e.hp = 5;
+    e.maxHp = 5;
+    plantCatalystHazard(s, p.x + 300, p.y, 100);
+    stepWorld(s, idle);
+    expect(e.hp).toBeLessThanOrEqual(0);
+    expect(e.dead, 'hp 만 0 이고 dead 가 안 섰다 = compact 가 못 걷어가는 좀비').toBe(true);
+  });
+
+  it('음성 대조: 반경 밖 적은 안 깎인다', () => {
+    const s = withCatalyst(0xcb62);
+    const p = player(s);
+    const e = plantEnemy(s, p.x + 2000, p.y);
+    const hp0 = e.hp;
+    plantCatalystHazard(s, p.x + 300, p.y, 100);
+    stepWorld(s, idle);
+    expect(e.hp).toBe(hp0);
+  });
+
+  it('⚠️ 무촉매 런은 **루프가 0회**다 (촉매 해저드를 심어도 아무 것도 안 깎인다)', () => {
+    const s = noCatalyst(0xcb63);
+    const p = player(s);
+    const e = plantEnemy(s, p.x + 300, p.y);
+    const hp0 = e.hp;
+    // 게이트 밖에서 심는다 — 무촉매 런에서 이 단계가 정말 안 도는지 재는 것이 요점이다.
+    spawnHazard(s, HAZARD_CATALYST, p.x + 300, p.y, 200, 0, 600, 100, true, 0);
+    stepWorld(s, idle);
+    expect(count('stepCatalystHazards'), '호출 자체는 일어난다(게이트는 함수 안)').toBe(1);
+    expect(e.hp, '무촉매 런에서 촉매 해저드가 적을 때렸다 = 게이트가 없다').toBe(hp0);
+  });
+});
+
+describe('촉매 해저드 — 동시 상한과 영구 금지', () => {
+  it('상한을 넘으면 스폰만 생략한다 (RNG 미소비)', () => {
+    const s = withCatalyst(0xcb70);
+    const rngBefore = JSON.stringify(s.dropRng);
+    for (let i = 0; i < CATALYST_HAZARD_LIVE_CAP; i++) {
+      expect(spawnCatalystHazard(s, 100 * i, 100, 50, 0, 600, 1, true)).toBeDefined();
+    }
+    expect(spawnCatalystHazard(s, 9999, 100, 50, 0, 600, 1, true)).toBeUndefined();
+    expect(JSON.stringify(s.dropRng), '상한 판정이 RNG 를 소비했다').toBe(rngBefore);
+  });
+
+  it('⚠️ 영구(`life < 0`) 촉매 해저드는 **던진다** (청크 예산 잠식·경로 독립성 파손)', () => {
+    const s = withCatalyst(0xcb71);
+    expect(() => spawnCatalystHazard(s, 100, 100, 50, 0, -1, 1, true)).toThrow();
   });
 });

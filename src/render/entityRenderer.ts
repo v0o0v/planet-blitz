@@ -206,6 +206,19 @@ const HIT_FLASH_FRAMES = 3;
 const HIT_FLASH_TINT = 0xffffff;
 /** 히트 플래시 오버레이 알파(가산 세기). placeholder, defer-balance-tuning(프레임 감쇠는 후속). */
 const HIT_FLASH_ALPHA = 0.85;
+
+/**
+ * 촉매 **자해** 오버레이 색(ADR-0052 §귀속 규율 3). 적 피해의 흰색(`HIT_FLASH_TINT`)과 달리
+ * 보라 — 이 게임의 전투 팔레트(적탄 붉은/주황, 아군탄 청록)에 없는 색이라 겹쳐도 안 헷갈린다.
+ */
+const CATALYST_SELF_HARM_TINT = 0xb04cff;
+
+/**
+ * 촉매 자해 표식의 유효 창(프레임). sim 통지(틱 단위)와 HP 델타 관측(rAF 프레임)이 어긋날 수
+ * 있어 즉시 소비가 아니라 **짧은 창**으로 둔다. 히트 플래시 창보다 넉넉해야 60Hz sim ↔ 30fps
+ * 렌더처럼 프레임이 드문 환경에서도 놓치지 않는다.
+ */
+const CATALYST_SELF_HARM_FRAMES = 8;
 /**
  * 낙하산 폭 = 수송체 **표시 폭**(sprite.width)의 배수. 낙하산이 부모 Sprite 의 자식이던 시절
  * `setSize(tw*0.95)`(부모 텍스처 로컬)을 부모 스케일이 곱해 표시하던 크기를, 이제 형제로 두므로
@@ -819,6 +832,11 @@ export class EntityRenderer {
    * 위치를 모르므로 imperative 신호 → 다음 프레임 배치). render-only.
    */
   private pendingLevelUp = false;
+  /**
+   * 촉매 **자해** 표식이 유효한 프레임의 상한(ADR-0052 §귀속 규율 3). {@link markCatalystSelfHarm}
+   * 이 세우고 플레이어 피격 분기가 읽어 오버레이 색을 가른다. render-only 파생 — sim 무영향.
+   */
+  private catalystSelfHarmUntilTick = 0;
   /** 화면 흔들림 트라우마 컨트롤러(AC-2.1). render-only 파생 — sim 되먹임 없음(카메라 오프셋만). */
   private readonly trauma = new TraumaController();
 
@@ -1334,7 +1352,23 @@ export class EntityRenderer {
         this.lastPlayerAngle = facing;
         tracked.sprite.rotation = facing;
         // 화면 흔들림 트리거 ① 플레이어 피격(중) — HP 델타(AC-2.1). p 는 직전 스냅샷.
-        if (p.hp > e.hp) this.trauma.addTrauma(TRAUMA_PLAYER_HIT);
+        if (p.hp > e.hp) {
+          this.trauma.addTrauma(TRAUMA_PLAYER_HIT);
+          // ⭐ **촉매 자해 전용 색**(ADR-0052 헌장 §귀속 규율 3 — *"촉매 유래 자해는 적 피해와
+          // 다른 색·다른 사운드로 분리한다"*). 여기가 **플레이어 피해 연출이 색을 정하는 유일한
+          // 자리**다: 종전에 플레이어 피격은 흔들림뿐이라 색이 아예 없었고(히트 플래시는
+          // `e.kind !== 'player'` 로 제외돼 있다), 자해와 피격이 화면에서 구별되지 않았다.
+          // 헌장이 지목한 결함이 정확히 그것이다 — *"원인 불명의 피해는 난이도가 아니라 고장으로
+          // 읽힌다."*
+          //
+          // ⚠️ **자해일 때만** 오버레이를 얹는다. 일반 피격에도 얹으면 전 무대의 피격 연출이
+          // 바뀐다 — 이 레인의 소관이 아니다(종전 거동 불변).
+          // 창(`catalystSelfHarmUntilTick`)을 두는 이유: sim 통지는 틱 단위인데 렌더는 매 rAF 라,
+          // 통지 프레임과 HP 델타가 관측되는 프레임이 어긋날 수 있다.
+          if (gates.hitFlash && this.frameTick < this.catalystSelfHarmUntilTick) {
+            this.ensureFlashOverlay(tracked, CATALYST_SELF_HARM_TINT);
+          }
+        }
         // 화면 흔들림 트리거 ①-b **대시**(레인 A ④) — AAA 의 조작감은 기체가 아니라 카메라가
         // 만든다. 피격은 이미 트라우마에 걸려 있었는데 대시는 비어 있어, 게임에서 가장 자주
         // 누르는 조작이 화면에 아무 반응도 못 얻고 있었다. 대시 판정은 레인 A 와 **같은 함수**를
@@ -1481,29 +1515,23 @@ export class EntityRenderer {
         // 오버레이는 부모의 자식이 아니라 spriteLayer **형제**로 두고 매 프레임 부모 위치·회전·
         // 스케일을 미러한다(같은 텍스처·앵커라 동일 실루엣으로 겹친다 — 발광 헤일로와 동형). 형제라
         // 부모 destroy 로는 안 딸려 오므로 창 종료·킬·reset·destroy 시 명시 회수한다.
-        if (gates.hitFlash && p.hp > e.hp) {
-          tracked.flashUntilTick = this.frameTick + HIT_FLASH_FRAMES;
-          if (tracked.flashOverlay === null) {
-            const ov = new Sprite(tracked.sprite.texture);
-            ov.anchor.set(0.5);
-            ov.tint = HIT_FLASH_TINT;
-            ov.blendMode = 'add';
-            ov.alpha = HIT_FLASH_ALPHA;
-            this.spriteLayer.addChild(ov);
-            tracked.flashOverlay = ov;
-          }
-          // 이미 오버레이가 있으면 위에서 창(flashUntilTick)만 연장된다 — 중복 생성 금지.
-        }
-        // 오버레이가 있으면: 창이 살아 있는 동안 매 프레임 부모 변환을 미러하고(생성 프레임 포함 —
-        // 여기서 자리·크기를 잡는다), 창이 끝나면 떼고 파괴한다(딱 한 번, 재피격 없이 프레임이
-        // 흐르면 여기서 회수). 형제라 부모 스케일이 자동 적용되지 않으므로 스케일도 직접 미러한다.
-        if (tracked.flashOverlay !== null) {
-          if (this.frameTick >= tracked.flashUntilTick) {
-            this.detachFromSpriteLayer(tracked.flashOverlay);
-            tracked.flashOverlay = null;
-          } else {
-            this.mirrorTransform(tracked.flashOverlay, tracked.sprite);
-          }
+        if (gates.hitFlash && p.hp > e.hp) this.ensureFlashOverlay(tracked, HIT_FLASH_TINT);
+      }
+
+      // 오버레이가 있으면: 창이 살아 있는 동안 매 프레임 부모 변환을 미러하고(생성 프레임 포함 —
+      // 여기서 자리·크기를 잡는다), 창이 끝나면 떼고 파괴한다(딱 한 번, 재피격 없이 프레임이
+      // 흐르면 여기서 회수). 형제라 부모 스케일이 자동 적용되지 않으므로 스케일도 직접 미러한다.
+      //
+      // ⚠️ 이 블록은 kind 분기 **밖**이다(ADR-0052 촉매 자해 색). 플레이어도 자해 오버레이를
+      // 가질 수 있게 되면서 회수 책임이 적 kind 전용이면 안 된다 — 안 그러면 플레이어 오버레이가
+      // 화면에 얼어붙는다(형제라 부모 destroy 로 절대 안 걷힌다). 오버레이가 없는 kind 는
+      // `null` 검사에서 즉시 빠지므로 종전 거동이 그대로다.
+      if (tracked.flashOverlay !== null) {
+        if (this.frameTick >= tracked.flashUntilTick) {
+          this.detachFromSpriteLayer(tracked.flashOverlay);
+          tracked.flashOverlay = null;
+        } else {
+          this.mirrorTransform(tracked.flashOverlay, tracked.sprite);
         }
       }
 
@@ -2103,6 +2131,44 @@ export class EntityRenderer {
    * 자식일 때 자동 상속하던 변환을 형제에선 이렇게 직접 미러한다(스케일 미러가 특히 중요 — 형제는
    * 부모 스케일을 자동으로 받지 않으므로 벽처럼 비정방 스케일도 x·y 를 각각 복사해야 실루엣이 맞다).
    */
+  /**
+   * 다음 플레이어 피격 연출을 **촉매 자해 색**으로 칠한다(헌장 §귀속 규율 3).
+   *
+   * 호출부는 `main.ts` 의 촉매 통지 관측 한 곳뿐이다 — sim 이 `CATALYST_FX.selfHarm` 을 통지한
+   * 틱에 부른다. 즉시 오버레이를 만들지 않고 **창만 세우는** 이유: 이 시점에는 플레이어
+   * 스프라이트의 이번 프레임 변환이 아직 안 잡혀 있고, HP 델타가 관측되는 프레임이 통지 프레임과
+   * 어긋날 수 있다(sim 60Hz ↔ 렌더 가변).
+   *
+   * ⚠️ 자해 통지가 왔는데 그 틱에 HP 가 안 깎였으면 아무 일도 안 일어난다 — 색은 **피해 연출의
+   * 색**이지 독립 이펙트가 아니다. 피해 없는 발동의 신호는 HUD 슬롯 번쩍임과 사운드가 진다.
+   */
+  markCatalystSelfHarm(): void {
+    this.catalystSelfHarmUntilTick = this.frameTick + CATALYST_SELF_HARM_FRAMES;
+  }
+
+  /**
+   * 히트 플래시 오버레이를 보장하고 창을 연장한다(색만 호출부가 정한다).
+   *
+   * **Pixi v8 은 Sprite 를 컨테이너로 쓰는 것을 deprecate**(Sprite.addChild 경고)했으므로,
+   * 오버레이는 부모의 자식이 아니라 spriteLayer **형제**로 두고 매 프레임 부모 위치·회전·
+   * 스케일을 미러한다(같은 텍스처·앵커라 동일 실루엣으로 겹친다 — 발광 헤일로와 동형). 형제라
+   * 부모 destroy 로는 안 딸려 오므로 창 종료·킬·reset·destroy 시 명시 회수한다.
+   *
+   * ⚠️ **이미 오버레이가 있으면 창만 연장하고 색은 안 바꾼다.** 도는 창 안에서 색을 갈아 끼우면
+   * 같은 프레임에 자해와 피격이 겹칠 때 화면이 깜빡이며 뒤집힌다 — 먼저 시작한 연출을 지킨다.
+   */
+  private ensureFlashOverlay(tracked: TrackedSprite, tint: number): void {
+    tracked.flashUntilTick = this.frameTick + HIT_FLASH_FRAMES;
+    if (tracked.flashOverlay !== null) return;
+    const ov = new Sprite(tracked.sprite.texture);
+    ov.anchor.set(0.5);
+    ov.tint = tint;
+    ov.blendMode = 'add';
+    ov.alpha = HIT_FLASH_ALPHA;
+    this.spriteLayer.addChild(ov);
+    tracked.flashOverlay = ov;
+  }
+
   private mirrorTransform(child: Sprite, parent: Sprite): void {
     child.position.set(parent.x, parent.y);
     child.rotation = parent.rotation;

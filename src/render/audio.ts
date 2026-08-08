@@ -52,7 +52,22 @@ export type SoundName =
    * 요구하는 순간이고, 그것이 플레이어가 실제로 반응해야 하는 지점이다. 둘을 한 소리로 묶으면
    * 화면이 멈춘 이유를 소리가 말해 주지 못한다.
    */
-  | 'card';
+  | 'card'
+  /**
+   * 촉매 **발동** 큐(ADR-0052 헌장 §가시성 규율 — 전용 사운드 큐). SFX 버스.
+   *
+   * HUD 슬롯 번쩍임과 **쌍**이다: 화면 구석의 번쩍임만으로는 시선이 전투에 있을 때 놓치므로,
+   * 소리가 "무언가 발동했다"를 먼저 말하고 눈이 슬롯을 확인한다.
+   */
+  | 'catalystFire'
+  /**
+   * 촉매 **자해** 큐(헌장 §귀속 규율 3 — *"촉매 유래 자해는 적 피해와 다른 색·다른 사운드"*).
+   *
+   * ⚠️ `hit`(적에게 맞았다)과 **반드시 다른 샘플**이어야 한다. 같은 소리면 원인 불명의 피해가
+   * 되고, 헌장이 지목한 결함(*"원인 불명의 피해는 난이도가 아니라 고장으로 읽힌다"*)이 그대로
+   * 재현된다. {@link sampleKeyFor} 가 그 분리를 지고 `tests/catalystFx.test.ts` 가 잠근다.
+   */
+  | 'catalystSelfHarm';
 
 /** 믹싱 버스(각 GainNode 로 매핑). BGM=음악, SFX=전투 효과음, UI=메뉴/버튼음. */
 export type AudioBus = 'bgm' | 'sfx' | 'ui';
@@ -99,7 +114,22 @@ export type SampleKey =
    * **절차 합성 SFX 가 전원 거부된 전례**가 있다(2026-08-05). 파일이 없으면 소리가 없는 편이
    * 사용자가 거부한 소리를 내는 것보다 낫고, 개봉 연출은 소리 없이도 성립한다(시각이 주다).
    */
-  | 'dailyReward';
+  | 'dailyReward'
+  /**
+   * 촉매 **발동** 큐(ADR-0052). ⚠️ **새 음원 파일을 받아올 수 없는 환경**이라 기존 CC0 샘플
+   * (`sfx_card.ogg`)을 촉매 전용 키로 **재매핑**하고 게인·길이 상한으로 성격을 가른다 —
+   * 재생 파라미터 변주는 절차 합성이 아니다(이 리포는 절차 합성 SFX 가 전원 거부됐다).
+   *
+   * ⚠️ 키를 `'card'` 로 **재사용하지 않은 이유**: `playSample` 이 `'card'` 를 **UI 버스**로
+   * 보낸다. 촉매 발동은 전투 피드백이라 SFX 버스여야 하고, 그래야 UI 볼륨을 0 으로 내린
+   * 사람에게도 들린다. 키가 다르면 기본 분기가 SFX 버스를 고른다.
+   */
+  | 'catalystFire'
+  /**
+   * 촉매 **자해** 큐(ADR-0052). `sfx_boss_warn.ogg` 재매핑 — 경보 음색이라 "네가 지금 손해를
+   * 보고 있다"가 즉시 읽히고, 무엇보다 `hit`(피격)과 **음원이 아예 다르다**.
+   */
+  | 'catalystSelfHarm';
 
 /**
  * 샘플 키 → `assets/audio/sfx/` 안의 basename + 재생 게인.
@@ -132,6 +162,11 @@ const SFX_MANIFEST: Readonly<Record<SampleKey, { file: string; gain: number; max
   // 하루에 한 번만 울린다 — 연사 겹침이 없으므로 `maxSec` 상한이 필요 없다. 게인은 카드음보다
   // 살짝 낮다: 개봉 연출은 1.1초 동안 시각이 주인공이고 소리는 그 시작을 알리는 역할이다.
   dailyReward: { file: 'sfx_daily_reward.ogg', gain: 0.6 },
+  // ── 촉매(ADR-0052) ── 둘 다 **기존 CC0 음원 재매핑**이다(신규 파일 0). 성격은 게인·길이
+  // 상한으로 가른다. 발동은 카드음보다 짧게 끊어 전투 중 다른 소리를 안 밀어내고, 자해는
+  // 예고음보다 세게 울려 "지금 나한테 벌어진 일"로 읽히게 한다.
+  catalystFire: { file: 'sfx_card.ogg', gain: 0.4, maxSec: 0.3 },
+  catalystSelfHarm: { file: 'sfx_boss_warn.ogg', gain: 0.85, maxSec: 0.45 },
 };
 
 /**
@@ -184,6 +219,14 @@ export function sampleKeyFor(name: SoundName, weaponType?: number): SampleKey | 
       return 'hit';
     case 'card':
       return 'card';
+    // 촉매 둘은 **반드시 실재 샘플로 떨어져야** 한다 — `play()` 는 키가 null 이면 아래 절차
+    // 합성 switch 로 내려가는데, 이 리포는 절차 합성 SFX 가 전원 거부된 전례가 있다. 두 이름은
+    // 그 switch 에 case 가 없어 폴백이 걸리면 **무음**이 되므로, 매핑이 끊기면 소리가 조용히
+    // 사라진다. `tests/catalystFx.test.ts` §사운드 절이 매핑과 파일 실재를 함께 잠근다.
+    case 'catalystFire':
+      return 'catalystFire';
+    case 'catalystSelfHarm':
+      return 'catalystSelfHarm';
     default:
       return null;
   }

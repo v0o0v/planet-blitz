@@ -54,9 +54,42 @@ import {
   spawnDestructible,
   spawnEventObject,
   spawnLoot,
+  hazardActive,
 } from './entities.js';
 import { multFromCenti } from '../economy/planetPopularity.js';
+// 촉매 조준 제외(`id 36` 그림자). `catalyst/shared.ts` 는 `world.js` 를 type-only 로만 끄는
+// 리프라 이 방향 값 import 로 순환이 생기지 않는다.
+import {
+  isCatalystShadow,
+  isCatalystProspectShielded,
+  isCatalystEnemyOnlyObject,
+  CATALYST_FOUNDRY_MARK,
+  CATALYST_ORE_MARK,
+  CATALYST_SHARD_MARK,
+  CATALYST_SEED_MARK,
+  CATALYST_TREE_MARK,
+} from './catalyst/shared.js';
+// 촉매 `id 40` 선회 물리(`stepPlayer` 의 대입 직전). 같은 사유로 순환이 없다 —
+// `catalyst/arke.ts` 도 `world.js` 를 type-only 로만 끈다.
+import { arkeMassTurnBlend } from './catalyst/arke.js';
+// 촉매 연출·귀속 채널(ADR-0052 §가시성/§귀속). `catalyst/fx.ts` 는 `world.js` 를 **type-only**
+// 로만 끄는 리프라 값으로 들여와도 순환이 생기지 않는다.
+import { clearCatalystFx } from './catalyst/fx.js';
+import type { CatalystFxEvent, CatalystContribution } from './catalyst/fx.js';
 import { resolveCatalystMods } from './catalystMods.js';
+// 촉매 그룹 모듈 **직접 참조** — 남은 것은 `id 33` 의 모드 좌표뿐이다.
+//
+// ⚠️ 이것은 **일부러 승격하지 않았다.** 같은 좌표를 `waves.ts`(스폰 링·세그먼트 전진 게이트)와
+// `bossProgress.ts` 도 읽는데, 그 둘이 `catalystHooks.ts` 를 부르면
+// `catalystHooks → skillHooks → skills/*` 사슬과 엮여 **순환**이 된다(`catalystHooks.ts` 의
+// `onWaveAdvancedCatalyst` 주석이 같은 사유로 `waves.ts` 안에서 앵커를 뚫지 말라고 못 박는다).
+// 그래서 좌표는 **리프인 `catalyst/shared.ts`** 에 두는 현행 구조가 맞다 — 앵커로 올리면
+// 간선이 늘고 순환 위험만 산다. 무촉매 게이트는 술어 첫 줄(`carries(state, 33)`)에 서 있고
+// 미소지 런은 **정확히 `0`**(종전 하드코딩 원점과 같은 값)이라 바이트 불변이다.
+//
+// (`id 32` 용암 갑주와 점화 약공명 '불씨'는 `onEnemyDamageTakenMultCatalyst` 로,
+//  벽 파괴는 `onWallDestroyedCatalyst` 로 **승격했다** — 여기서 직접 끌지 않는다.)
+import { berdanSafeCenterX, berdanSafeCenterY } from './catalyst/shared.js';
 import type { CatalystMods } from './catalystMods.js';
 import {
   isElite,
@@ -240,14 +273,37 @@ import {
   onDeathRemnantSpawn,
 } from './skillHooks.js';
 import {
+  onVolleyParamsCatalyst,
+  onEnemyDamageTakenMultCatalyst,
+  onWallDestroyedCatalyst,
   onDamageChainCatalyst,
   onDashSweptCatalyst,
   onDashPierceCatalyst,
   onResourceGrantedCatalyst,
   onBossDeathCatalyst,
+  onLootRollCatalyst,
+  onLootCollectedCatalyst,
+  onWaveAdvancedCatalyst,
+  onEnemyContactCatalyst,
+  onEnemyStepCatalyst,
+  onDestructibleDestroyedCatalyst,
+  stepCatalystHazards,
 } from './catalystHooks.js';
+// 촉매 `id 11 tutelage` 의 자동 픽 순번. 레벨업 프리즈 블록은 `catalystHooks.ts` 의 앵커 표에
+// 없는 자리(입력 소비 지점)라, 그룹 모듈에서 **직접** 술어만 끌어온다(그쪽은 world 를
+// type-only 로만 보므로 순환이 아니다).
+import { tutelageAutoPickIndex } from './catalyst/growth.js';
+// 같은 사유(디스패처에 대응 앵커가 없는 자리) — 톡사르 `id 42` 정화 계수와 크라스 `id 45`·`id 46`
+// 의 벽 파괴 지점. 셋 다 24앵커에 대응 지점이 없어 호출부가 그룹 모듈을 직접 끈다(사유 전문은
+// 각 함수 주석). 그룹은 world 를 type-only 로만 보므로 순환이 아니다.
+import { toxarPurifyIntervalMult } from './catalyst/toxar.js';
+import { krasBreachKeepsCover, krasBreachWallHpMult } from './catalyst/kras.js';
 // 정산 리더 재수출(`echoStabilizedOf` 선례) — W3(정산·main.ts)이 `from './world.js'` 로 소비한다.
 export { catalystSettlementOf } from './catalystHooks.js';
+// 연출·귀속 채널의 **읽기 면**만 재수출한다(W3=`main.ts` 소비). 통지·적립 API 는 sim 안쪽
+// 전용이라 여기서 열지 않는다 — 열면 렌더가 sim 상태의 두 번째 작성자가 된다.
+export { catalystContributionsOf } from './catalyst/fx.js';
+export type { CatalystContribution, CatalystFxEvent } from './catalyst/fx.js';
 
 /**
  * 앵커 ⑱ 이 쓰는 **재사용 레코드**. 명중 해소 루프는 틱당 최대 ~2,000회 돌아 발당 할당이
@@ -1357,6 +1413,34 @@ export interface WorldState {
    * 무촉매 런은 이 게이트에서 즉시 반환하므로 **바이트 단위로 종전과 같다.**
    */
   catalystOn: boolean;
+  /**
+   * 이번 **틱**의 촉매 연출 통지(ADR-0052 헌장 §가시성 규율). 규약 정본은
+   * {@link file://./catalyst/fx.ts} 헤더다 — 여기서는 이 필드가 왜 예외인지만 적는다.
+   *
+   * ## ⭐ `hashWorld` 에 접지 않는다 (sim 계약 밖)
+   * 순수 연출이라 접는 순간 "무슨 색으로 번쩍였나"가 결정론 계약에 들어간다. `catalystSlots`
+   * 와 정반대의 판단인데 근거가 갈린다 — 슬롯은 **sim 산술에 실제로 쓰이는** 값이고 이 채널은
+   * 어느 sim 산술에도 안 들어간다(그것이 강제되는지는 `tests/catalystFx.test.ts` §해시 불변이
+   * 기계로 잰다: 같은 시드에서 통지 유무가 해시를 안 바꾼다).
+   *
+   * ## `undefined` 가 기본이다
+   * 무촉매 런은 배열 할당조차 없다(`catalystSettlementOf` 가 `undefined` 를 돌려주는 선례).
+   * 매 틱 `stepWorld` 첫머리에서 길이를 0 으로 되돌린다 — 누적하면 스냅샷이 폭주한다.
+   *
+   * **`WORLD_FRESH` 다** — 틱 단위 사건 버퍼라 구간을 넘길 것이 없다.
+   */
+  catalystFx?: CatalystFxEvent[] | undefined;
+  /**
+   * 촉매별 **런 기여 장부**(발동 횟수 / 번 액수 / 놓친 액수 — 헌장 §귀속 규율 2).
+   * 적립 API 와 정산 리더는 {@link file://./catalyst/fx.ts} 가 소유한다.
+   *
+   * `catalystFx` 와 **같은 이유로 해시에 안 접힌다** — 이 값은 정산 화면의 명세일 뿐 어느 sim
+   * 산술에도 안 들어간다. 무촉매 런은 `undefined` 라 채널 자체가 없다.
+   *
+   * **`WORLD_FRESH` 다** — `catalystSlots` 와 같은 근거다(촉매가 실린 런에는 구간 전환이
+   * 존재하지 않는다. 위 `catalystSlots` 주석 참조).
+   */
+  catalystLedger?: CatalystContribution[] | undefined;
 }
 
 /**
@@ -1707,7 +1791,10 @@ export function createWorld(
   // index 0 확정 이후 append 하므로 hashWorld 불변식 유지). scrollRuntime 이 서 있는 blockBreak
   // 런에만 배치 — 뱀서류·침공은 조건 밖이라 벽이 하나도 안 생겨 골든 바이트 불변.
   if (scrollRuntime !== undefined && cfg.planetMode === PLANET_MODE.blockBreak) {
-    placeBlockBreakWalls(state);
+    // 촉매 `id 45 kras-breach` — 블록이 세 배 단단해진다. 배수는 **배치 시점의 기존 지점**에
+    // 곱하고, 간선은 `modes/**` → 촉매가 아니라 **호출부가 촉매를 읽어 모드에 넘긴다**
+    // (`catalystHooks.ts` 헤더 §모드 진행 게이트). 무촉매 런은 1 이라 바이트 불변.
+    placeBlockBreakWalls(state, krasBreachWallHpMult(state));
   } else if (scrollRuntime !== undefined && cfg.planetMode === PLANET_MODE.racing) {
     // PvE 레이싱(Lane5): 정적 분기 코스(불파괴 채널 벽 + 부스트 패드)를 1회 배치한다. 마찬가지로
     // racing 런에만 — 뱀서류·블록격파·침공은 조건 밖이라 부스트 패드·레이싱 벽이 안 생겨 불변.
@@ -1745,6 +1832,12 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 무의뢰 런은 필드 자체가 없어 무연산이다.
   if (state.commissionRuntime !== undefined) state.commissionRuntime.totalTicks++;
 
+  // 촉매 연출 통지는 **틱 단위 사건 스트림**이라 매 틱 비운다(누적하면 스냅샷이 폭주한다).
+  // 모든 조기 반환보다 **앞**이다 — 프리즈·detour 틱에서 안 비우면 직전 틱의 통지가 프리즈가
+  // 풀릴 때까지 스냅샷에 남아 HUD 가 같은 칸을 계속 번쩍인다. 무촉매 런은 필드가 `undefined`
+  // 라 이 호출이 첫 줄에서 끝난다(바이트 불변).
+  clearCatalystFx(state);
+
   // Run is over — the world is inert (settlement screen is showing).
   if (state.gameOver || state.victory) return;
 
@@ -1752,8 +1845,15 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // on the exact tick its input frame carries SPECIAL_POWERUP_PICK, keeping the
   // choice reproducible from the replay log.
   if (state.pendingLevelUp) {
-    if ((input.special & SPECIAL_POWERUP_PICK) !== 0) {
-      const idxOffered = (input.special >> 1) & 0x3;
+    // 촉매 `id 11 tutelage` — *"3택 없이 자동으로 결정된다."* 입력 프레임을 **합성**해 아래
+    // 경로를 그대로 태운다: 픽 적용·`onPowerupPicked` 앵커·범위 가드가 손 대는 곳 없이 한
+    // 벌로 유지된다(경로를 따로 파면 mastery·epiphany 중첩이 자동 픽에서만 조용히 빠진다).
+    // ⚠️ **RNG 미소비** — `drawPowerupChoices` 가 이미 뽑아 놓은 자리 중 하나를 고를 뿐이다.
+    // 카드 미소지 런은 `-1` 이라 `input.special` 이 그대로 쓰이고 거동이 비트 동일이다.
+    const autoIdx = tutelageAutoPickIndex(state);
+    const special = autoIdx >= 0 ? SPECIAL_POWERUP_PICK | (autoIdx << 1) : input.special;
+    if ((special & SPECIAL_POWERUP_PICK) !== 0) {
+      const idxOffered = (special >> 1) & 0x3;
       // Ignore an out-of-range offer index (fewer than 4 choices were offered):
       // keep the level-up pending rather than silently consuming it with no
       // powerup applied, so a malformed frame cannot skip a build choice.
@@ -1927,7 +2027,10 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   } else if (state.config.planetMode === PLANET_MODE.shrink) {
     // 수축지대(Lane7): 아레나 중심(원점 0,0) 안전 반경 밖이면 지속 피해(하드 클램프 없음 —
     // 밖으로 나갈 수는 있고 피해만 받는다). iframes 존중·즉사 아님. shrinkRuntime 미존재면 no-op.
-    shrinkOutOfBounds(state, player);
+    // 중심은 `id 33 berdan-collapse` 가 실렸을 때만 원점에서 벗어난다(미소지면 `0` → 종전
+    // 산술과 비트 동일). 게이트·스폰 링·보스 좌표와 **같은 중심**이어야 한다 — 하나라도 빠지면
+    // 원과 규칙이 갈린다(사유 전문은 `catalyst/berdan.ts` §id 33).
+    shrinkOutOfBounds(state, player, berdanSafeCenterX(state), berdanSafeCenterY(state));
   }
   // 기체 시그니처 카운터는 이동 직후·발사 이전에 갱신한다 — autoAttack 이 이번 틱의 과충전
   // 값을 읽고, 피격 판정(resolveCollisions)이 이번 틱의 장갑 스택을 읽는다.
@@ -1943,7 +2046,16 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // updateWaves·stepSupply 가 포켓 좌표 주위에 메인 적을 스폰해 버리기 때문이다
   // (encounterDetour.ts `enterDetour` 주석이 정본).
   stepEncounter(state, player, input);
-  if (!designedRun) updateWaves(state, player);
+  if (!designedRun) {
+    // 촉매 앵커 — **세그먼트 전진 감지**. `waves.ts`(리프) 안에서 뚫으면 `skillHooks → skills/*`
+    // 사슬과 엮여 순환이 되므로, 호출부인 여기서 `updateWaves` 전후의 인덱스를 비교한다
+    // (사유 정본은 `onWaveAdvancedCatalyst` 주석). 무촉매 런에서 이 비교는 **순수 읽기**라
+    // 거동이 안 바뀌고, 변한 틱에만 훅이 불린다.
+    const prevSegment = state.wave.segmentIndex;
+    updateWaves(state, player);
+    const nextSegment = state.wave.segmentIndex;
+    if (nextSegment !== prevSegment) onWaveAdvancedCatalyst(state, prevSegment, nextSegment);
+  }
   stepEnemies(state, player);
   // 강제 스크롤(Lane4/5): 창 뒤로 흘러간 적을 정리한다(보스 제외). 컬 반경은 모드별로 고른다 —
   // 각 모드의 최대 스폰 거리보다 크다는 구조적 불변식이 상수 doc 에 못박혀 있다(Lane4 MED 교훈).
@@ -1963,7 +2075,10 @@ export function stepWorld(state: WorldState, input: InputFrame): void {
   // 숨은 카운트다운이 된다(purifyContamination 주석 참조, 사용자 신고 2026-07-27).
   if (state.config.planetMode === PLANET_MODE.contamination) {
     stepContamination(state);
-    purifyContamination(state);
+    // 촉매 `id 42 toxar-outbreak` — **정화가 절반만** 일어난다(= 판정 간격 2배). 계수의 하한
+    // 0.5 는 계약이라 `toxarPurifyIntervalMult` 가 코드로 잠근다 — 0 이 되면 위 주석의 "되돌릴
+    // 수 없는 숨은 카운트다운"이 그대로 되살아난다. 무촉매 런은 배수 1 이라 종전 식과 동일하다.
+    purifyContamination(state, toxarPurifyIntervalMult(state));
   }
   stepBoss(state, player);
   // ⚠️ `input` 을 넘기는 이유 — 앵커 ⑯ 이 **그 틱 입력 벡터**를 레코드에 실어야 하기 때문이다.
@@ -2033,12 +2148,35 @@ function isGimmick(e: Entity): boolean {
     // **2026-08-05 이후 반격 장치는 배치되지 않으므로 이 조건은 아무것도 거르지 않는다**(어떤
     // 엔티티도 이 마커를 갖지 않는다) — 산술·거동은 완전 불변이라 그대로 둔다. 대피소는 애초에
     // `shelter` kind 라 isGimmick 에 없고, 따라서 도망쳐도 컬링되지 않는다(같은 exploit 부류 차단).
+    // ⚠️ `id 19 motherlode` 광석(destructible + CATALYST_ORE_MARK)도 같은 이유로 제외한다.
+    // 광석은 **플레이어가 부숴야 자원이 되는 소환물**이라 청크 기믹이 아니다(DRONE_MARK 선례).
+    // 넣으면 둘이 동시에 깨진다: ①MAX_ACTIVE_GIMMICKS(160)를 잠식해 **뒤쪽 청크가 통째로
+    // 보류**되는데 어느 청크가 보류되는지가 플레이어 경로에 의존해 **경로 독립성이 깨진다**
+    // ②컬 반경 밖으로 걸어 나가면 광석이 dead 로 지워져 실린 자원이 조용히 증발한다.
+    // 동시 생존 수는 `catalyst/resource.ts` 가 자체 상한으로 묶는다(CATALYST_HAZARD_LIVE_CAP
+    // 과 같은 형태). 무촉매 런은 이 마커를 가진 개체가 하나도 없어 조건이 그대로 성립 →
+    // 거동·해시 완전 불변이다.
+    // ⚠️ `id 21` 결정(CATALYST_SHARD_MARK) · `id 23` 씨앗/나무(CATALYST_SEED_MARK·
+    // CATALYST_TREE_MARK)도 광석과 **같은 사유**로 제외한다 — 청크 기믹이 아니라 촉매 소환물이고,
+    // 넣으면 ①MAX_ACTIVE_GIMMICKS(160)를 잠식해 뒤쪽 청크가 보류되면서 **경로 독립성이 깨지고**
+    // ②컬 반경 밖으로 걸어 나가면 결정·씨앗이 dead 로 지워져 실린 것이 조용히 증발한다.
+    // 동시 생존 수는 `catalyst/chain.ts` 가 자체 상한(SHARD_LIVE_CAP·SEED_LIVE_CAP)으로 묶는다.
+    // 무촉매 런은 이 마커를 가진 개체가 하나도 없어 조건이 그대로 성립 → 거동·해시 완전 불변이다.
     (e.kind === 'destructible' &&
       e.ownerId !== CONTAMINATION_NODE_MARK &&
-      e.ownerId !== COUNTER_DEVICE_MARK) ||
+      e.ownerId !== COUNTER_DEVICE_MARK &&
+      e.ownerId !== CATALYST_ORE_MARK &&
+      e.ownerId !== CATALYST_SHARD_MARK &&
+      e.ownerId !== CATALYST_SEED_MARK &&
+      e.ownerId !== CATALYST_TREE_MARK) ||
     e.kind === 'magnetEmitter' ||
     e.kind === 'bombDevice' ||
-    (e.kind === 'turretPickup' && e.ownerId !== DRONE_MARK && e.ownerId !== BROOD_MARK) ||
+    // `CATALYST_FOUNDRY_MARK`(`id 16` 제련소 포탑)도 같은 사유로 제외한다 — 청크가 놓은 기믹이
+    // 아니라 플레이어 소환물이라 `MAX_ACTIVE_GIMMICKS` 를 잠식하면 안 된다(그 술어 주석이 정본).
+    (e.kind === 'turretPickup' &&
+      e.ownerId !== DRONE_MARK &&
+      e.ownerId !== BROOD_MARK &&
+      e.ownerId !== CATALYST_FOUNDRY_MARK) ||
     // 오염 셀(Lane8 · 영구 해저드 + HAZARD_CONTAMINATION)도 같은 이유로 컬링에서 제외 —
     // 셀이 컬링되면 임계 오염 실패 게이트를 카이팅으로 무력화할 수 있다(같은 근본 원인의 이면).
     // 절차 지형 해저드는 enemyType=HAZARD_TERRAIN(2)≠3 이라 조건 그대로 성립 → 거동·해시 불변.
@@ -2274,6 +2412,17 @@ function stepPlayer(state: WorldState, player: Entity, input: InputFrame): void 
   // 코어 모듈 mt-attrition(지연전): 공격자(플레이어) 이동 감속. 미장착·미발동이면 배율 1 이라
   // `v * 1 === v` 로 비트 동일(거동·해시 불변). 대시 임펄스에는 미적용(감속 지대와 동일 규율).
   const moduleSlow = state.moduleRuntime !== undefined ? state.moduleRuntime.attackerSlowMult : 1;
+  // 촉매 `id 40 arke-ancient-core` — 질량 지속 중 **선회 반경 2배**. 방향만 직전 진행 방향 쪽으로
+  // 당기고 **크기는 입력 것을 그대로 쓴다**(감속·정지 입력이 한 프레임도 안 씹힌다 — 헌장
+  // §페널티 금지 ①). 사유 전문과 "선회 배율 노브가 코드에 없다"는 실측은 `catalyst/arke.ts` 의
+  // `arkeMassTurnBlend` 주석이 소유한다. 무촉매 런은 이 분기에 들어오지 않아 바이트 불변이다.
+  if (state.catalystOn) {
+    const turn = arkeMassTurnBlend(state, player, mx, my);
+    if (turn !== undefined) {
+      mx = turn.x;
+      my = turn.y;
+    }
+  }
   player.vx = mx * config.playerSpeed * slowMult * moduleSlow * move.speedMult;
   player.vy = my * config.playerSpeed * slowMult * moduleSlow * move.speedMult;
   player.angle = input.aim;
@@ -2896,8 +3045,13 @@ function stepEnemies(state: WorldState, player: Entity): void {
     // 복제). 전부 없으면/무촉매면 mult 1(불변). ⚠️ 정지 중이면 sm = 0 이 되고, 바로 다음 줄이
     // `def.speed * sm` 을 새 def 에 대입하므로 이 곱은 무의미하지 않다 — 실제로 speed 0(완전
     // 정지)을 만든다.
-    const sm =
-      eliteSpeedMult(e) * enemyStatusSlowMult(e) * enemyStatusStopMult(e) * state.catalystMods.enemySpeed;
+    // 촉매 앵커 — 접힌 배율을 받아 보정해 돌려준다. 무촉매 런은 인자를 그대로 돌려주므로
+    // `sm !== 1` 가드가 종전과 같은 값을 보고, def 복제조차 일어나지 않는다(비트 동일).
+    const sm = onEnemyStepCatalyst(
+      state,
+      e,
+      eliteSpeedMult(e) * enemyStatusSlowMult(e) * enemyStatusStopMult(e) * state.catalystMods.enemySpeed,
+    );
     if (sm !== 1) def = { ...def, speed: def.speed * sm };
     updateEnemy(state, e, def, player);
     if (singularityOn) applySingularityPull(e, player);
@@ -2943,8 +3097,9 @@ function stepBoss(state: WorldState, player: Entity): void {
     if (state.config.planetMode === PLANET_MODE.shrink) {
       // 수축지대(Lane7): 보스를 아레나 중심(원점 0,0)에 소환한다 — 안전 반경이 조여드는 코어에서
       // 최후전. 플레이어/창 기준 오프셋을 쓰지 않는다(shrink 는 창 미존재 → bossWin undefined).
-      bossX = 0;
-      bossY = 0;
+      // `id 33` 이 실리면 그 중심이 곧 아레나 중심이다(미소지면 `0,0` → 종전과 동일).
+      bossX = berdanSafeCenterX(state);
+      bossY = berdanSafeCenterY(state);
     } else if (state.config.planetMode === PLANET_MODE.racing)
       bossX += VIEW_WIDTH * 0.55; // 코스 끝(+X)
     else bossY -= VIEW_HEIGHT * 0.55; // 블록격파 top(−Y)·뱀서류 기존
@@ -3231,6 +3386,12 @@ function autoAttack(state: WorldState, player: Entity, input: InputFrame): void 
     cloakBreak: cloakBreakFired,
   };
   onVolleyParams(state, player, volley);
+  // 촉매 앵커 — **스킬 앵커 바로 뒤**다. `onVolleyParams` 안에서 부르면 안 된다: 그 함수의
+  // 첫 줄이 `if (!state.skillsOn) return;` 이라 **촉매가 스킬 투자에 종속**되고, 무투자 런에
+  // 촉매만 껴도 배율이 통째로 죽는다(`catalystHooks.ts` 헤더 §왜 파일을 가르는가).
+  // 이 지점이 여는 것은 "플레이어가 **주는** 피해" 축이다 — `id 16` 의 대가와 `id 25` 의 이득이
+  // 여기 산다. 무촉매 런은 앵커 첫 줄에서 반환하므로 `volley` 가 안 바뀐다(바이트 불변).
+  onVolleyParamsCatalyst(state, player, volley);
 
   const baseAngle = volley.aimAngle;
   // 배치7 F2b — 아키타입 분기(레일건·미사일·빔·발칸/스프레드 + 쌍둥이 항성 유니크)는
@@ -3527,6 +3688,15 @@ const losCands: { e: Entity; d: number }[] = [];
  * 코어 8000/8000·발생기 900/900 으로 무피해였다.
  */
 function isPlayerTargetable(e: Entity): boolean {
+  // 촉매 제외 — `id 36` 그림자는 **죽일 수 없고 조준되지 않는다**. 등재(`isCatalystObjective`)와
+  // **한 쌍**이고, 아래 아군탄 화이트리스트·`countEnemies` 쪽 제외와도 같이 움직인다.
+  // 무촉매 런은 `aux0` 의 shadow 비트가 전부 0 이라 항상 거짓이다(바이트 불변).
+  if (isCatalystShadow(e)) return false;
+  // 촉매 제외 — `id 7` 광맥 보유자는 **호위에 둘러싸인 동안 무적**이라 조준에서 뺀다.
+  // 안 빼면 자동조준이 무적 표적을 물어 그 동안의 DPS 가 통째로 버려진다(코어/발생기 사고와
+  // 같은 부류). 아래 아군탄 명중 루프의 같은 술어와 **한 쌍**이다. 호위가 흩어지면 마크가
+  // `PROSPECT_OPEN` 으로 내려가 즉시 다시 조준된다. 무촉매 런은 비트가 0 이라 항상 거짓이다.
+  if (isCatalystProspectShielded(e)) return false;
   // 발생기 보호막 국면의 코어는 **조준 대상에서 뺀다**(`timer === 1` = 실드 발생기가 살아
   // 있음, coreRoom.updateCoreShield 가 세우는 결정론 플래그). 이 국면의 코어는 매 틱 보호막이
   // 전량 재충전돼 피해가 0 이므로, 조준을 허용하면 언제나 코어가 최근접 표적으로 뽑혀 플레이어가
@@ -3898,6 +4068,20 @@ function stepProjectiles(state: WorldState, player: Entity): void {
           if (w.hp <= 0) {
             w.dead = true;
             onWallDestroyed(state, player, w);
+            // 촉매 앵커 — **24앵커에 벽 파괴 지점이 없다**(그쪽 파괴물 앵커는 `destructible`
+            // kind 라 `wall` 이 원리적으로 도달하지 않는다). 그리고 `compact` 가 같은 틱에 시체를
+            // 걷어 가므로 다음 틱의 `onTick` 으로는 좌표조차 복원할 수 없다 → 이 사건은 여기서만
+            // 잡힌다. 종전에는 `krasOnWallDestroyed` 를 직접 끌었지만, `id 39` 의 *"벽이 부서지며
+            // 자원"* 이 같은 지점을 기다리고 있어 팬아웃 앵커로 승격했다(사유 전문은 그 훅 doc).
+            // 무촉매 런은 첫 줄(`state.catalystOn`)에서 반환한다(바이트 불변).
+            onWallDestroyedCatalyst(state, w);
+            // `id 45` — 부순 층은 사라지지 않고 **불파괴 엄폐물(hp 0)** 로 그 자리에 남아 양
+            // 진영의 탄을 막는다. `isBreakableWall` 이 거짓이 되므로 더 깎이지도, 압사 판정에
+            // 들지도 않는다. 무촉매 런은 술어가 항상 거짓이라 위 `dead` 가 그대로 선다.
+            if (krasBreachKeepsCover(state)) {
+              w.hp = 0;
+              w.dead = false;
+            }
           }
         }
         // 통과(팬텀 AS10)는 **소멸만** 막는다 — 위 감산은 이미 끝났고 스윕은 다음 벽으로 간다.
@@ -4057,17 +4241,10 @@ function stepHazards(state: WorldState): void {
   }
 }
 
-/**
- * 이 해저드가 **지금 피해를 주는 상태인가**.
- *
- * export 인 이유는 밸런스 하네스의 피해 귀속 관측(`src/bench/balance/cell.ts`)이 같은 술어를
- * 써야 하기 때문이다 — 판정을 베껴 적으면 이쪽이 바뀔 때 관측이 조용히 거짓말한다.
- */
-export function hazardActive(h: Entity): boolean {
-  // Damaging once its telegraph (if any) is done and it has not expired. life<0
-  // marks a permanent terrain hazard (always active); life>0 a timed window.
-  return h.timer <= 0 && h.life !== 0;
-}
+// `hazardActive` 의 **정의는 `entities.ts`(리프)로 내려갔다** — `src/sim/catalyst/**` 가 같은
+// 술어를 써야 하는데 그 모듈들은 `world.js` 를 type-only 로만 끌 수 있기 때문이다(사유 전문은
+// 그쪽 doc). export 경로는 그대로라 기존 소비자(`src/bench/balance/cell.ts`)는 안 바뀐다.
+export { hazardActive } from './entities.js';
 
 // ---------------------------------------------------------------------------
 // Collision resolution (spatial hash)
@@ -4107,6 +4284,11 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       grid.insert(e);
     }
   }
+
+  // 촉매 앵커 — **촉매 해저드 → 적 피해**의 per-tick 단계. 자리가 여기인 이유: 격자가 이번 틱
+  // 좌표로 **막 완성됐고** 아직 아무 hp 도 안 깎였다(아군탄 루프보다 앞). 계약 전문은
+  // `stepCatalystHazards` 주석이다. 무촉매 런은 함수 첫 줄에서 반환해 **루프 0회**다.
+  stepCatalystHazards(state);
 
   // Friendly bullets vs enemies / boss / supply raiders / destructibles.
   // 유니크 게이트(장착 시에만 분기): ① 과열 드럼(명중 스택), ② 분열 코어(명중 파편),
@@ -4171,6 +4353,20 @@ function resolveCollisions(state: WorldState, player: Entity): void {
     hitParams.length = 0;
     grid.query(bMidX, bMidY, bQueryR, (t) => {
       if (t.dead) return;
+      // 촉매 제외 — 그림자는 아군탄에 **안 맞는다**(조준 술어 제외와 쌍). 격자 등록은 그대로
+      // 두었다: 등록을 빼면 접촉·픽업 판정까지 사라져 "안 보이는 적"이 아니라 "없는 적"이 된다.
+      if (isCatalystShadow(t)) return;
+      // 촉매 제외 — `id 7` 광맥 보유자는 호위에 둘러싸인 동안 아군탄에 **안 맞는다**.
+      // 바로 위 `isPlayerTargetable` 의 제외와 **한 쌍**이다(한쪽만 걸면 "조준은 되는데 안
+      // 맞는" 또는 그 반대가 된다). 격자 등록은 그대로 둔다(접촉·픽업 판정 보존).
+      if (isCatalystProspectShielded(t)) return;
+      // 촉매 제외 — `id 21` 결정 · `id 23` 씨앗/나무는 **적만 부순다**(규칙 문장에 플레이어가
+      // 부순다는 조항이 없다). 조준 술어 쪽은 이 마커들이 `isCatalystObjective` 에서 빠져
+      // **자동으로** 제외되지만, 아래 화이트리스트는 `destructible` 을 **kind 로 통째** 통과
+      // 시키므로 여기서 명시적으로 빼야 한다 — 안 빼면 "조준은 안 되는데 유탄에는 맞는" 상태가
+      // 되어, 자동조준이 다른 표적을 쏘는 동안 흘러간 탄이 플레이어의 보상을 계속 갉는다.
+      // 격자 등록은 그대로 둔다: 빼면 적 접촉 판정까지 사라져 *"적이 밟으면"* 이 영영 거짓이 된다.
+      if (isCatalystEnemyOnlyObject(t)) return;
       if (
         t.kind !== 'enemy' &&
         t.kind !== 'boss' &&
@@ -4238,7 +4434,22 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // ⑥ 수렴 프리즘: 빔 세그먼트가 관통한 적 수(phase)만큼 피해 증폭(자이로와 배타).
       const prismAmp = prismOn ? 1 + b.phase * PRISM_DAMAGE_AMP : 1;
       // 보호막의 엘리트: 받는 피해 절반(그 외 1).
-      let dealt = b.damage * mult * gyroAmp * prismAmp * eliteDamageTakenMult(t);
+      //
+      // 촉매 배율은 **앵커 하나로 모았다**(종전에는 `catalyst/kargon.ts` 의 용암 갑주와
+      // `catalyst/resonance.ts` 의 점화 약공명 '불씨'를 여기서 직접 import 해 나란히 곱했다).
+      // 자리가 여기인 이유는 그것이 *"이 표적이 지금 얼마나 단단한가"* 라 `eliteDamageTakenMult`
+      // 와 정확히 같은 층이기 때문이고, 앵커 ⑩ 은 `t.hp -= dealt` **뒤**라 이번 명중을 못 바꾼다
+      // (거기서 hp 를 되돌리면 이미 `dead` 가 선 적을 되살려 **좀비**가 된다).
+      // 합성 순서는 이제 그 앵커의 팬아웃 순서가 계약으로 못 박는다 — 옮기기 전과 같은 순서다.
+      // 무촉매 런은 앵커 첫 줄이 **정확히 `1`** 을 돌려주므로 곱셈이 무연산이고 비트 동일이다
+      // (`scripts/catalystByteInvariance.ts` 가 잠근다).
+      let dealt =
+        b.damage *
+        mult *
+        gyroAmp *
+        prismAmp *
+        eliteDamageTakenMult(t) *
+        onEnemyDamageTakenMultCatalyst(state, t, player.x, player.y);
       // 앵커 ⑱(S3) — **`dealt` 가 표적 hp 에 닿기 전.** 앵커 ⑩ 은 `t.hp -= dealt` 뒤라 이번
       // 명중의 피해를 못 바꾼다(그 훅 주석이 근거). 미투자 런은 `state.skillsOn` 이 거짓이라
       // 이 블록에 진입조차 하지 않고, 스킬 런에서도 훅이 값을 안 만지면 되쓰기가 항등이다.
@@ -4495,6 +4706,13 @@ function resolveCollisions(state: WorldState, player: Entity): void {
       // 감속 지속에 태운다(`src/sim/invasion/facility.ts` `utilityHazardSlowTicks`).
       // 다른 모든 `HAZARD_SLOW` 생산자는 `aux0` 를 건드리지 않아 0 → 기본값 그대로다(비트 동일).
       state.playerSlowTicks = t.aux0 > 0 ? t.aux0 : PLAYER_SLOW_DURATION;
+    }
+    // 촉매 앵커 — **무적 조기 반환보다 앞**이다. `id 1 plunder`(강탈)는 대시 무적으로 파고들어
+    // 뜯는 것이 카드의 그림이라, 무적 뒤에 두면 그 플레이가 구조적으로 0회가 된다(사유 전문은
+    // `onEnemyContactCatalyst` 주석). 대상 kind 게이트는 바로 아래 `onContactInvuln` 과 **같은
+    // 넷**이다 — 적탄·해저드는 접촉이 아니다.
+    if (t.kind === 'enemy' || t.kind === 'boss' || t.kind === 'guardian' || t.kind === 'defenseBoss') {
+      onEnemyContactCatalyst(state, player, t);
     }
     if (invulnerable) {
       // 배치7 F2a — 앵커 신설 `onContactInvuln`(스트라이커 M9「충각 기동」선결). 무적이라
@@ -4847,6 +5065,11 @@ function collectGem(state: WorldState, gem: Entity): void {
 /** Collect a loot drop: record its seed + rarity + provenance for settlement. */
 function collectLoot(state: WorldState, loot: Entity): void {
   loot.dead = true;
+  // 촉매 앵커 — **`state.loot` 에 싣기 직전**. `true` 면 push 를 건너뛴다(`id 3` 현상금 표식 ·
+  // `id 15` 자원 결정의 필수 분기다 — 없으면 표식마다 가짜 장비가 생기고, 더 나쁘게는
+  // `catalystDropsFromRun` 이 드랍 시드마다 게이트를 굴려 **촉매까지 공짜로 늘어난다**.
+  // 사유 전문은 `onLootCollectedCatalyst` 주석). 무촉매 런은 항상 `false` 라 종전과 같다.
+  if (onLootCollectedCatalyst(state, loot)) return;
   state.loot.push({
     seed: loot.damage >>> 0, // drop seed stored in `damage`
     rarity: loot.enemyType, // rarity code stored in `enemyType`
@@ -4979,11 +5202,14 @@ function compact(state: WorldState): void {
             p0 === undefined
               ? state.catalystMods.rarity
               : onEliteLootRarity(state, p0, state.catalystMods.rarity);
-          const roll = rollEliteDrop(state.dropRng, stage, lootRarity, dropOdds);
+          // 촉매 앵커 — **이미 접힌 배율에 곱하는 자리**(재롤 금지 · 공통-B(c)). 무촉매 런은
+          // 인자를 그대로 돌려주므로 threshold·파생 시드가 비트 동일이다.
+          const lr = onLootRollCatalyst(state, lootRarity, state.catalystMods.drop, e.x, e.y, true);
+          const roll = rollEliteDrop(state.dropRng, stage, lr.rarity, dropOdds);
           lootDrops.push({ x: e.x, y: e.y, seed: roll.seed, rarity: roll.rarityCode });
           // 촉매 드랍량 보상축: 배율 > 1 이면 같은 등급의 추가 루팅을 결정론적으로 파생한다
           // (dropRng 미소비 → 드랍 스트림 무영향). 무촉매면 빈 배열이라 무연산.
-          for (const bs of bonusLootSeeds(roll.seed, state.catalystMods.drop)) {
+          for (const bs of bonusLootSeeds(roll.seed, lr.count)) {
             lootDrops.push({ x: e.x, y: e.y, seed: bs, rarity: roll.rarityCode });
           }
         }
@@ -5015,8 +5241,11 @@ function compact(state: WorldState): void {
       onResourceGrantedCatalyst(state, whole, e.x, e.y);
       supplyDrops.push({ x: e.x, y: e.y });
     } else if (e.kind === 'destructible' && e.hp <= 0) {
+      // 촉매 앵커 — `true` 면 **기본 젬 드랍을 건너뛴다**(카드가 다른 것을 떨군다).
+      // 무촉매 런은 항상 `false` 라 아래 push 가 종전과 같다.
+      // ⚠️ 이 자리는 엔티티 순회 안이다 — 훅에서 스폰 금지(좌표를 모아 순회 밖에서 스폰해라).
       // Broken (vs. culled with hp > 0): drop a gem worth its stored XP value.
-      drops.push({ x: e.x, y: e.y, xp: e.damage });
+      if (!onDestructibleDestroyedCatalyst(state, e)) drops.push({ x: e.x, y: e.y, xp: e.damage });
     } else if (e.kind === 'core') {
       // 침공 승리(M4 plan C2): 코어 파괴 = 침공 성공. 보스와 달리 드랍은 없다(침공 보상은
       // 래더 스왑·복제 약탈로 서버가 처리 — Phase D). 승리 확정만 세운다.
@@ -5047,9 +5276,18 @@ function compact(state: WorldState): void {
         // Boss guaranteed rare+ drop (GDD §3, plan B3). 승리 tick이라 바닥 스폰→접촉 수거가
         // 불가능하므로 state.loot에 직접 기록해 정산에 포함시킨다(해시 포함, replay.ts).
         // 촉매 희귀도 배율을 드랍 롤에 곱하고(무촉매 1 → 불변), 드랍량 배율로 추가 루팅을 파생한다.
-        const roll = rollBossDrop(state.dropRng, stage, state.catalystMods.rarity, dropOdds);
+        // 촉매 앵커 — 엘리트 지점과 **대칭**이다(한쪽만 걸면 보스 드랍이 카드 설명과 갈린다).
+        const lr = onLootRollCatalyst(
+          state,
+          state.catalystMods.rarity,
+          state.catalystMods.drop,
+          e.x,
+          e.y,
+          false,
+        );
+        const roll = rollBossDrop(state.dropRng, stage, lr.rarity, dropOdds);
         state.loot.push({ seed: roll.seed >>> 0, rarity: roll.rarityCode, planet, stage });
-        for (const bs of bonusLootSeeds(roll.seed, state.catalystMods.drop)) {
+        for (const bs of bonusLootSeeds(roll.seed, lr.count)) {
           state.loot.push({ seed: bs >>> 0, rarity: roll.rarityCode, planet, stage });
         }
       }

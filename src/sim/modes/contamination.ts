@@ -256,8 +256,15 @@ export function stepContamination(state: WorldState): void {
  * 한 판정 틱에 **노드당 최대 1셀**만 지운다(전멸 즉시 걷힘이 아니라 눈에 보이는 후퇴). 순수·결정론
  * (엔티티 배열 순서만 읽고 RNG·wall-clock 없음, dead 마킹만).
  */
-export function purifyContamination(state: WorldState): void {
-  if (state.tick % CONTAMINATION_PURGE_INTERVAL !== 0) return;
+export function purifyContamination(state: WorldState, intervalMult = 1): void {
+  // `intervalMult` = 정화를 **늦추는 정수 배수**. `id 42 toxar-outbreak`(정화가 절반만 일어난다)가
+  // 2 를 넘긴다 — 계수 0.5 는 **하한이자 계약**이고(0 으로 내리면 이 함수가 애초에 고친 "되돌릴
+  // 수 없는 숨은 카운트다운"이 되살아난다), 그 하한을 잠그는 자리는 `catalyst/toxar.ts` 의
+  // `toxarPurifyIntervalMult` 다. 간선 방향은 **호출부(`world.ts`)가 촉매를 읽어 넘긴다** —
+  // 이 모듈은 촉매를 import 하지 않는 순수 환경 함수로 남는다(`modes/AGENTS.md`).
+  // 기본 1 이면 종전과 같은 식이라 무촉매 런은 바이트 불변이다.
+  const interval = CONTAMINATION_PURGE_INTERVAL * (intervalMult > 1 ? Math.trunc(intervalMult) : 1);
+  if (state.tick % interval !== 0) return;
   const aliveNodes = new Set<number>();
   for (const e of state.entities) {
     if (!e.dead && isContaminationNode(e)) aliveNodes.add(e.id);

@@ -252,3 +252,62 @@ describe('정산 채널 — 원시값만 · 복사본 · 무촉매는 채널 부
     expect(catalystSettlementOf(s)).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 그룹 모듈 분할 계약 (`src/sim/catalyst/**`)
+// ---------------------------------------------------------------------------
+//
+// 파일을 가른 이유는 **병렬 레인의 머지 충돌 방지**다. 그 이득은 "그룹마다 파일이 있고 그 안에
+// 자기 카드 id 상수가 있다"가 성립할 때만 유지된다 — 누가 상수를 `catalystHooks.ts` 로 도로
+// 끌어올리면 다시 한 파일이 충돌 지점이 된다. 아래가 그것을 기계로 막는다.
+
+describe('촉매 그룹 모듈 분할', () => {
+  // ⚠️ 경로를 **리터럴**로 적는다 — vite 는 변수 동적 import 를 못 해석한다(실측: 이 목록을
+  //    템플릿 문자열로 조립했다가 `Unknown variable dynamic import` 로 죽었다).
+  const GROUPS: readonly {
+    file: string;
+    tick: string;
+    ids: readonly number[];
+    load: () => Promise<Record<string, unknown>>;
+  }[] = [
+    { file: 'drops', tick: 'dropsOnTick', ids: [0, 1, 2, 3, 4], load: () => import('../src/sim/catalyst/drops.js') },
+    { file: 'refine', tick: 'refineOnTick', ids: [5, 6, 7, 8, 9], load: () => import('../src/sim/catalyst/refine.js') },
+    { file: 'growth', tick: 'growthOnTick', ids: [10, 11, 12, 13, 14], load: () => import('../src/sim/catalyst/growth.js') },
+    { file: 'resource', tick: 'resourceOnTick', ids: [15, 16, 17, 18, 19], load: () => import('../src/sim/catalyst/resource.js') },
+    { file: 'chain', tick: 'chainOnTick', ids: [20, 21, 22, 23, 24], load: () => import('../src/sim/catalyst/chain.js') },
+    { file: 'power', tick: 'powerOnTick', ids: [25, 26, 27, 28, 29], load: () => import('../src/sim/catalyst/power.js') },
+    { file: 'kargon', tick: 'kargonOnTick', ids: [30, 31, 32], load: () => import('../src/sim/catalyst/kargon.js') },
+    { file: 'berdan', tick: 'berdanOnTick', ids: [33, 34, 35], load: () => import('../src/sim/catalyst/berdan.js') },
+    { file: 'niflheim', tick: 'niflheimOnTick', ids: [36, 37, 38], load: () => import('../src/sim/catalyst/niflheim.js') },
+    { file: 'arke', tick: 'arkeOnTick', ids: [39, 40, 41], load: () => import('../src/sim/catalyst/arke.js') },
+    { file: 'toxar', tick: 'toxarOnTick', ids: [42, 43, 44], load: () => import('../src/sim/catalyst/toxar.js') },
+    { file: 'kras', tick: 'krasOnTick', ids: [45, 46, 47], load: () => import('../src/sim/catalyst/kras.js') },
+  ];
+
+  it('그룹 모듈이 자기 카드 id 상수를 **자기 파일에서** export 한다', async () => {
+    for (const g of GROUPS) {
+      const mod = await g.load();
+      const declared = Object.entries(mod)
+        .filter(([k, v]) => k.startsWith('CARD_') && typeof v === 'number')
+        .map(([, v]) => v as number)
+        .sort((a, b) => a - b);
+      expect(declared, g.file).toEqual([...g.ids]);
+      expect(typeof mod[g.tick], `${g.file}.${g.tick}`).toBe('function');
+    }
+  });
+
+  it('48종이 **빠짐없이 한 그룹씩** 덮인다 (id 하나가 두 그룹에 있거나 빠지면 실패)', () => {
+    const all = GROUPS.flatMap((g) => g.ids).sort((a, b) => a - b);
+    expect(all).toEqual(Array.from({ length: 48 }, (_, i) => i));
+  });
+
+  it('공명 모듈이 12종 슬러그를 전부 export 한다', async () => {
+    const mod = (await import('../src/sim/catalyst/resonance.js')) as Record<string, unknown>;
+    const slugs = Object.entries(mod)
+      .filter(([k]) => k.startsWith('RESO_'))
+      .map(([, v]) => v as string)
+      .sort();
+    expect(slugs).toHaveLength(12);
+    expect(typeof mod['resonanceOnTick']).toBe('function');
+  });
+});

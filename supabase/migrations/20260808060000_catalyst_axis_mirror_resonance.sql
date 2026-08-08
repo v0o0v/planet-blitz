@@ -10,6 +10,7 @@
 --  (b) catalyst_resonances      — RESONANCES 12행 SQL 미러(신설 테이블)
 --  (c) catalyst_cap_resource_mult_max() — CAP_RESOURCE_MULT_MAX 의 **단일 선언 지점**
 --  (d) consume_catalysts 재정의 — 게이트 (e)중복거부 (f)특산 최대 2장 + 합성식 영수증
+--  (e) grant_currency_for 재정의 — 정산 클램프도 (c)의 단일 선언 함수를 부르게 한다
 --
 -- ── 왜 새 파일인가 ─────────────────────────────────────────────────────────
 -- 20260727000000 · 20260807000000 은 **이미 원격에 적용된** 파일이라 고치지 않는다(append-only).
@@ -19,14 +20,13 @@
 --    덮으므로, 아래 선언이 **적용 순 마지막 판**이다. 8 로 되돌아가면 슬롯 상한이 통째로
 --    무효가 된다.
 --
--- ⚠️ **grant_currency_for 는 이 파일이 건드리지 않는다.** 그 함수의 유효 정의는 여전히
---    20260807000000:179 이고, 거기 220행의 `CAP_RESOURCE_MULT_MAX constant numeric := 2.2;`
---    는 **아직 리터럴**이다. tests/dailyRewardContract.test.ts:780 이 "유효 정의가
---    20260807000000 에 있다"를 드리프트 감지로 잠그고 있어, 이 레인이 그 함수를 다시 덮으면
---    해당 계약이 깨진다(그 파일은 이 레인 밖이다). 클램프를 상향할 때는 **두 자리를 같이**
---    움직여야 한다 — 아래 (c) 함수 본문과 20260807000000:220. 후속 레인이 grant_currency_for
---    를 재정의할 때 그 자리도 `public.catalyst_cap_resource_mult_max()` 호출로 바꾸면
---    선언 지점이 하나로 합쳐진다.
+-- ⚠️ **grant_currency_for 의 유효 정의는 이제 이 파일이다**(아래 (e)). 종전 정의였던
+--    20260807000000:179 는 220행에 `CAP_RESOURCE_MULT_MAX constant numeric := 2.2;` 리터럴을
+--    갖고 있었고, 그 파일은 **이미 원격에 적용됐을 수 있어** 고쳐도 원격 함수가 안 바뀐다.
+--    그래서 그 리터럴은 이력으로 남기고, 여기서 본문을 그대로 옮기되 그 한 줄만
+--    `public.catalyst_cap_resource_mult_max()` 호출로 바꿔 **선언 지점을 하나로 합쳤다.**
+--    tests/dailyRewardContract.test.ts §8 이 캡 상수 전집합·case 갈래 6종·원장 기록을 원본
+--    (20260803000000)과 **값까지** 대조하므로 한 줄이라도 빠지면 그 계약이 빨개진다.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -79,7 +79,7 @@ insert into public.catalyst_defs (catalyst_id, cap_axis, cap_mult, resource_mult
   (13, 'xp', 2.6, 1, array['precision']::text[]),
   (14, 'drop', 1.6, 1, array['precision']::text[]),
   (15, 'drop', 2.4, 1, array['harvest','gamble']::text[]),
-  (16, 'resource', 1.8, 1.8, array['density','erosion']::text[]),
+  (16, 'drop', 1.8, 1, array['density','erosion']::text[]),
   (17, 'resource', 2.6, 2.6, array['density','gamble']::text[]),
   (18, 'resource', 1.8, 1.8, array['gamble']::text[]),
   (19, 'resource', 2.4, 2.4, array['harvest','ignite']::text[]),
@@ -97,7 +97,7 @@ insert into public.catalyst_defs (catalyst_id, cap_axis, cap_mult, resource_mult
   (31, 'drop', 2, 1, array['ignite','erosion']::text[]),
   (32, 'rarity', 2.2, 1, array['precision']::text[]),
   (33, 'catalystDrop', 1.5, 1, array['precision','harvest']::text[]),
-  (34, 'resource', 2.4, 2.4, array['harvest']::text[]),
+  (34, 'drop', 2.4, 1, array['harvest']::text[]),
   (35, 'drop', 2.2, 1, array['density','harvest']::text[]),
   (36, 'resource', 2.2, 2.2, array['precision','gamble']::text[]),
   (37, 'rarity', 2, 1, array['harvest','precision']::text[]),
@@ -174,18 +174,23 @@ on conflict (tag, tier) do update
 -- 이 상수는 캡이 아니라 **정산 클램프**다(20260807000000 상단 배너). 여러 함수가 같은 값을
 -- 각자 리터럴로 적으면 상향할 때 한 곳이 남아 조용히 잘라낸다 — 그래서 함수 하나로 뽑는다.
 --
--- ⚠️ **TODO(lane-f1): 전수 결과로 확정.** 값은 종전 유효값 2.2 를 그대로 옮긴 것이고 새
---    수치가 아니다. 규칙형 48종의 자원축 합성 상한(`1 + Σ(cap − 1) × 0.5`, 공명 포함)의
---    실제 최대치는 48C3 = 17,296 건 전수 스크립트(scripts/catalystCapSweep.ts)가 산출한다.
---    그 값이 2.2 보다 크면 **영수증 단계에서 실지급이 잘린다.** 상향은 아래 리터럴 한 줄만
---    바꾸면 되고, 같은 값이 20260807000000:220(grant_currency_for)에도 리터럴로 남아 있으므로
---    **두 자리를 같이** 옮겨야 한다(파일 상단 배너 참조).
+-- **값 3.2 의 근거 — 48C3 전수 스윕 실측 자원축 최댓값 = 3.20** (2026-08-08, 재태깅 반영본).
+--    scripts/catalystCapSweep.ts (= `pnpm cap:sweep`) 가 48C3 = 17,296 조합을 전수로 돌려
+--    특산 필터(3장 전부 특산 · 서로 다른 행성 특산 2장) 제외 후 유효 12,430 조합의 축별
+--    합성 상한(`1 + Σ(cap − 1) × 0.5`, 공명 포함)을 산출한 결과다.
+--    자원축 최악 조합: #17 greed + #19 motherlode + #40 arke-ancient-core (공명 harvest:weak).
+--    ⚠️ 2026-08-08 사용자 판정으로 `#16 foundry`·`#34 berdan-royal-jelly` 가 자원 → 드랍으로
+--    옮겨갔다. 셋째 자리가 #34 → #40 으로 바뀌었을 뿐 **최댓값 3.20 은 한 자리도 안 움직였다**
+--    (재실행 실측). 그래서 이 값은 여전히 실측을 정확히 덮는다.
+--    종전 리터럴 2.2 는 이 설계 상한을 **31% 잘라내** 영수증 단계에서 실지급을 조용히 깎았다.
+--    ⚠️ 카탈로그(cap_mult)나 공명 표(catalyst_resonances)를 고치면 이 값도 스윕으로 재확정해야
+--    한다. 이 함수가 **유일한 선언 지점**이다 — 아래 (e) grant_currency_for 도 이 함수를 부른다.
 create or replace function public.catalyst_cap_resource_mult_max()
 returns numeric
 language sql
 immutable
 set search_path = ''
-as $$ select 2.2::numeric $$;
+as $$ select 3.2::numeric $$;
 
 revoke all on function public.catalyst_cap_resource_mult_max() from public;
 grant execute on function public.catalyst_cap_resource_mult_max() to authenticated, service_role;
@@ -393,3 +398,204 @@ $$;
 revoke all on function public.consume_catalysts(int[], int) from public;
 revoke all on function public.consume_catalysts(int[], int) from anon;
 grant execute on function public.consume_catalysts(int[], int) to authenticated, service_role;
+
+-- -----------------------------------------------------------------------------
+-- (e) grant_currency_for 재정의 — 정산 클램프를 (c) 단일 선언 함수에 물린다
+-- -----------------------------------------------------------------------------
+-- 20260807000000:179 본문 기준(그 파일이 20260805000000:676 을 옮겨온 판이다).
+-- ⚠️ **원본과의 유일한 차이는 CAP_RESOURCE_MULT_MAX 한 줄**이다 — 리터럴 2.2 를 버리고
+--    public.catalyst_cap_resource_mult_max() 를 부른다. 클램프 값이 (c) 한 곳에서만 산다.
+--    20260807000000:220 의 리터럴은 이미 원격에 적용됐을 수 있어 고쳐도 원격이 안 바뀐다.
+--    그래서 그 자리는 이력으로 두고 여기가 유효 정의가 된다.
+--
+-- ⚠️ **본문 복제 규율**(20260802000000 이 프로덕션을 100% 깨뜨린 원인이 낡은 본문 복제였다):
+--    아래는 현행 정의를 파일에서 그대로 잘라 붙였고 위 한 줄 외에는 한 글자도 바꾸지 않았다.
+--    특히 미등록 source → CAP_DEFAULT 1,000 조용한 절삭 로직과 case 갈래 6종이 그대로다.
+--    tests/dailyRewardContract.test.ts §8 이 캡 상수 전집합을 값까지 대조한다.
+create or replace function public.grant_currency_for(
+  p_profile_id uuid,
+  p_credits    numeric,
+  p_minerals   numeric,
+  p_source     text,
+  p_metrics    jsonb default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  -- 캡 상수(placeholder — 20260727000000 상단 배너가 의미 정본, 함께 갱신). 출시 전 밸런스 튜닝 대상.
+  CAP_PVE_RUN_CREDITS    constant numeric := 5000;
+  CAP_PVE_RUN_MINERALS   constant numeric := 5000;
+  CAP_SALVAGE_CREDITS    constant numeric := 20000;
+  CAP_SALVAGE_MINERALS   constant numeric := 20000;
+  CAP_STORY_CREDITS      constant numeric := 2000;
+  -- 의뢰 확정 보상. CAP_HOURLY_*(50,000) 아래로 두어 정직한 1회 지급이 누적 캡에 먼저 걸리지 않게 한다.
+  -- 미러: src/run/commissionServerConstants.ts CAP_COMMISSION_CREDITS / _MINERALS.
+  CAP_COMMISSION_CREDITS  constant numeric := 30000;
+  CAP_COMMISSION_MINERALS constant numeric := 30000;
+  -- ADR-0048: 일일 보상 per-call 상한. 곁들이 크레딧 + 주 보상(재화 축 낙찰 시)의 합이
+  --   30일차 공통 가치 예산(DAILY_BUDGET_DAY_30 = 20000, data/dailyReward.ts) 을 담아야 한다.
+  --   미등록 source 로 두면 CAP_DEFAULT(1000)에 **조용히 절삭**돼 램프가 그 자리에서 죽는다.
+  CAP_DAILY_REWARD_CREDITS  constant numeric := 25000;
+  CAP_DAILY_REWARD_MINERALS constant numeric := 25000;
+  CAP_DEFAULT_CREDITS    constant numeric := 1000;
+  CAP_DEFAULT_MINERALS   constant numeric := 1000;
+  CAP_HOURLY_CREDITS     constant numeric := 50000;
+  CAP_HOURLY_MINERALS    constant numeric := 50000;
+  CAP_DAILY_CREDITS      constant numeric := 300000;
+  CAP_DAILY_MINERALS     constant numeric := 300000;
+  PLAUSIBILITY_CREDITS_PER_TICK  constant numeric := 2.0;
+  PLAUSIBILITY_MINERALS_PER_TICK constant numeric := 2.0;
+  FLAG_MULTIPLE          constant numeric := 10;
+  -- ADR-0052: SLOT_CAP 8→3(src/data/catalysts.ts 미러).
+  SLOT_CAP               constant int     := 3;
+  MAX_RESOURCE_PER_STACK constant numeric := 0.15;
+  -- ⚠️ 단일 선언 지점은 위 (c) 다 — 여기 리터럴을 다시 적지 않는다(consume_catalysts 와 같은 관용구).
+  CAP_RESOURCE_MULT_MAX  constant numeric := public.catalyst_cap_resource_mult_max();
+
+  -- ⚠️ 원본과의 **유일한** 차이: 수령자를 auth.uid() 가 아니라 파라미터에서 받는다.
+  v_me            uuid := p_profile_id;
+  v_claim_credits   numeric;
+  v_claim_minerals  numeric;
+  v_final_tick    numeric := 0;
+  v_stage         numeric := 0;
+  v_res_mult        numeric := 1;
+  v_plaus_credits   numeric := null;
+  v_plaus_minerals  numeric := null;
+  v_call_credits    numeric;
+  v_call_minerals   numeric;
+  v_1h_credits    numeric := 0;
+  v_1h_minerals   numeric := 0;
+  v_24h_credits   numeric := 0;
+  v_24h_minerals  numeric := 0;
+  v_rem_credits     numeric;
+  v_rem_minerals    numeric;
+  v_ref_credits     numeric;
+  v_ref_minerals    numeric;
+  v_grant_credits   numeric;
+  v_grant_minerals  numeric;
+  v_credits_left    numeric := 0;
+  v_minerals_left   numeric := 0;
+  v_clamped       boolean := false;
+  v_flag          boolean := false;
+begin
+  if v_me is null then
+    raise exception 'grant_currency_for: 수령자 profile_id 필요';
+  end if;
+
+  v_claim_credits  := greatest(0, coalesce(p_credits, 0));
+  v_claim_minerals := greatest(0, coalesce(p_minerals, 0));
+
+  -- ① 개연성 캡: pve_run 만.
+  --
+  --    의뢰가 여기서 면제되는 근거: 이 함수가 받는 값은 *런 파생분 + 서버가 발급한 확정 보상*
+  --    의 합이고, 그 합에 런 길이 비례 캡을 걸면 **짧은 고계급 의뢰의 확정 지급이 조용히 잘린다.**
+  --    확정 보상은 서버가 payload 에 구운 값이라 개연성을 물을 대상이 아니다. 의뢰의 개연성
+  --    방어는 면제가 아니라 **호출부로 옮겨져 있다**(settle_commission 이 틱 비례로 클램프).
+  if p_source = 'pve_run' then
+    v_final_tick := greatest(0, case
+      when (p_metrics->>'finalTick') ~ '^-?[0-9]+(\.[0-9]+)?$'
+        then (p_metrics->>'finalTick')::numeric else 0 end);
+    v_stage := greatest(0, case
+      when (p_metrics->>'stage') ~ '^-?[0-9]+(\.[0-9]+)?$'
+        then (p_metrics->>'stage')::numeric else 0 end);
+    if current_setting('app.in_settle', true) = '1'
+       and (p_metrics->>'resourceMult') ~ '^-?[0-9]+(\.[0-9]+)?$' then
+      v_res_mult := (p_metrics->>'resourceMult')::numeric;
+    end if;
+    v_res_mult := least(greatest(1, v_res_mult), CAP_RESOURCE_MULT_MAX);
+    v_plaus_credits  := PLAUSIBILITY_CREDITS_PER_TICK  * v_final_tick * (1 + v_stage) * v_res_mult;
+    v_plaus_minerals := PLAUSIBILITY_MINERALS_PER_TICK * v_final_tick * (1 + v_stage) * v_res_mult;
+  end if;
+
+  -- ② per-call 캡. ⚠️ commission 분기가 없으면 최종 지시의 확정 보상이 else 로 떨어져
+  --   **조용히 1,000 으로 클램프된다.**
+  case p_source
+    when 'pve_run' then
+      v_call_credits  := CAP_PVE_RUN_CREDITS  * v_res_mult;
+      v_call_minerals := CAP_PVE_RUN_MINERALS * v_res_mult;
+    when 'salvage' then v_call_credits := CAP_SALVAGE_CREDITS; v_call_minerals := CAP_SALVAGE_MINERALS;
+    when 'story'   then v_call_credits := CAP_STORY_CREDITS;   v_call_minerals := 0;
+    when 'commission' then
+      v_call_credits  := CAP_COMMISSION_CREDITS;
+      v_call_minerals := CAP_COMMISSION_MINERALS;
+    when 'daily_reward' then
+      v_call_credits  := CAP_DAILY_REWARD_CREDITS;
+      v_call_minerals := CAP_DAILY_REWARD_MINERALS;
+    else                v_call_credits := CAP_DEFAULT_CREDITS; v_call_minerals := CAP_DEFAULT_MINERALS;
+  end case;
+
+  perform 1 from public.profiles where id = v_me for update;
+  if not found then
+    return jsonb_build_object(
+      'granted_credits', 0, 'granted_minerals', 0,
+      'credits_left', 0, 'minerals_left', 0,
+      'clamped', (v_claim_credits > 0 or v_claim_minerals > 0),
+      'note', 'no-profile'
+    );
+  end if;
+
+  -- ③ 누적 캡: 폭주 방어이지 개연성 판정이 아니므로 **재실행 증거가 대체하지 않는다.**
+  select coalesce(sum(credits), 0), coalesce(sum(minerals), 0)
+    into v_1h_credits, v_1h_minerals
+    from public.currency_grants
+    where profile_id = v_me and created_at > now() - interval '1 hour';
+  select coalesce(sum(credits), 0), coalesce(sum(minerals), 0)
+    into v_24h_credits, v_24h_minerals
+    from public.currency_grants
+    where profile_id = v_me and created_at > now() - interval '24 hours';
+
+  v_rem_credits := least(
+    greatest(0, CAP_HOURLY_CREDITS - v_1h_credits),
+    greatest(0, CAP_DAILY_CREDITS  - v_24h_credits)
+  );
+  v_rem_minerals := least(
+    greatest(0, CAP_HOURLY_MINERALS - v_1h_minerals),
+    greatest(0, CAP_DAILY_MINERALS  - v_24h_minerals)
+  );
+
+  v_grant_credits  := greatest(0, least(v_claim_credits,  v_plaus_credits,  v_call_credits,  v_rem_credits));
+  v_grant_minerals := greatest(0, least(v_claim_minerals, v_plaus_minerals, v_call_minerals, v_rem_minerals));
+
+  v_clamped := (v_grant_credits < v_claim_credits) or (v_grant_minerals < v_claim_minerals);
+
+  v_ref_credits  := least(v_plaus_credits,  v_call_credits);
+  v_ref_minerals := least(v_plaus_minerals, v_call_minerals);
+  if (v_ref_credits  > 0 and v_claim_credits  > FLAG_MULTIPLE * v_ref_credits)
+     or (v_ref_minerals > 0 and v_claim_minerals > FLAG_MULTIPLE * v_ref_minerals)
+     or (p_source = 'pve_run' and v_final_tick <= 0
+         and (v_claim_credits > 0 or v_claim_minerals > 0)) then
+    v_flag := true;
+  end if;
+
+  update public.profiles
+    set credits  = credits  + v_grant_credits,
+        minerals = minerals + v_grant_minerals,
+        flagged  = case when v_flag then true else flagged end
+    where id = v_me
+    returning credits, minerals into v_credits_left, v_minerals_left;
+
+  -- 실지급이 있을 때만 원장 기록. 누적 캡의 근거다 — 우회하면 의뢰 축이 1h/24h 캡 밖으로 나간다
+  -- (apply_invasion_result 선례가 정확히 그렇게 원장을 우회한다. 그것을 복제하지 않는다).
+  if v_grant_credits > 0 or v_grant_minerals > 0 then
+    insert into public.currency_grants (profile_id, source, credits, minerals)
+      values (v_me, p_source, v_grant_credits, v_grant_minerals);
+  end if;
+
+  return jsonb_build_object(
+    'granted_credits',  v_grant_credits,
+    'granted_minerals', v_grant_minerals,
+    'credits_left',     v_credits_left,
+    'minerals_left',    v_minerals_left,
+    'clamped',          v_clamped
+  );
+end;
+$$;
+-- create or replace 는 기존 권한을 보존하지만, 원본과 같은 회수를 한 번 더 건다(멱등).
+-- ⚠️ 이 revoke 가 빠지면 authenticated 가 PUBLIC 을 통해 도달해 위임 구조 전체가 무효가 된다.
+revoke all on function public.grant_currency_for(uuid, numeric, numeric, text, jsonb) from public;
+revoke all on function public.grant_currency_for(uuid, numeric, numeric, text, jsonb) from anon;
+revoke all on function public.grant_currency_for(uuid, numeric, numeric, text, jsonb) from authenticated;
+grant execute on function public.grant_currency_for(uuid, numeric, numeric, text, jsonb) to service_role;

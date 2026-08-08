@@ -29,7 +29,7 @@
  * 데이터/파생 전용 모듈 — sim·render·ui 를 import 하지 않는다(catalysts.ts 만 참조).
  */
 
-import { CATALYSTS } from './catalysts.js';
+import { CATALYSTS, catalystById, CAP_COMPOSE_FACTOR } from './catalysts.js';
 
 /** 촉매 드랍 1건(정산·서버 적립 입력). 같은 id 는 `catalystDropsFromRun` 이 qty 로 합친다. */
 export interface CatalystDrop {
@@ -92,6 +92,125 @@ const BASE_DROP_CHANCE_CP = 6000;
  * 그 전에 내리면 카탈로그가 오기 전에 헤드룸을 없애는 셈이 된다.
  */
 const MAX_DROP_CHANCE_CP = 9500;
+
+/**
+ * 실효 배율 천장 = `MAX_DROP_CHANCE_CP / BASE_DROP_CHANCE_CP` ≈ **×1.583**.
+ *
+ * ⚠️ 헌장 §경제 결합 규율: *"코드가 이미 자르는 값을 상한으로 적지 마라."* 게이트 확률이
+ * 9500cp 에서 잘리므로 배율을 그 위로 올려도 드랍은 한 개도 안 늘어난다. 그래서 환산이
+ * **여기서 먼저 클램프**한다 — 정산이 주장하는 배율과 실제로 굴려지는 배율이 갈리지 않게
+ * 하기 위해서다(화면과 실제가 조용히 갈리는 것이 이 저장소의 지배적 실패 모드다).
+ *
+ * 현행 카탈로그에서는 이 클램프가 **닿지 않는다**(아래 합성식 최대 = ×1.5). 그래도 두는
+ * 이유는 카탈로그가 자라도 자동으로 유계가 유지되게 하기 위해서다.
+ */
+const EFFECTIVE_MAX_DROP_MULT = MAX_DROP_CHANCE_CP / BASE_DROP_CHANCE_CP;
+
+/**
+ * {@link catalystDropMultFromContributions} 입력 한 행 — `RunResult.catalystContributions`
+ * 원소와 **같은 구조를 그 자리에 적는다**(sim 타입을 import 하지 않는다. `save/settlement.ts`
+ * 가 같은 규율을 지는 것과 같은 이유 — 데이터 층이 sim 타입을 알면 경계가 사라진다).
+ */
+export interface CatalystContributionLike {
+  /** 촉매 id. */
+  readonly id: number;
+  /** 발동 횟수. */
+  readonly fired: number;
+  /** 조건을 만족해 **번** 액수의 합. */
+  readonly earned: number;
+  /** 조건 미달로 **놓친** 액수의 합. */
+  readonly missed: number;
+}
+
+/**
+ * 촉매 드랍축 4종의 **환산표** — 귀속 원장 한 행에서 "sim 이 실제로 센 수"를 뽑는 식과,
+ * 그 수가 개별 상한(`cap.mult`)에 닿는 포화점.
+ *
+ * ⚠️⚠️ **주입 목록에서 파생하지 않는다.** 카드를 꽂았다는 사실만으로 서는 배율이 곧 헌장
+ * §상한 근거 규율이 금지한 **무조건 배율**이고, 구 모델(`catalystRewardMult(ids,'catalystDrop')`)
+ * 이 정확히 그 실수를 했다(인계 §5-3). 그래서 입력은 오직 귀속 원장이다 — 카드를 꽂고
+ * 조건을 한 번도 못 채우면 `count === 0` 이라 배율이 정확히 1 이다.
+ *
+ * ⚠️ `cap.mult` 는 여기 적지 않는다 — `src/data/catalysts.ts` 의 `cap` 이 정본이고 이 표는
+ * **발동 수의 의미**만 소유한다(값이 둘로 갈리면 픽커 표시와 정산이 어긋난다).
+ */
+const CATALYST_DROP_AXIS: readonly {
+  readonly id: number;
+  /** 원장 한 행 → 이 카드가 "실제로 센 수". */
+  readonly count: (c: CatalystContributionLike) => number;
+  /** 그 수가 개별 상한에 닿는 지점. // BALANCE (출시 전 일괄 튜닝 — defer-balance-tuning) */
+  readonly saturation: number;
+}[] = [
+  {
+    // `id 21 catalysis` — **정착한 결정 수**. 원장이 스폰마다 `earned+1`, 파괴마다 `missed+1`
+    // 이므로 차가 곧 지금 바닥에 서 있는 결정 수다(`catalyst/chain.ts` §정착 수가 이 식을
+    // 명시적으로 계약으로 적어 두었다 — 슬롯이 없어 원장으로 나가는 카드).
+    id: 21,
+    count: (c) => c.earned - c.missed,
+    // 포화 = `SHARD_LIVE_CAP`(chain.ts = 12). 결정은 그 이상 동시에 설 수 없으므로 "밭이 가득
+    // 찼다"가 이 카드가 도달할 수 있는 최선이다.
+    saturation: 12,
+  },
+  {
+    // `id 33 berdan-collapse` — **점프 직후 즉사시킨 적 수**(`berdan.ts` 가 `killed` 를 그대로
+    // credit 한다). 놓친 칸은 이 카드에 없다.
+    id: 33,
+    count: (c) => c.earned,
+    saturation: 20,
+  },
+  {
+    // `id 38 niflheim-flagship` — **기함 격추**(격추마다 +1). 기함은 런당 한 척뿐이라 사건이
+    // 이진이고, 그래서 포화가 1 이다. `missed` 는 대피소 복구에 쓴 **자원**이라 단위가 달라
+    // 여기서 빼지 않는다(빼면 자원 수치가 드랍 배율을 깎는 엉뚱한 결합이 생긴다).
+    id: 38,
+    count: (c) => c.earned,
+    saturation: 1,
+  },
+  {
+    // `id 45 kras-breach` — **엄폐물을 남기며 부순 블록 수**(`kras.ts` 가 벽 파괴 지점에서 +1).
+    id: 45,
+    count: (c) => c.earned,
+    saturation: 15,
+  },
+];
+
+/**
+ * 귀속 원장 → {@link CatalystDropInput.catalystDropMult}(≥1).
+ *
+ * ## 합성식은 헌장의 축별 합성 그대로다
+ * ```
+ * mult = 1 + Σ (cap_i − 1) × progress_i × CAP_COMPOSE_FACTOR      (progress_i = min(1, count_i / sat_i))
+ * ```
+ * `catalysts.ts` 의 {@link import('./catalysts.js').axisCapMult} 와 **같은 식**이고, 모든
+ * 카드가 포화하면 정확히 그 값(= `axisCapMult(ids,'catalystDrop')`)이 된다. 즉 이 함수는
+ * 상한을 새로 만들지 않고 **이미 선언된 상한 안에서 진행도만 곱한다** — 상한 정본이 둘로
+ * 갈리지 않는 유일한 형태다. `catalystCapSweep` 이 전수로 잰 최댓값이 그대로 유계로 선다.
+ *
+ * @param contributions `RunResult.catalystContributions`. **무촉매 런은 `undefined`** 이고
+ *   그때 반환은 정확히 `1` 이다(호출부는 그 경우 필드 자체를 안 싣는 것이 규율).
+ */
+export function catalystDropMultFromContributions(
+  contributions: readonly CatalystContributionLike[] | undefined,
+): number {
+  if (contributions === undefined || contributions.length === 0) return 1;
+  let sum = 0;
+  for (const row of contributions) {
+    const axis = CATALYST_DROP_AXIS.find((a) => a.id === row.id);
+    if (axis === undefined) continue;
+    // 카탈로그와 표가 갈리면(축이 바뀌거나 카드가 사라지면) **조용히 무시**하지 말고 세지
+    // 않는다. 어긋남 자체는 `tests/` 의 정합 단언이 잡는다.
+    const def = catalystById(row.id);
+    if (def === undefined || def.cap.axis !== 'catalystDrop') continue;
+    const n = axis.count(row);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    sum += (def.cap.mult - 1) * Math.min(1, n / axis.saturation);
+  }
+  if (sum <= 0) return 1;
+  return Math.min(EFFECTIVE_MAX_DROP_MULT, 1 + sum * CAP_COMPOSE_FACTOR);
+}
+
+/** 촉매 드랍축 카드 id 목록(정합 검사용 — 카탈로그의 `cap.axis === 'catalystDrop'` 과 같아야 한다). */
+export const CATALYST_DROP_AXIS_IDS: readonly number[] = CATALYST_DROP_AXIS.map((a) => a.id);
 
 // --- 순수 정수 해시 (murmur3 finalizer — src/sim/drops.ts 와 같은 방식, 부동소수 없음) ---
 

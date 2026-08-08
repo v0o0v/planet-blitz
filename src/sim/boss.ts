@@ -126,7 +126,12 @@ export function updateBoss(state: WorldState, boss: Entity, player: Entity): voi
   // 진행하지 않아, 은신이 풀린 첫 틱에 원래 쏘려던 패턴이 그대로 나간다 — 은신이 보스의 패턴
   // 순서를 건너뛰게 만들지 않는다. 시그니처 미보유 런에서는 즉시 false 라 무영향.
   if (playerCloaked(state, player)) return;
-  const phase = bossDef.phases[boss.phase];
+  // 촉매 `id 44 toxar-blight-mother` 는 보스를 **4단째 페이즈**(index 3)로 일으켜 세운다. 정의는
+  // 3페이즈뿐이므로 범위를 넘은 페이즈는 **마지막 페이즈의 공격 세트로 접는다** — 접지 않으면
+  // 두 번째 형태가 패턴을 하나도 안 쏘는 몸통 돌진체가 되어 "보스 격화"가 성립하지 않는다.
+  // 무촉매 런은 `targetPhase` 가 2 를 넘지 않아 이 fallback 에 **한 번도 도달하지 않는다**
+  // (바이트 불변). `boss.phase` 가 음수가 되는 경로는 없다.
+  const phase = bossDef.phases[boss.phase] ?? bossDef.phases[bossDef.phases.length - 1];
   if (phase === undefined) return;
   const attackIndex = boss.pierce % phase.attacks.length;
   const attack = phase.attacks[attackIndex];

@@ -50,15 +50,50 @@ import type { WorldState } from './world.js';
 import type { Entity } from './entities.js';
 // 대시 통과 판정의 기하. `collision.ts` 는 **순수 leaf**(런타임 import 0)라 값으로 들여와도
 // 순환이 구조적으로 생기지 않는다 — 판정을 여기 베껴 적으면 탄 쪽 선분 판정과 조용히 갈린다.
-import { sweptCircleOverlap } from './collision.js';
+import { sweptCircleOverlap, circlesOverlap } from './collision.js';
+import { readCatalystSlot, CATALYST_SLOT_COUNT } from './catalystSlots.js';
+// 그룹 모듈(`src/sim/catalyst/**`) — **카드 본체가 사는 곳**이다. 이 파일은 디스패치 면으로
+// 남고, 카드 45종은 그룹 파일에서 병렬로 채워진다(가른 사유는 `catalyst/shared.ts` 헤더).
+// ⚠️ 방향은 **여기 → 그룹**뿐이다. 그룹은 `world.js` 를 type-only 로만 끈다(순환 금지).
+import { carries } from './catalyst/shared.js';
+import { catalystHazardDamaging, isCatalystShadow } from './catalyst/shared.js';
+import { epiphanyOnPowerupOffer, epiphanyExtraStacks } from './catalyst/refine.js';
+import { masteryOnPowerupOffer, masteryExtraStacks } from './catalyst/growth.js';
 import {
-  ChainReactionSlot,
-  readCatalystSlot,
-  writeCatalystSlot,
-  CATALYST_SLOT_COUNT,
-} from './catalystSlots.js';
-// 카드 소지 판정의 유일 정본. `data/` 리프라 순환이 생기지 않는다.
-import { hasCatalyst } from '../data/catalysts.js';
+  CARD_CHAINREACTION,
+  chainReactionOnDamaged,
+  chainReactionOnTick,
+} from './catalyst/chain.js';
+import { dropsOnTick } from './catalyst/drops.js';
+import { refineOnTick } from './catalyst/refine.js';
+import { growthOnTick } from './catalyst/growth.js';
+import { resourceOnTick } from './catalyst/resource.js';
+import { chainOnTick } from './catalyst/chain.js';
+import { powerOnTick } from './catalyst/power.js';
+import { kargonOnTick } from './catalyst/kargon.js';
+import { berdanOnTick } from './catalyst/berdan.js';
+import { niflheimOnTick } from './catalyst/niflheim.js';
+import { arkeOnTick } from './catalyst/arke.js';
+import { toxarOnTick } from './catalyst/toxar.js';
+import { krasOnTick } from './catalyst/kras.js';
+import { resonanceOnTick } from './catalyst/resonance.js';
+// ── 앵커 팬아웃용 **네임스페이스** import ────────────────────────────────────────────────
+// 앵커 24개 × 그룹 13개 = 300개 남짓의 진입점을 named 로 끌면 import 블록만 300줄이 되고,
+// 카드 레인이 그룹에 함수를 더할 때마다 이 파일을 고쳐야 한다(= 팬아웃의 취지가 무너진다).
+// 네임스페이스로 끌면 **이 파일은 그룹 파일이 자라도 안 바뀐다.**
+import * as gDrops from './catalyst/drops.js';
+import * as gRefine from './catalyst/refine.js';
+import * as gGrowth from './catalyst/growth.js';
+import * as gResource from './catalyst/resource.js';
+import * as gChain from './catalyst/chain.js';
+import * as gPower from './catalyst/power.js';
+import * as gKargon from './catalyst/kargon.js';
+import * as gBerdan from './catalyst/berdan.js';
+import * as gNiflheim from './catalyst/niflheim.js';
+import * as gArke from './catalyst/arke.js';
+import * as gToxar from './catalyst/toxar.js';
+import * as gKras from './catalyst/kras.js';
+import * as gResonance from './catalyst/resonance.js';
 // 앵커 ⑭(성장 축)가 **중첩 적용**에 쓴다. `powerups.ts` 는 `world.js`/`entities.js` 를
 // **type-only** 로만 끌고 나머지는 leaf 라 순환이 생기지 않는다.
 // ⚠️ `applyPowerup` 은 RNG 를 한 칸도 안 쓴다 — `powerupRng` 소비는 `drawPowerupChoices`
@@ -67,34 +102,21 @@ import { applyPowerup } from './powerups.js';
 // 앵커 ⑥ 의 소멸 사유. **type-only 라 순환이 되지 않는다**(`skillHooks.ts` 가 이 파일을
 // 값으로 import 하므로 값 import 는 순환이다) — 컴파일에서 지워진다.
 import type { BulletExpiryReason } from './skillHooks.js';
+// 앵커 «주무기 피해 배율» 의 인자 타입. **type-only 라 순환이 되지 않는다**(위 `BulletExpiryReason`
+// 과 같은 사유 — `skillHooks.ts` 가 이 파일을 값으로 끌므로 값 import 는 순환이다).
+import type { VolleyParams } from './skillHooks.js';
 import type { DamageSourceMask } from './skillSlots.js';
 
 // ---------------------------------------------------------------------------
 // 카드 소지 판정
 // ---------------------------------------------------------------------------
 
-/** `id 9 epiphany`(깨달음). 정본은 `src/data/catalysts.ts` 의 `slug: 'epiphany'`. */
-const CARD_EPIPHANY = 9;
-/** `id 14 mastery`(숙련). */
-const CARD_MASTERY = 14;
-/** `id 24 chainreaction`(연쇄반응). */
-const CARD_CHAINREACTION = 24;
-
-/**
- * 이 런에 촉매 `id` 가 실려 있는가.
- *
- * `state.catalystOn` 은 "촉매가 하나라도 있는가" 까지만 말한다. 카드별 분기는 반드시 이 술어를
- * 한 번 더 통과해야 한다 — 안 그러면 아무 촉매 한 장만 껴도 48종 전부의 효과가 켜진다.
- *
- * 순회 비용은 **최대 3**이다(헌장 §구조 계약: 슬롯 3장). 매 틱 도는 앵커 ⑨ 에서도 무시할 수
- * 있고, 그래서 파생 비트마스크를 `WorldState` 에 새로 만들지 않았다(새 칸을 만들면 §B 다).
- *
- * ⚠️ 정규화 전 배열을 그대로 본다 — 존재 여부만 쓰므로 중복 제거가 결과를 바꾸지 않는다.
- */
-function carries(state: WorldState, id: number): boolean {
-  const cats = state.config.catalysts;
-  return cats !== undefined && hasCatalyst(cats, id);
-}
+// 카드 id 상수는 **그룹 모듈이 소유한다**(`CARD_EPIPHANY` = `catalyst/refine.ts` …). 여기에
+// 다시 선언하면 정본이 둘이 된다 — 카드 레인이 그룹 파일만 보고 고치므로 이쪽이 조용히 낡는다.
+//
+// {@link carries} 도 `catalyst/shared.ts` 가 소유한다(전 그룹 공용). **여기서 재수출하지 않는다**
+// — 이 파일의 export 하나하나가 `tests/catalystAnchors.test.ts` 의 `vi.mock` 계측 대상이라,
+// 앵커가 아닌 술어를 export 하면 계측 목록이 오염된다.
 
 // ---------------------------------------------------------------------------
 // 기존 앵커 9지점에 대응하는 촉매 디스패치 (S0: 전 분기 비어 있음)
@@ -118,8 +140,76 @@ function carries(state: WorldState, id: number): boolean {
  */
 export function onVolleyFiredCatalyst(state: WorldState, player: Entity): void {
   if (!state.catalystOn) return;
-  void player;
-  // 미배선(위 주석의 근거). 카드별 분기는 발사부 지점을 함께 쥔 레인이 넣는다.
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnVolleyFired(state, player);
+  gRefine.refineOnVolleyFired(state, player);
+  gGrowth.growthOnVolleyFired(state, player);
+  gResource.resourceOnVolleyFired(state, player);
+  gChain.chainOnVolleyFired(state, player);
+  gPower.powerOnVolleyFired(state, player);
+  gKargon.kargonOnVolleyFired(state, player);
+  gBerdan.berdanOnVolleyFired(state, player);
+  gNiflheim.niflheimOnVolleyFired(state, player);
+  gArke.arkeOnVolleyFired(state, player);
+  gToxar.toxarOnVolleyFired(state, player);
+  gKras.krasOnVolleyFired(state, player);
+  gResonance.resonanceOnVolleyFired(state, player);
+}
+
+/**
+ * 앵커 — **주무기 볼리 파라미터가 확정된 직후 · 탄이 태어나기 직전.** 스킬 앵커
+ * `onVolleyParams`(⑯) **바로 뒤**에 선다.
+ *
+ * ## ⭐ 이 앵커가 여는 것 — "플레이어가 **주는** 피해"
+ * 촉매 24앵커에는 **플레이어가 주는 피해에 배율을 거는 자리가 하나도 없었다**(실측). 실제로
+ * 두 카드가 그 부재에 걸려 있었다:
+ *  - `id 16 foundry` — 대가(*"포탑 수만큼 공격력이 나뉜다"*)를 걸 자리가 없어 **카드 전체가
+ *    멈춰 있었다.** 이득만 얹으면 대가 없는 순수 상향이라 헌장 §페널티 규율 위반이다.
+ *  - `id 25 overdrive` — 임시로 `onEnemyDamagedCatalyst` 에서 **추가 피해**로 얹혀 있었다.
+ *    그 자리는 `dead` 가 이미 선 뒤라 **관통·과잉피해 의미가 실제 무기 강화와 다르다**
+ *    (관통탄이 두 번째 적에게 주는 피해에는 안 실리고, 과잉피해가 시체에 낭비된다).
+ *    여기로 옮긴 것이 정본이다.
+ *
+ * ## ⚠️ 이 레코드에서만 읽는다 (호출부 계약)
+ * 호출부 주석이 못 박은 것: *"아래 아키타입 분기는 이 레코드에서만 읽는다. `w.bulletCount`
+ * 처럼 무기 원본을 직접 읽는 자리가 하나라도 남으면 훅이 그 필드를 고쳐도 조용히 무연산이
+ * 된다."* 그래서 여기서 `volley.damage` 를 고치면 실제 탄에 그대로 실린다.
+ *
+ * ⚠️ **아키타입마다 읽는 필드가 다르다** — 빔은 `damage`·`mark`·`cooldownQ` **뿐**이다
+ * (`skillHooks.ts` 의 앵커 ⑯ doc). `count`·`spread` 를 고치는 카드는 그 사실을 함께 봐야 한다.
+ * `damage` 는 **전 아키타입이 읽으므로** 피해 배율은 어느 무기에서도 안 새는 축이다.
+ *
+ * ## ⚠️ 배율은 **곱해서 누적**하되 각 그룹은 원값을 본다
+ * `onDamageChainCatalyst` 와 같은 규율이다 — 중간값을 넘기면 앞 그룹의 배율이 뒤 그룹의 판정
+ * 기준을 바꾼다. 다만 이 앵커는 **레코드를 가변으로 넘기는** 형태(스킬 앵커와 같은 계약)라
+ * 그룹이 직접 `volley.damage` 를 고친다. 그래서 순서가 계약이고, 팬아웃 순서는 다른 앵커와
+ * **동일**(공용 → 특산 행성순 → 공명)하다.
+ *
+ * ⚠️ **RNG 미소비.** 이 지점은 `emitVolley` 앞이라 난수를 굴리면 탄 확산·드랍 스트림이 통째로
+ * 밀린다. 배율은 슬롯·포탑 수 같은 **이미 정해진 상태의 순수 파생**이어야 한다.
+ */
+export function onVolleyParamsCatalyst(
+  state: WorldState,
+  player: Entity,
+  volley: VolleyParams,
+): void {
+  if (!state.catalystOn) return;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  // 무촉매 런은 위 첫 줄에서 이미 반환했고, 전 그룹이 레코드를 안 건드리는 지금은 호출부가
+  // 넘긴 값이 그대로 남는다(바이트 불변).
+  gDrops.dropsOnVolleyParams(state, player, volley);
+  gRefine.refineOnVolleyParams(state, player, volley);
+  gGrowth.growthOnVolleyParams(state, player, volley);
+  gResource.resourceOnVolleyParams(state, player, volley);
+  gChain.chainOnVolleyParams(state, player, volley);
+  gPower.powerOnVolleyParams(state, player, volley);
+  gKargon.kargonOnVolleyParams(state, player, volley);
+  gBerdan.berdanOnVolleyParams(state, player, volley);
+  gNiflheim.niflheimOnVolleyParams(state, player, volley);
+  gArke.arkeOnVolleyParams(state, player, volley);
+  gToxar.toxarOnVolleyParams(state, player, volley);
+  gKras.krasOnVolleyParams(state, player, volley);
+  gResonance.resonanceOnVolleyParams(state, player, volley);
 }
 
 /**
@@ -142,7 +232,20 @@ export function onVolleyFiredCatalyst(state: WorldState, player: Entity): void {
  */
 export function onDashFiredCatalyst(state: WorldState, player: Entity): void {
   if (!state.catalystOn) return;
-  void player;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnDashFired(state, player);
+  gRefine.refineOnDashFired(state, player);
+  gGrowth.growthOnDashFired(state, player);
+  gResource.resourceOnDashFired(state, player);
+  gChain.chainOnDashFired(state, player);
+  gPower.powerOnDashFired(state, player);
+  gKargon.kargonOnDashFired(state, player);
+  gBerdan.berdanOnDashFired(state, player);
+  gNiflheim.niflheimOnDashFired(state, player);
+  gArke.arkeOnDashFired(state, player);
+  gToxar.toxarOnDashFired(state, player);
+  gKras.krasOnDashFired(state, player);
+  gResonance.resonanceOnDashFired(state, player);
 }
 
 /**
@@ -158,7 +261,20 @@ export function onDashFiredCatalyst(state: WorldState, player: Entity): void {
  */
 export function onGemCollectedCatalyst(state: WorldState, gem: Entity): void {
   if (!state.catalystOn) return;
-  void gem;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnGemCollected(state, gem);
+  gRefine.refineOnGemCollected(state, gem);
+  gGrowth.growthOnGemCollected(state, gem);
+  gResource.resourceOnGemCollected(state, gem);
+  gChain.chainOnGemCollected(state, gem);
+  gPower.powerOnGemCollected(state, gem);
+  gKargon.kargonOnGemCollected(state, gem);
+  gBerdan.berdanOnGemCollected(state, gem);
+  gNiflheim.niflheimOnGemCollected(state, gem);
+  gArke.arkeOnGemCollected(state, gem);
+  gToxar.toxarOnGemCollected(state, gem);
+  gKras.krasOnGemCollected(state, gem);
+  gResonance.resonanceOnGemCollected(state, gem);
 }
 
 /**
@@ -180,72 +296,40 @@ export function onPlayerDamagedCatalyst(
   // `id 24` 는 **피해원을 가리지 않는다** — 규칙이 "네가 받은 피해"라 접촉·적탄·해저드를
   // 구분하지 않는다. 사유를 보는 카드가 이 앵커에 배선되면 그때 `sources` 를
   // `hasDamageSource` 로 게이트해라(이 함수 doc 참조).
-  void lethalSurvived;
-  void sources;
   if (carries(state, CARD_CHAINREACTION)) chainReactionOnDamaged(state, player, dmg);
-}
-
-/**
- * `id 24 chainreaction` — **받은 피해를 가장 가까운 잡몹에게 전이하고, 전이한 만큼 최대 HP
- * 상한을 깎는다.** 복구는 {@link onTickCatalyst} 의 세그먼트 전환 감지가 한다.
- *
- * ## 왜 이 앵커에서 적을 직접 깎아도 격추가 정상 집계되는가
- * 이 앵커는 `stepPlayer` 안에서 불리고, 격추 집계·젬·엘리트 루팅의 **단일 수렴점**인
- * `compact()` 는 같은 틱의 **뒤**에서 돈다. 그래서 여기서 hp 를 0 이하로 만든 적은 이번 틱에
- * 그대로 처치로 잡힌다.
- *
- * ⚠️ 단 **`dead` 를 직접 세워야 한다.** `compact()` 의 첫 줄이 `if (!e.dead) { survivors.push;
- * continue; }` 라, hp 만 0 으로 만들고 마킹을 빠뜨리면 **처치도 젬도 전리품도 안 나오는
- * 좀비**가 된다(`activeTypes.ts` 의 `blastDamageAt` 이 정확히 그 형태다).
- *
- * ## 표적을 못 찾으면 대가도 없다
- * 화면에 잡몹이 하나도 없는 구간(보스 단독 등)에서는 전이도 상한 하락도 일어나지 않는다.
- * 헌장 §축소 작동 규율이 요구하는 것은 "무효 조합에서도 축소된 형태로 작동"이지 "표적이 없어도
- * 대가만 물린다"가 아니다 — 이득 없는 대가는 규칙 한 문장의 인과를 끊는다.
- *
- * ## RNG 미소비
- * 이 함수는 난수를 한 칸도 굴리지 않는다. 표적 선택은 `state.entities` **순회 순서 + 동률은
- * 먼저 만난 쪽**이라 결정론적이다.
- */
-function chainReactionOnDamaged(state: WorldState, player: Entity, dmg: number): void {
-  // 상한 하락이 정수여야 하므로(슬롯 값 규약 2) 전이량도 같은 정수로 맞춘다. 접촉 피해는
-  // 엘리트 배율 때문에 소수일 수 있다 — 여기서 한 번 접고 그 값 하나를 두 곳에 쓴다.
-  const transfer = Math.round(dmg);
-  if (transfer <= 0) return;
-  let target: Entity | undefined;
-  let bestD2 = 0;
-  for (const e of state.entities) {
-    if (e.dead || e.kind !== 'enemy') continue;
-    const dx = e.x - player.x;
-    const dy = e.y - player.y;
-    const d2 = dx * dx + dy * dy;
-    if (target === undefined || d2 < bestD2) {
-      target = e;
-      bestD2 = d2;
-    }
-  }
-  if (target === undefined) return;
-  target.hp -= transfer;
-  if (target.hp <= 0) target.dead = true;
-  // 대가 — 하한 1. 0 까지 허용하면 페널티 자체가 사망 원인이 되어 헌장 §페널티 3(되돌릴 수단이
-  // 규칙 안에 있어야 한다)이 무의미해진다. 실제로 깎인 양만 슬롯에 쌓아 복구가 되감기게 한다.
-  const cut = Math.min(transfer, player.maxHp - 1);
-  if (cut <= 0) return;
-  player.maxHp -= cut;
-  // 상한이 현재 hp 아래로 내려오면 현재 hp 도 따라 내려온다 — 이것이 화면에서 읽히는 대가다.
-  if (player.hp > player.maxHp) player.hp = player.maxHp;
-  const slots = state.catalystSlots;
-  writeCatalystSlot(
-    slots,
-    ChainReactionSlot.MaxHpCut,
-    readCatalystSlot(slots, ChainReactionSlot.MaxHpCut) + cut,
-  );
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gRefine.refineOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gGrowth.growthOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gResource.resourceOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gChain.chainOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gPower.powerOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gKargon.kargonOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gBerdan.berdanOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gNiflheim.niflheimOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gArke.arkeOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gToxar.toxarOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gKras.krasOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
+  gResonance.resonanceOnPlayerDamaged(state, player, dmg, lethalSurvived, sources);
 }
 
 /** 이번 틱의 처치 증분. 스킬 디스패치 **뒤**. */
 export function onKillsDeltaCatalyst(state: WorldState, delta: number): void {
   if (!state.catalystOn) return;
-  void delta;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnKillsDelta(state, delta);
+  gRefine.refineOnKillsDelta(state, delta);
+  gGrowth.growthOnKillsDelta(state, delta);
+  gResource.resourceOnKillsDelta(state, delta);
+  gChain.chainOnKillsDelta(state, delta);
+  gPower.powerOnKillsDelta(state, delta);
+  gKargon.kargonOnKillsDelta(state, delta);
+  gBerdan.berdanOnKillsDelta(state, delta);
+  gNiflheim.niflheimOnKillsDelta(state, delta);
+  gArke.arkeOnKillsDelta(state, delta);
+  gToxar.toxarOnKillsDelta(state, delta);
+  gKras.krasOnKillsDelta(state, delta);
+  gResonance.resonanceOnKillsDelta(state, delta);
 }
 
 /**
@@ -266,8 +350,20 @@ export function onBulletExpiredCatalyst(
   reason: BulletExpiryReason,
 ): void {
   if (!state.catalystOn) return;
-  void bullet;
-  void reason;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnBulletExpired(state, bullet, reason);
+  gRefine.refineOnBulletExpired(state, bullet, reason);
+  gGrowth.growthOnBulletExpired(state, bullet, reason);
+  gResource.resourceOnBulletExpired(state, bullet, reason);
+  gChain.chainOnBulletExpired(state, bullet, reason);
+  gPower.powerOnBulletExpired(state, bullet, reason);
+  gKargon.kargonOnBulletExpired(state, bullet, reason);
+  gBerdan.berdanOnBulletExpired(state, bullet, reason);
+  gNiflheim.niflheimOnBulletExpired(state, bullet, reason);
+  gArke.arkeOnBulletExpired(state, bullet, reason);
+  gToxar.toxarOnBulletExpired(state, bullet, reason);
+  gKras.krasOnBulletExpired(state, bullet, reason);
+  gResonance.resonanceOnBulletExpired(state, bullet, reason);
 }
 
 /**
@@ -284,7 +380,20 @@ export function onBulletExpiredCatalyst(
  */
 export function onWallContactCatalyst(state: WorldState, player: Entity): void {
   if (!state.catalystOn) return;
-  void player;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnWallContact(state, player);
+  gRefine.refineOnWallContact(state, player);
+  gGrowth.growthOnWallContact(state, player);
+  gResource.resourceOnWallContact(state, player);
+  gChain.chainOnWallContact(state, player);
+  gPower.powerOnWallContact(state, player);
+  gKargon.kargonOnWallContact(state, player);
+  gBerdan.berdanOnWallContact(state, player);
+  gNiflheim.niflheimOnWallContact(state, player);
+  gArke.arkeOnWallContact(state, player);
+  gToxar.toxarOnWallContact(state, player);
+  gKras.krasOnWallContact(state, player);
+  gResonance.resonanceOnWallContact(state, player);
 }
 
 /**
@@ -336,8 +445,27 @@ export function onDamageChainCatalyst(state: WorldState, player: Entity, dmg: nu
   //    클램프는 `hp` 쪽(`if (player.hp < 0) player.hp = 0`)에만 있다.
   //    `tests/catalystAnchors.test.ts` 의 «반환 배율이 hp 차감에 그대로 도달한다» 가 뮤테이션으로
   //    잠근다 — 앵커 ⑰ 이 `min(d,s)` 에 먹혀 무효였던 전례가 있어 이 칸은 실증해 두었다.
-  void player;
-  return dmg;
+  // ── 그룹 팬아웃 · **배율은 고정 순서대로 곱해서 누적**한다(순서가 계약이다) ──
+  // 무촉매 런은 위에서 이미 반환했고, 전 그룹이 중립 1 을 돌려주는 지금은 `dmg * 1 * … * 1`
+  // 이라 **비트 동일**이다(IEEE754 에서 x*1 === x).
+  // ⚠️ 각 그룹이 받는 `dmg` 는 **팬아웃 전 원값**이다(누적 중간값이 아니다). 중간값을 넘기면
+  //    앞 그룹의 배율이 뒤 그룹의 판정 기준을 바꿔, 순서가 계약인 것을 넘어 **의미까지** 순서에
+  //    의존하게 된다("피해가 50 이상이면"류 조건이 앞 카드 때문에 켜졌다 꺼진다).
+  let d = dmg;
+  d *= gDrops.dropsOnDamageChain(state, player, dmg);
+  d *= gRefine.refineOnDamageChain(state, player, dmg);
+  d *= gGrowth.growthOnDamageChain(state, player, dmg);
+  d *= gResource.resourceOnDamageChain(state, player, dmg);
+  d *= gChain.chainOnDamageChain(state, player, dmg);
+  d *= gPower.powerOnDamageChain(state, player, dmg);
+  d *= gKargon.kargonOnDamageChain(state, player, dmg);
+  d *= gBerdan.berdanOnDamageChain(state, player, dmg);
+  d *= gNiflheim.niflheimOnDamageChain(state, player, dmg);
+  d *= gArke.arkeOnDamageChain(state, player, dmg);
+  d *= gToxar.toxarOnDamageChain(state, player, dmg);
+  d *= gKras.krasOnDamageChain(state, player, dmg);
+  d *= gResonance.resonanceOnDamageChain(state, player, dmg);
+  return d;
 }
 
 /**
@@ -351,32 +479,24 @@ export function onDamageChainCatalyst(state: WorldState, player: Entity, dmg: nu
 export function onTickCatalyst(state: WorldState, player: Entity): void {
   if (!state.catalystOn) return;
   if (carries(state, CARD_CHAINREACTION)) chainReactionOnTick(state, player);
-}
-
-/**
- * `id 24 chainreaction` 의 **되돌릴 수단** — 세그먼트(카탈로그의 "웨이브")가 넘어가면 그 동안
- * 깎인 최대 HP 상한이 통째로 복구된다.
- *
- * 전환 감지를 `state.wave.segmentIndex` 의 **순수 파생**으로 한 이유: 이 값은 이미 해시에
- * 접히므로(`replay.ts`) 새 상태 없이 "언제 넘어갔는가"를 틱의 닫힌 함수로 쓸 수 있다. 헌장이
- * `침식` 강공명에서 이벤트 의존(리더 처치)을 같은 사유로 기각하고 이 필드로 바꿔 적었다.
- *
- * ⚠️ 현재 hp 는 **되돌리지 않는다.** 깎인 것은 상한이고, 복구는 상한을 되돌려 다시 회복할
- * 여지를 주는 것이지 공짜 회복이 아니다.
- */
-function chainReactionOnTick(state: WorldState, player: Entity): void {
-  const slots = state.catalystSlots;
-  const mark = state.wave.segmentIndex + 1; // +1 은 값 규약 1(0 = "없음") — 슬롯 doc 참조.
-  const seen = readCatalystSlot(slots, ChainReactionSlot.SegmentMark);
-  if (seen === mark) return;
-  if (seen !== 0) {
-    const cut = readCatalystSlot(slots, ChainReactionSlot.MaxHpCut);
-    if (cut > 0) {
-      player.maxHp += cut;
-      writeCatalystSlot(slots, ChainReactionSlot.MaxHpCut, 0);
-    }
-  }
-  writeCatalystSlot(slots, ChainReactionSlot.SegmentMark, mark);
+  // ── 그룹 매 틱 진입점 ─────────────────────────────────────────────────────
+  // **순서가 계약이다.** 그룹 12개를 id 오름차순(공용 → 특산 행성순)으로 부르고 공명을 마지막에
+  // 둔다 — 공명은 카드들의 집계 결과라 카드가 이번 틱에 만든 상태 위에 얹혀야 한다. 순서를
+  // 바꾸면 두 그룹이 같은 값을 만지는 런에서 결과가 조용히 갈린다.
+  // 지금은 전부 빈 함수라 무연산이고, 무촉매 런은 위 첫 줄에서 이미 빠져나갔다(바이트 불변).
+  dropsOnTick(state, player);
+  refineOnTick(state, player);
+  growthOnTick(state, player);
+  resourceOnTick(state, player);
+  chainOnTick(state, player);
+  powerOnTick(state, player);
+  kargonOnTick(state, player);
+  berdanOnTick(state, player);
+  niflheimOnTick(state, player);
+  arkeOnTick(state, player);
+  toxarOnTick(state, player);
+  krasOnTick(state, player);
+  resonanceOnTick(state, player);
 }
 
 // ---------------------------------------------------------------------------
@@ -400,9 +520,20 @@ export function onEnemyDamagedCatalyst(
   source: Entity | undefined,
 ): void {
   if (!state.catalystOn) return;
-  void target;
-  void dmg;
-  void source;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnEnemyDamaged(state, target, dmg, source);
+  gRefine.refineOnEnemyDamaged(state, target, dmg, source);
+  gGrowth.growthOnEnemyDamaged(state, target, dmg, source);
+  gResource.resourceOnEnemyDamaged(state, target, dmg, source);
+  gChain.chainOnEnemyDamaged(state, target, dmg, source);
+  gPower.powerOnEnemyDamaged(state, target, dmg, source);
+  gKargon.kargonOnEnemyDamaged(state, target, dmg, source);
+  gBerdan.berdanOnEnemyDamaged(state, target, dmg, source);
+  gNiflheim.niflheimOnEnemyDamaged(state, target, dmg, source);
+  gArke.arkeOnEnemyDamaged(state, target, dmg, source);
+  gToxar.toxarOnEnemyDamaged(state, target, dmg, source);
+  gKras.krasOnEnemyDamaged(state, target, dmg, source);
+  gResonance.resonanceOnEnemyDamaged(state, target, dmg, source);
 }
 
 /**
@@ -420,9 +551,20 @@ export function onEnemyDeathCatalyst(
   elite: boolean,
 ): void {
   if (!state.catalystOn) return;
-  void x;
-  void y;
-  void elite;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnEnemyDeath(state, x, y, elite);
+  gRefine.refineOnEnemyDeath(state, x, y, elite);
+  gGrowth.growthOnEnemyDeath(state, x, y, elite);
+  gResource.resourceOnEnemyDeath(state, x, y, elite);
+  gChain.chainOnEnemyDeath(state, x, y, elite);
+  gPower.powerOnEnemyDeath(state, x, y, elite);
+  gKargon.kargonOnEnemyDeath(state, x, y, elite);
+  gBerdan.berdanOnEnemyDeath(state, x, y, elite);
+  gNiflheim.niflheimOnEnemyDeath(state, x, y, elite);
+  gArke.arkeOnEnemyDeath(state, x, y, elite);
+  gToxar.toxarOnEnemyDeath(state, x, y, elite);
+  gKras.krasOnEnemyDeath(state, x, y, elite);
+  gResonance.resonanceOnEnemyDeath(state, x, y, elite);
 }
 
 // ---------------------------------------------------------------------------
@@ -439,7 +581,20 @@ export function onEnemyDeathCatalyst(
  */
 export function onLevelUpCatalyst(state: WorldState, level: number): void {
   if (!state.catalystOn) return;
-  void level;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnLevelUp(state, level);
+  gRefine.refineOnLevelUp(state, level);
+  gGrowth.growthOnLevelUp(state, level);
+  gResource.resourceOnLevelUp(state, level);
+  gChain.chainOnLevelUp(state, level);
+  gPower.powerOnLevelUp(state, level);
+  gKargon.kargonOnLevelUp(state, level);
+  gBerdan.berdanOnLevelUp(state, level);
+  gNiflheim.niflheimOnLevelUp(state, level);
+  gArke.arkeOnLevelUp(state, level);
+  gToxar.toxarOnLevelUp(state, level);
+  gKras.krasOnLevelUp(state, level);
+  gResonance.resonanceOnLevelUp(state, level);
 }
 
 /**
@@ -464,16 +619,25 @@ export function onPowerupOfferCatalyst(state: WorldState, choices: readonly numb
   // ⚠️ 적용 순서는 **mastery → epiphany 고정**이다(둘 다 실린 런에서 결과가 갈리지 않게).
   //    mastery 가 전 칸을 첫 칸으로 채운 뒤 epiphany 가 1칸으로 접으므로, 남는 것은 첫 칸이다.
 
-  // id 14 mastery — 세 자리가 전부 같은 파워업이 된다(폭을 잃고 깊이를 얻는다).
-  // ⚠️ `GAMBLER_EXTRA_CHOICES` 로 4택이 된 런에서도 자리 수와 무관하게 전부 덮는다.
-  if (carries(state, CARD_MASTERY)) {
-    for (let i = 1; i < offers.length; i++) offers[i] = first;
-  }
-  // id 9 epiphany — 3택이 1택으로 접힌다(거부할 수 없다). 프리즈는 그대로라 픽 입력이
-  // 와야 런이 재개되고, `world.ts` 의 `idxOffered < length` 가드가 1칸만 허용한다.
-  if (carries(state, CARD_EPIPHANY)) {
-    offers.length = 1;
-  }
+  // 본체는 그룹 모듈이 소유한다(카드 소지 게이트도 그 안에 있다) — 거동은 옮기기 전과 같다.
+  masteryOnPowerupOffer(state, offers, first);
+  epiphanyOnPowerupOffer(state, offers);
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  // ⚠️ 위 두 줄 **뒤**다. 성장 축 두 카드는 자리를 덮는 규칙이라 순서가 이미 계약으로 못 박혀
+  //    있고(mastery → epiphany), 팬아웃을 앞에 두면 그룹이 만든 선택지를 그 둘이 덮어쓴다.
+  gDrops.dropsOnPowerupOffer(state, offers);
+  gRefine.refineOnPowerupOffer(state, offers);
+  gGrowth.growthOnPowerupOffer(state, offers);
+  gResource.resourceOnPowerupOffer(state, offers);
+  gChain.chainOnPowerupOffer(state, offers);
+  gPower.powerOnPowerupOffer(state, offers);
+  gKargon.kargonOnPowerupOffer(state, offers);
+  gBerdan.berdanOnPowerupOffer(state, offers);
+  gNiflheim.niflheimOnPowerupOffer(state, offers);
+  gArke.arkeOnPowerupOffer(state, offers);
+  gToxar.toxarOnPowerupOffer(state, offers);
+  gKras.krasOnPowerupOffer(state, offers);
+  gResonance.resonanceOnPowerupOffer(state, offers);
 }
 
 /**
@@ -498,10 +662,24 @@ export function onPowerupPickedCatalyst(
 ): void {
   if (!state.catalystOn) return;
   void offeredIndex;
-  let extra = 0;
-  if (carries(state, CARD_MASTERY)) extra += 2; // 3중첩 = 기본 1 + 2
-  if (carries(state, CARD_EPIPHANY)) extra += 1; // 2중첩 = 기본 1 + 1
+  // 중첩 추가분은 그룹 모듈이 소유한다(mastery 3중첩 = 기본 1 + 2 · epiphany 2중첩 = 기본 1 + 1).
+  // 합산 순서는 옮기기 전과 같다 — 덧셈이라 값은 순서 무관이지만 계약을 문서와 일치시켜 둔다.
+  const extra = masteryExtraStacks(state) + epiphanyExtraStacks(state);
   for (let i = 0; i < extra; i++) applyPowerup(state, poolIndex);
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnPowerupPicked(state, poolIndex, offeredIndex);
+  gRefine.refineOnPowerupPicked(state, poolIndex, offeredIndex);
+  gGrowth.growthOnPowerupPicked(state, poolIndex, offeredIndex);
+  gResource.resourceOnPowerupPicked(state, poolIndex, offeredIndex);
+  gChain.chainOnPowerupPicked(state, poolIndex, offeredIndex);
+  gPower.powerOnPowerupPicked(state, poolIndex, offeredIndex);
+  gKargon.kargonOnPowerupPicked(state, poolIndex, offeredIndex);
+  gBerdan.berdanOnPowerupPicked(state, poolIndex, offeredIndex);
+  gNiflheim.niflheimOnPowerupPicked(state, poolIndex, offeredIndex);
+  gArke.arkeOnPowerupPicked(state, poolIndex, offeredIndex);
+  gToxar.toxarOnPowerupPicked(state, poolIndex, offeredIndex);
+  gKras.krasOnPowerupPicked(state, poolIndex, offeredIndex);
+  gResonance.resonanceOnPowerupPicked(state, poolIndex, offeredIndex);
 }
 
 // ---------------------------------------------------------------------------
@@ -555,8 +733,20 @@ export function onPowerupPickedCatalyst(
  */
 export function onDashPierceCatalyst(state: WorldState, player: Entity, target: Entity): void {
   if (!state.catalystOn) return;
-  void player;
-  void target;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnDashPierce(state, player, target);
+  gRefine.refineOnDashPierce(state, player, target);
+  gGrowth.growthOnDashPierce(state, player, target);
+  gResource.resourceOnDashPierce(state, player, target);
+  gChain.chainOnDashPierce(state, player, target);
+  gPower.powerOnDashPierce(state, player, target);
+  gKargon.kargonOnDashPierce(state, player, target);
+  gBerdan.berdanOnDashPierce(state, player, target);
+  gNiflheim.niflheimOnDashPierce(state, player, target);
+  gArke.arkeOnDashPierce(state, player, target);
+  gToxar.toxarOnDashPierce(state, player, target);
+  gKras.krasOnDashPierce(state, player, target);
+  gResonance.resonanceOnDashPierce(state, player, target);
 }
 
 /**
@@ -633,9 +823,20 @@ export function onResourceGrantedCatalyst(
   y: number,
 ): void {
   if (!state.catalystOn) return;
-  void amount;
-  void x;
-  void y;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnResourceGranted(state, amount, x, y);
+  gRefine.refineOnResourceGranted(state, amount, x, y);
+  gGrowth.growthOnResourceGranted(state, amount, x, y);
+  gResource.resourceOnResourceGranted(state, amount, x, y);
+  gChain.chainOnResourceGranted(state, amount, x, y);
+  gPower.powerOnResourceGranted(state, amount, x, y);
+  gKargon.kargonOnResourceGranted(state, amount, x, y);
+  gBerdan.berdanOnResourceGranted(state, amount, x, y);
+  gNiflheim.niflheimOnResourceGranted(state, amount, x, y);
+  gArke.arkeOnResourceGranted(state, amount, x, y);
+  gToxar.toxarOnResourceGranted(state, amount, x, y);
+  gKras.krasOnResourceGranted(state, amount, x, y);
+  gResonance.resonanceOnResourceGranted(state, amount, x, y);
 }
 
 /**
@@ -660,9 +861,24 @@ export function onResourceGrantedCatalyst(
  */
 export function onBossDeathCatalyst(state: WorldState, x: number, y: number): boolean {
   if (!state.catalystOn) return false;
-  void x;
-  void y;
-  return false;
+  // ── 그룹 팬아웃 · **억제는 단락 없이 13개를 전부 부르고 OR 로 접는다** ──
+  // ⚠️ `a() || b()` 로 쓰면 a 가 참일 때 b 가 **안 불려 부수효과가 사라진다**. 그래서 논리
+  //    합이 아니라 13개의 개별 호출 + 플래그 누적이다.
+  let suppress = false;
+  if (gDrops.dropsOnBossDeath(state, x, y)) suppress = true;
+  if (gRefine.refineOnBossDeath(state, x, y)) suppress = true;
+  if (gGrowth.growthOnBossDeath(state, x, y)) suppress = true;
+  if (gResource.resourceOnBossDeath(state, x, y)) suppress = true;
+  if (gChain.chainOnBossDeath(state, x, y)) suppress = true;
+  if (gPower.powerOnBossDeath(state, x, y)) suppress = true;
+  if (gKargon.kargonOnBossDeath(state, x, y)) suppress = true;
+  if (gBerdan.berdanOnBossDeath(state, x, y)) suppress = true;
+  if (gNiflheim.niflheimOnBossDeath(state, x, y)) suppress = true;
+  if (gArke.arkeOnBossDeath(state, x, y)) suppress = true;
+  if (gToxar.toxarOnBossDeath(state, x, y)) suppress = true;
+  if (gKras.krasOnBossDeath(state, x, y)) suppress = true;
+  if (gResonance.resonanceOnBossDeath(state, x, y)) suppress = true;
+  return suppress;
 }
 
 // ---------------------------------------------------------------------------
@@ -701,4 +917,392 @@ export function catalystSettlementOf(state: WorldState): readonly number[] | und
     out[i] = readCatalystSlot(state.catalystSlots, i);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// 신규 앵커 일곱 (배선 기반 레인) — **전 분기 비어 있음**
+// ---------------------------------------------------------------------------
+//
+// 전부 첫 줄이 `if (!state.catalystOn) return …;` 이고, 반환형이 있으면 **인자를 그대로**
+// 돌려준다. 그래서 무촉매 런은 비트 단위로 종전과 같다(`scripts/catalystByteInvariance.ts`).
+//
+// ⚠️ 카드별 효과는 이 파일이 아니라 **그룹 모듈**(`src/sim/catalyst/**`)에 넣고 여기서 부른다.
+
+/**
+ * {@link onLootRollCatalyst} 의 반환 — 전리품 **등급 배율**과 **개수 배율** 한 쌍.
+ *
+ * ⚠️ **선언은 `catalyst/shared.ts` 가 소유한다.** 그룹 모듈 13개가 전부 이 타입을 반환하는데,
+ * 그룹이 이 파일을 값으로 import 하면 순환이다(디스패처가 그룹을 끈다). 여기서는 기존 소비자
+ * 시그니처를 그대로 두기 위해 **재수출만** 한다.
+ */
+export type { CatalystLootRoll } from './catalyst/shared.js';
+import type { CatalystLootRoll } from './catalyst/shared.js';
+
+/**
+ * 앵커 — **전리품 등급·개수 배율이 확정되는 자리**. 엘리트 드랍과 보스 확정 드랍 **두 지점
+ * 모두**에 걸려 있다(한쪽만 걸면 보스 드랍이 카드 설명과 갈린다).
+ *
+ * ## ⚠️ RNG 재롤 금지 (공통-B(c))
+ * 이 앵커는 **이미 뽑힌 결과에 곱하는 자리**다. 여기서 난수를 굴려 다시 뽑으면 같은 시드의
+ * 드랍 스트림이 통째로 밀려 웨이브·엘리트 시퀀스까지 갈린다. 실제로 호출 지점은
+ * `rollEliteDrop` **직전**이라 배율만 바꾸고, `rollEliteDrop` 의 RNG 소비는 배율과 무관하게
+ * 고정 횟수다(그 함수 본문이 근거).
+ *
+ * @param rarity 여기까지 접힌 등급 배율(촉매 축 × 스킬 축)
+ * @param count 여기까지 접힌 개수 배율(`state.catalystMods.drop`)
+ * @param elite `true` = 엘리트 드랍 · `false` = 보스 확정 드랍
+ * @returns 보정된 한 쌍. 무촉매 런은 **인자 그대로**다.
+ */
+export function onLootRollCatalyst(
+  state: WorldState,
+  rarity: number,
+  count: number,
+  x: number,
+  y: number,
+  elite: boolean,
+): CatalystLootRoll {
+  if (!state.catalystOn) return { rarity, count };
+  // ── 그룹 팬아웃 · **배율은 고정 순서대로 곱해서 누적**한다(순서가 계약이다) ──
+  // 등급·개수 **두 축을 각각** 곱한다. 그룹은 자기 몫이 없으면 `CATALYST_LOOT_NEUTRAL` 을
+  // 그대로 돌려주므로(할당 0) 지금은 `rarity * 1 * … * 1` 이라 비트 동일이다.
+  // 호출부가 배율을 그대로 쓰므로 반환값이 뒤에서 삼켜지지 않는다.
+  let rr = rarity;
+  let rc = count;
+  { const r = gDrops.dropsOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gRefine.refineOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gGrowth.growthOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gResource.resourceOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gChain.chainOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gPower.powerOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gKargon.kargonOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gBerdan.berdanOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gNiflheim.niflheimOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gArke.arkeOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gToxar.toxarOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gKras.krasOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  { const r = gResonance.resonanceOnLootRoll(state, x, y, elite); rr *= r.rarity; rc *= r.count; }
+  return { rarity: rr, count: rc };
+}
+
+/**
+ * 앵커 — **바닥 전리품을 주웠고 `state.loot` 에 실리기 직전**. `true` 를 돌려주면 그 push 를
+ * 통째로 건너뛴다(전리품이 인벤으로 안 간다).
+ *
+ * ## ⭐ 왜 이 분기가 **필수**인가 (`id 3` 현상금 표식 · `id 15` 자원 결정)
+ * 두 카드는 바닥에 떨어지는 것을 **장비가 아닌 다른 것**으로 바꾼다. 그런데 이 sim 의
+ * 전리품 경로는 `state.loot` 한 곳으로 수렴하고, 정산이 그 배열을 그대로 아이템으로 만든다.
+ * 억제 분기가 없으면:
+ *  1. 표식 하나마다 **가짜 장비가 하나씩** 생긴다(카드 규칙에 없는 인벤 유입).
+ *  2. 더 나쁜 것 — `catalystDropsFromRun` 이 **드랍 시드마다 60% 게이트를 굴린다.** 즉
+ *     표식이 늘어난 만큼 **촉매까지 공짜로 늘어난다.** 촉매 유입은 경제 축이라 그대로
+ *     밸런스가 아니라 경제가 깨진다.
+ * 그래서 억제는 "있으면 좋은 것"이 아니라 두 카드의 **필수 선결**이다.
+ *
+ * ⚠️ 억제는 **push 생략이지 사후 취소가 아니다**(`onDeathRemnantSpawn` 과 같은 형태).
+ * `loot.dead = true` 는 호출부가 이미 세웠으므로 바닥 개체는 어느 쪽이든 사라진다.
+ *
+ * @returns `true` 면 `state.loot` 에 싣지 않는다. 무촉매 런은 항상 `false`.
+ */
+export function onLootCollectedCatalyst(state: WorldState, loot: Entity): boolean {
+  if (!state.catalystOn) return false;
+  // ── 그룹 팬아웃 · **억제는 단락 없이 13개를 전부 부르고 OR 로 접는다** ──
+  // ⚠️ `a() || b()` 로 쓰면 a 가 참일 때 b 가 **안 불려 부수효과가 사라진다**. 그래서 논리
+  //    합이 아니라 13개의 개별 호출 + 플래그 누적이다.
+  let suppress = false;
+  if (gDrops.dropsOnLootCollected(state, loot)) suppress = true;
+  if (gRefine.refineOnLootCollected(state, loot)) suppress = true;
+  if (gGrowth.growthOnLootCollected(state, loot)) suppress = true;
+  if (gResource.resourceOnLootCollected(state, loot)) suppress = true;
+  if (gChain.chainOnLootCollected(state, loot)) suppress = true;
+  if (gPower.powerOnLootCollected(state, loot)) suppress = true;
+  if (gKargon.kargonOnLootCollected(state, loot)) suppress = true;
+  if (gBerdan.berdanOnLootCollected(state, loot)) suppress = true;
+  if (gNiflheim.niflheimOnLootCollected(state, loot)) suppress = true;
+  if (gArke.arkeOnLootCollected(state, loot)) suppress = true;
+  if (gToxar.toxarOnLootCollected(state, loot)) suppress = true;
+  if (gKras.krasOnLootCollected(state, loot)) suppress = true;
+  if (gResonance.resonanceOnLootCollected(state, loot)) suppress = true;
+  return suppress;
+}
+
+/**
+ * 앵커 — **세그먼트(카탈로그의 "웨이브")가 실제로 넘어간 틱에만** 불린다.
+ *
+ * ⚠️ **`waves.ts` 안에서 뚫지 마라.** 웨이브 전진은 `waves.ts`(리프) 안에서 일어나는데, 거기서
+ * 이 파일을 부르면 `skillHooks → skills/*` 사슬과 엮여 순환이 생긴다(이 파일 위쪽 §신규 앵커
+ * 주석이 그 사유를 이미 적어 뒀다). 그래서 호출부(`world.ts`)가 `updateWaves` **전후의
+ * `state.wave.segmentIndex` 를 비교**해 변한 틱에만 부른다 — 무촉매 런에서 그 비교는 순수
+ * 읽기라 거동이 안 바뀐다.
+ *
+ * @param prevSegment `updateWaves` **전**의 세그먼트 인덱스
+ * @param nextSegment `updateWaves` **후**의 세그먼트 인덱스(항상 `prevSegment` 와 다르다)
+ */
+export function onWaveAdvancedCatalyst(
+  state: WorldState,
+  prevSegment: number,
+  nextSegment: number,
+): void {
+  if (!state.catalystOn) return;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnWaveAdvanced(state, prevSegment, nextSegment);
+  gRefine.refineOnWaveAdvanced(state, prevSegment, nextSegment);
+  gGrowth.growthOnWaveAdvanced(state, prevSegment, nextSegment);
+  gResource.resourceOnWaveAdvanced(state, prevSegment, nextSegment);
+  gChain.chainOnWaveAdvanced(state, prevSegment, nextSegment);
+  gPower.powerOnWaveAdvanced(state, prevSegment, nextSegment);
+  gKargon.kargonOnWaveAdvanced(state, prevSegment, nextSegment);
+  gBerdan.berdanOnWaveAdvanced(state, prevSegment, nextSegment);
+  gNiflheim.niflheimOnWaveAdvanced(state, prevSegment, nextSegment);
+  gArke.arkeOnWaveAdvanced(state, prevSegment, nextSegment);
+  gToxar.toxarOnWaveAdvanced(state, prevSegment, nextSegment);
+  gKras.krasOnWaveAdvanced(state, prevSegment, nextSegment);
+  gResonance.resonanceOnWaveAdvanced(state, prevSegment, nextSegment);
+}
+
+/**
+ * 앵커 — **접촉형 표적과 판정점이 겹친 틱**(적·보스·수호·방어보스).
+ *
+ * ## ⚠️ 무적 조기 반환보다 **앞**이다
+ * `id 1 plunder`(강탈)는 **무적 중에도 성립해야 한다** — 대시 무적으로 파고들어 뜯는 것이
+ * 카드의 그림이라, 무적 게이트 뒤에 두면 그 플레이가 구조적으로 0회가 된다. 그래서 호출부는
+ * `if (invulnerable)` **위**에 이 앵커를 둔다(`onContactInvuln` 이 무적 **안**에 있는 것과
+ * 대칭이다 — 저쪽은 "무적이라 상쇄된 그 지점"이 계약이고, 이쪽은 "무적과 무관한 접촉"이다).
+ *
+ * 대상 kind 게이트는 `onContactInvuln` 과 **같은 넷**을 따른다(적탄·해저드는 접촉이 아니다).
+ */
+export function onEnemyContactCatalyst(state: WorldState, player: Entity, target: Entity): void {
+  if (!state.catalystOn) return;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnEnemyContact(state, player, target);
+  gRefine.refineOnEnemyContact(state, player, target);
+  gGrowth.growthOnEnemyContact(state, player, target);
+  gResource.resourceOnEnemyContact(state, player, target);
+  gChain.chainOnEnemyContact(state, player, target);
+  gPower.powerOnEnemyContact(state, player, target);
+  gKargon.kargonOnEnemyContact(state, player, target);
+  gBerdan.berdanOnEnemyContact(state, player, target);
+  gNiflheim.niflheimOnEnemyContact(state, player, target);
+  gArke.arkeOnEnemyContact(state, player, target);
+  gToxar.toxarOnEnemyContact(state, player, target);
+  gKras.krasOnEnemyContact(state, player, target);
+  gResonance.resonanceOnEnemyContact(state, player, target);
+}
+
+/**
+ * 앵커 — **적 한 마리의 이번 틱 이동 속도 배율**. 호출부가 접은 `sm` 을 받아 보정해 돌려준다.
+ *
+ * ⚠️ 반환값이 곧 `def.speed` 곱수다. 호출부는 `sm !== 1` 일 때만 def 를 복제하므로,
+ * **1 을 그대로 돌려주면 복제조차 일어나지 않아** 무촉매 런이 비트 동일이다.
+ *
+ * ⚠️ 여기서 `e` 에 쓰기를 하지 마라 — 이 앵커는 `stepEnemies` 순회 안이고, 상태를 세우면
+ * 같은 틱의 뒤 단계(격자·충돌)가 반쯤 갱신된 값을 본다. 표식이 필요하면 `catalystMarks` 의
+ * `aux0` 비트를 **전용 앵커에서** 세워라.
+ *
+ * @param sm 여기까지 접힌 배율(엘리트 가속 × 냉기 감속 × 정지 × 촉매 적 속도 페널티)
+ * @returns 보정된 배율. 무촉매 런은 **`sm` 그대로**.
+ */
+export function onEnemyStepCatalyst(state: WorldState, e: Entity, sm: number): number {
+  if (!state.catalystOn) return sm;
+  // ── 그룹 팬아웃 · **배율은 고정 순서대로 곱해서 누적**한다(순서가 계약이다) ──
+  let m = sm;
+  m *= gDrops.dropsOnEnemyStep(state, e);
+  m *= gRefine.refineOnEnemyStep(state, e);
+  m *= gGrowth.growthOnEnemyStep(state, e);
+  m *= gResource.resourceOnEnemyStep(state, e);
+  m *= gChain.chainOnEnemyStep(state, e);
+  m *= gPower.powerOnEnemyStep(state, e);
+  m *= gKargon.kargonOnEnemyStep(state, e);
+  m *= gBerdan.berdanOnEnemyStep(state, e);
+  m *= gNiflheim.niflheimOnEnemyStep(state, e);
+  m *= gArke.arkeOnEnemyStep(state, e);
+  m *= gToxar.toxarOnEnemyStep(state, e);
+  m *= gKras.krasOnEnemyStep(state, e);
+  m *= gResonance.resonanceOnEnemyStep(state, e);
+  return m;
+}
+
+/**
+ * 앵커 — **파괴물(`destructible`)이 부서진 사건**. `true` 를 돌려주면 **기본 젬 드랍을 건너뛴다**
+ * (카드가 젬 대신 다른 것을 떨군다).
+ *
+ * ⚠️ 이 호출은 `for (const e of state.entities)` 순회 **안**이다 — 훅에서 스폰 금지.
+ * 다른 것을 떨구려면 좌표를 모아 순회 밖에서 스폰해라(호출부의 `drops`/`lootDrops` 가 그 형태다).
+ *
+ * @returns `true` 면 그 파괴물의 기본 젬이 생기지 않는다. 무촉매 런은 항상 `false`.
+ */
+export function onDestructibleDestroyedCatalyst(state: WorldState, e: Entity): boolean {
+  if (!state.catalystOn) return false;
+  // ── 그룹 팬아웃 · **억제는 단락 없이 13개를 전부 부르고 OR 로 접는다** ──
+  // ⚠️ `a() || b()` 로 쓰면 a 가 참일 때 b 가 **안 불려 부수효과가 사라진다**. 그래서 논리
+  //    합이 아니라 13개의 개별 호출 + 플래그 누적이다.
+  let suppress = false;
+  if (gDrops.dropsOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gRefine.refineOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gGrowth.growthOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gResource.resourceOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gChain.chainOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gPower.powerOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gKargon.kargonOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gBerdan.berdanOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gNiflheim.niflheimOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gArke.arkeOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gToxar.toxarOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gKras.krasOnDestructibleDestroyed(state, e)) suppress = true;
+  if (gResonance.resonanceOnDestructibleDestroyed(state, e)) suppress = true;
+  return suppress;
+}
+
+/**
+ * 앵커 — **적성 표적이 지금 얼마나 단단한가**(아군탄 명중 피해에 곱하는 배율).
+ *
+ * ## ⭐ 왜 승격했는가 — 두 그룹이 **같은 산식 자리를 다투고 있었다**
+ * 종전에는 `world.ts` 가 `catalyst/kargon.ts` 와 `catalyst/resonance.ts` 를 **직접 import** 해
+ * 피해 산식 안에서 나란히 곱했다:
+ * ```
+ * dealt = b.damage × mult × gyroAmp × prismAmp × eliteDamageTakenMult(t)
+ *       × kargonLavaArmorMult(state, t, px, py)   ← id 32 보스 갑주
+ *       × emberDamageTakenMult(t)                 ← 점화 약공명 '불씨'
+ * ```
+ * 문제가 셋이었다:
+ *  1. **팬아웃 계약이 깨진다** — *"카드 레인은 자기 그룹 모듈만 만진다"* 인데 같은 자리를 쓰는
+ *     새 카드가 나올 때마다 `world.ts` 를 또 고쳐야 했다.
+ *  2. **합성 순서가 소스 줄 순서에 암묵적으로 걸려 있었다.** 둘 다 배율이라 곱셈 교환법칙으로
+ *     값은 같지만, 조건부 배율(*"이 표적이 X 이면"*)이 하나라도 들어오면 순서가 의미를 가른다.
+ *     여기로 모으면 순서가 **명시된 계약**이 된다(팬아웃 순서 = 다른 앵커와 동일).
+ *  3. **무촉매 게이트가 흩어져 있었다** — 가장 위험한 축이다. `kargonLavaArmorMult` 는 첫 줄이
+ *     `state.catalystOn` 이지만 `emberDamageTakenMult` 는 **게이트가 아예 없고** 마크 읽기에만
+ *     의존했다(무촉매 런은 비트가 0 이라 우연히 맞았다). 이제 게이트가 **이 앵커 첫 줄 하나**다.
+ *
+ * ## ⚠️ 자리를 옮기지 마라 — 앵커 ⑩ 은 이 배율을 못 대신한다
+ * `onEnemyDamagedCatalyst` 는 `t.hp -= dealt` **뒤**라 이번 명중을 못 바꾸고, 거기서 hp 를
+ * 되돌리면 이미 `dead` 가 선 적을 되살려 **좀비**가 된다.
+ *
+ * ## ⚠️ 각 그룹은 **원값이 아니라 표적만** 본다 — 중간값을 안 넘긴다
+ * `onDamageChainCatalyst` 와 같은 규율이다(앞 그룹의 배율이 뒤 그룹의 판정 기준을 바꾸면 안 된다).
+ *
+ * @param px 플레이어 x — `id 32` 가 *"가까이 붙을수록 물러진다"* 를 재는 데 쓴다.
+ * @param py 동상 y
+ * @returns 곱할 배율. 무촉매 런은 **정확히 `1`**(IEEE754 에서 `x*1 === x` 라 비트 동일).
+ */
+export function onEnemyDamageTakenMultCatalyst(
+  state: WorldState,
+  target: Entity,
+  px: number,
+  py: number,
+): number {
+  if (!state.catalystOn) return 1;
+  // ── 그룹 팬아웃 · **배율은 고정 순서대로 곱해서 누적**한다(순서가 계약이다) ──
+  let m = 1;
+  m *= gDrops.dropsOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gRefine.refineOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gGrowth.growthOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gResource.resourceOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gChain.chainOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gPower.powerOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gKargon.kargonOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gBerdan.berdanOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gNiflheim.niflheimOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gArke.arkeOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gToxar.toxarOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gKras.krasOnEnemyDamageTakenMult(state, target, px, py);
+  m *= gResonance.resonanceOnEnemyDamageTakenMult(state, target, px, py);
+  return m;
+}
+
+/**
+ * 앵커 — **부술 수 있는 벽(`kind === 'wall'`)이 아군탄에 부서진 사건**.
+ *
+ * ## ⭐ 왜 이 앵커가 따로 필요한가 — 24앵커에 벽 파괴 지점이 **없다**
+ * {@link onDestructibleDestroyedCatalyst} 는 `compact()` 안의 **`destructible` kind** 분기라
+ * 벽이 **원리적으로 도달하지 않는다**(`compact` 의 else-if 사슬에 `wall` 분기가 아예 없다).
+ * 그렇다고 다음 틱의 `onTick` 으로 미룰 수도 없다 — 같은 틱의 `compact()` 가 시체를 걷어 가
+ * (`state.entities = survivors`) **좌표조차 복원할 수 없다.** 이 사건은 여기서만 잡힌다.
+ *
+ * ## 승격 사유
+ * 종전에는 `world.ts` 가 `krasOnWallDestroyed` 를 직접 import 했다. 그 자체는 게이트가
+ * 제대로 서 있었지만(첫 줄 `state.catalystOn`), **기다리는 소비자가 이미 있다** —
+ * `id 39 arke-overclock` 의 *"벽이 부서지며 자원"* 조각이 이 지점을 요구한다고
+ * {@link onWallContactCatalyst} 주석에 기록돼 있다. 그 카드가 배선될 때 `world.ts` 를 또
+ * 고치게 두지 않으려고 지금 팬아웃으로 연다.
+ *
+ * ⚠️ 이 호출은 아군탄↔벽 스윕 **순회 안**이다 — 훅에서 스폰 금지. 좌표만 모아 순회 밖에서 낳아라.
+ * ⚠️ `id 45` 가 직후에 `dead` 를 되돌려 hp 0 엄폐물로 남긴다. 여기서 `wall.dead` 를 믿지 마라.
+ */
+export function onWallDestroyedCatalyst(state: WorldState, wall: Entity): void {
+  if (!state.catalystOn) return;
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  gDrops.dropsOnWallDestroyed(state, wall);
+  gRefine.refineOnWallDestroyed(state, wall);
+  gGrowth.growthOnWallDestroyed(state, wall);
+  gResource.resourceOnWallDestroyed(state, wall);
+  gChain.chainOnWallDestroyed(state, wall);
+  gPower.powerOnWallDestroyed(state, wall);
+  gKargon.kargonOnWallDestroyed(state, wall);
+  gBerdan.berdanOnWallDestroyed(state, wall);
+  gNiflheim.niflheimOnWallDestroyed(state, wall);
+  gArke.arkeOnWallDestroyed(state, wall);
+  gToxar.toxarOnWallDestroyed(state, wall);
+  gKras.krasOnWallDestroyed(state, wall);
+  gResonance.resonanceOnWallDestroyed(state, wall);
+}
+
+/**
+ * 앵커 — **촉매 해저드가 적에게 주는 per-tick 피해**. `stepWorld` 의 새 단계다.
+ *
+ * ## 왜 이 단계가 필요한가
+ * 현행 해저드 피해는 **플레이어 충돌 질의 콜백 안에만** 있다 — 즉 해저드는 적을 못 때린다.
+ * 촉매 여섯(`id 2`·`id 8`·`id 31`·`id 34`·`id 37`·`id 43`)이 "장판이 적을 녹인다"는 그림이라
+ * 이 단계 없이는 전부 반쪽이 된다.
+ *
+ * ## 삽입 자리 — 격자 삽입 루프 **직후**
+ * ①격자가 **이번 틱 좌표 기준으로 완성**돼 있고 ②아직 아무 hp 도 안 깎였다. 아군탄 루프보다
+ * 앞이라 "장판이 먼저 깎고 탄이 마무리"가 되며, 처치는 같은 틱의 `compact()` 가 잡는다.
+ *
+ * ## ⚠️ `dead` 를 **명시적으로** 세운다
+ * `compact()` 의 첫 줄이 `if (!e.dead) { survivors.push; continue; }` 라, hp 만 0 으로 만들고
+ * 마킹을 빠뜨리면 **처치도 젬도 전리품도 안 나오는 좀비**가 된다 — `activeTypes.ts` 의
+ * `blastDamage` 가 정확히 그 형태로 한 번 깨졌다.
+ *
+ * ## ⚠️ 무촉매 런은 **루프 0회**다
+ * 게이트가 함수 첫 줄이라 순회 자체가 시작되지 않는다(조건부 꼬리). 촉매 런에서도 촉매 해저드가
+ * 없으면 판별자에서 전부 걸러진다.
+ *
+ * ## 지속형만 때린다 — 단발(burst)은 카드 레인의 몫
+ * `phase === 1`(continuous)만 매 틱 때린다. 단발(`phase === 0`)을 여기서 때리면 활성 창 내내
+ * 매 틱 터지므로, 단발형이 필요한 카드는 "한 번만" 표식을 함께 세워야 한다.
+ */
+export function stepCatalystHazards(state: WorldState): void {
+  if (!state.catalystOn) return;
+  for (const h of state.entities) {
+    if (h.dead || h.phase !== 1) continue;
+    if (!catalystHazardDamaging(h)) continue;
+    const dmg = h.damage;
+    state.grid.query(h.x, h.y, h.radius, (t) => {
+      if (t.dead) return;
+      if (t.kind !== 'enemy' && t.kind !== 'boss') return;
+      // `id 36` 그림자는 **죽일 수 없다** — 조준 제외와 쌍이다(`catalyst/shared.ts`).
+      if (isCatalystShadow(t)) return;
+      // 격자는 broad-phase 라 정확 거리를 다시 잰다(`SpatialHash` 계약).
+      if (!circlesOverlap(h.x, h.y, h.radius, t.x, t.y, t.radius)) return;
+      t.hp -= dmg;
+      // ⚠️ 좀비 방지 — 위 §주의 참조.
+      if (t.hp <= 0) t.dead = true;
+    });
+  }
+  // ── 그룹 팬아웃(고정 순서 = `onTickCatalyst` 와 동일: 공용 → 특산 행성순 → 공명) ──
+  // 위 공용 루프가 **끝난 뒤**다 — 그룹이 여기서 해저드를 낳거나 지우면 같은 틱의 공용 루프가
+  // 반쯤 갱신된 목록을 순회하게 된다(`state.entities` 순회 중 변형 금지와 같은 규율).
+  gDrops.dropsOnCatalystHazards(state);
+  gRefine.refineOnCatalystHazards(state);
+  gGrowth.growthOnCatalystHazards(state);
+  gResource.resourceOnCatalystHazards(state);
+  gChain.chainOnCatalystHazards(state);
+  gPower.powerOnCatalystHazards(state);
+  gKargon.kargonOnCatalystHazards(state);
+  gBerdan.berdanOnCatalystHazards(state);
+  gNiflheim.niflheimOnCatalystHazards(state);
+  gArke.arkeOnCatalystHazards(state);
+  gToxar.toxarOnCatalystHazards(state);
+  gKras.krasOnCatalystHazards(state);
+  gResonance.resonanceOnCatalystHazards(state);
 }

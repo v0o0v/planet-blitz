@@ -103,6 +103,21 @@ export const RARITY_CODE: Record<Rarity, number> = {
 /** Inverse of {@link RARITY_CODE} (index = code). */
 export const RARITY_BY_CODE: readonly Rarity[] = ['normal', 'magic', 'rare', 'unique'];
 
+/**
+ * 등급 코드 공간의 **예약값 — 봉인**(도박 강 공명 '청산', ADR-0052).
+ *
+ * `RARITY_BY_CODE` 는 0..3 뿐이라 이 값은 어느 등급도 아니다(위 §"NEVER renumber" 구간 밖).
+ * sim 이 첫 전리품에 이 코드를 찍고, 보스 처치 시 최고 등급으로 열거나 **패배 시 그 레코드가
+ * 드랍 목록에서 사라진다**.
+ *
+ * ## 왜 이 파일이 소유하는가
+ * 소비자가 **sim 과 정산 양쪽**이다(`sim/catalyst/resonance.ts` 가 찍고 `save/settlement.ts` 가
+ * 지운다). 정산은 sim 모듈을 import 할 수 없으므로(그쪽은 `world.ts` 를 끌고 온다) 코드 표를
+ * 소유한 이 리프가 유일하게 둘 다 닿는 자리다. 두 파일이 각자 리터럴 9 를 적으면 한쪽만 고쳐
+ * 봉인이 영원히 안 열리거나 영원히 안 사라진다.
+ */
+export const SEALED_RARITY_CODE = 9;
+
 // ---------------------------------------------------------------------------
 // Slots — 7 kinds across 8 equip positions (GDD §5; module has two).
 // ---------------------------------------------------------------------------

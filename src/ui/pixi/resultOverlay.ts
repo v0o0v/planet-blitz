@@ -331,6 +331,18 @@ export class ResultOverlayScreen {
       { key: t('result.loot.credits'), value: `+${st.creditsGained}` },
       { key: t('result.loot.power'), value: `+${st.combatPower}`, accent: true },
     ];
+    // `id 18 mercantile`(ADR-0052) — **상환분과 압류분을 두 줄로 가른다.** 한 줄로 합치면
+    // "자원이 왜 줄었나"와 "장비가 왜 사라졌나"가 구분되지 않아, 빚 카드를 받을지 말지가
+    // 정보 없는 도박이 된다(명세의 `신호:` 칸이 요구하는 축).
+    if (st.debtRepaid !== undefined && st.debtRepaid > 0) {
+      entries.push({ key: t('result.loot.debtRepaid'), value: `-${st.debtRepaid}` });
+    }
+    if (st.debtSeized !== undefined && st.debtSeized > 0) {
+      entries.push({
+        key: t('result.loot.debtSeized'),
+        value: t('result.loot.debtSeizedVal', { n: st.debtSeized }),
+      });
+    }
     if (st.overflow > 0) {
       entries.push({ key: t('result.loot.overflow'), value: t('result.loot.overflowVal', { n: st.overflow }) });
     }

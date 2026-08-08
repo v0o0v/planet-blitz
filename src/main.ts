@@ -103,6 +103,7 @@ import {
   DEFAULT_CONFIG,
   echoStabilizedOf,
   catalystSettlementOf,
+  catalystContributionsOf,
   encounterShardOf,
   encounterTypeOf,
   runStoryMetrics,
@@ -118,6 +119,8 @@ import { RECORD_SHARDS } from '../data/lore/index.js';
 // import 하므로 프로덕션 번들에서 완전히 제거된다). 타입 import는 컴파일 시 소거됨.
 import type { Harness, HarnessScreen } from './harness/core.js';
 import { snapshotWorld } from './sim/snapshot.js';
+// 촉매 통지 → 소리·색 해석(ADR-0052 §귀속 규율). 순수 함수라 매핑을 테스트가 직접 못 박는다.
+import { catalystFxSound, catalystFxFlashesSlot, FX_SELF_HARM } from './render/catalystFx.js';
 import type { WorldSnapshot } from './sim/snapshot.js';
 import { ReplayRecorder, hashWorld } from './sim/replay.js';
 import { runBench } from './bench/bench.js';
@@ -184,7 +187,7 @@ import {
   multCentiFor,
 } from './net/planetMultipliers.js';
 // 촉매 시스템(ADR-0029, Lane 4): 드랍 파생(순수) + 출격 폴백 모달.
-import { catalystDropsFromRun } from './data/catalystDrops.js';
+import { catalystDropsFromRun, catalystDropMultFromContributions } from './data/catalystDrops.js';
 import { normalizeCatalystArray, catalystById, catalystIconKey } from './data/catalysts.js';
 import { resolveResonance } from './data/catalystResonance.js';
 import { planetById } from '../data/planets.js';
@@ -1880,7 +1883,33 @@ async function main(): Promise<void> {
     }
     prevSnap = currSnap;
     currSnap = snapshotWorld(next);
+    // 촉매 귀속 3종의 배선 지점(ADR-0052 §귀속 규율). **여기가 유일한 자리**다 — 렌더 루프에서
+    // 읽으면 한 프레임에 sim 이 여러 틱 돈 경우 중간 틱의 통지가 통째로 사라지고(통지는 매 틱
+    // 비워진다), 0 틱인 프레임에서는 같은 통지를 두 번 소비한다. `stepOnce` 는 **틱당 정확히
+    // 한 번** 도는 유일한 경로라 두 결함이 구조적으로 없다.
+    drainCatalystFx(currSnap.catalystFx);
     harness?.observe(next);
+  }
+
+  /**
+   * 이번 틱의 촉매 통지를 **귀속 3종**으로 흘린다(헌장 §귀속 규율).
+   *
+   *  1. HUD 슬롯 번쩍임 — `hud.flashCatalystSlot(id)`. 이펙트가 무엇이든 어느 카드인지가
+   *     화면 한 곳에서 항상 읽힌다.
+   *  2. 전용 사운드 — 발동/자해가 갈린다(`catalystFxSound`). 나머지 종류는 무음이다.
+   *  3. 자기 피해 전용 색 — 자해 통지가 오면 다음 플레이어 피격 연출이 촉매 색으로 갈린다.
+   *
+   * 무촉매 런은 `events` 가 `undefined` 라 첫 줄에서 끝난다.
+   */
+  function drainCatalystFx(events: WorldSnapshot['catalystFx']): void {
+    if (events === undefined) return;
+    for (const ev of events) {
+      if (catalystFxFlashesSlot(ev.kind)) hud.flashCatalystSlot(ev.id);
+      const sound = catalystFxSound(ev.kind);
+      // ⚠️ 절차 합성 폴백이 걸리지 않는 이름만 온다(`render/catalystFx.ts` 매핑 주석).
+      if (sound !== null) audio.play(sound);
+      if (ev.kind === FX_SELF_HARM) entityRenderer.markCatalystSelfHarm();
+    }
   }
 
   /**
@@ -2114,6 +2143,9 @@ async function main(): Promise<void> {
         const dropLevelCap = activeShip(profile).level;
         // 촉매 정산 채널(ADR-0052). 순수 리더 — 무촉매 런은 undefined 다(아래 스프레드 참조).
         const catalystSettlement = catalystSettlementOf(w);
+        // 촉매별 기여 명세(헌장 §귀속 규율 2). 같은 규율의 두 번째 순수 리더 — 무촉매 런과
+        // 적립이 한 번도 없던 런은 undefined 다.
+        const catalystContributions = catalystContributionsOf(w);
         lastOutcome = settleRun(profile, {
           victory: w.victory,
           loot: w.loot,
@@ -2143,6 +2175,9 @@ async function main(): Promise<void> {
           // 만 내놓고, 무촉매 런은 `undefined` 라 스프레드가 필드를 아예 안 싣는다 → 무촉매 런의
           // 정산 입력은 종전과 바이트 동일하다. 값의 의미는 `catalystSlots.ts` 배정표 소유.
           ...(catalystSettlement !== undefined ? { catalystSettlement } : {}),
+          // 촉매별 기여 명세(헌장 §귀속 규율 2 — 발동 횟수 / 번 액수 / 놓친 액수). 위와 같은
+          // 스프레드 규율이라 무촉매 런의 정산 입력은 종전과 바이트 동일하다.
+          ...(catalystContributions !== undefined ? { catalystContributions } : {}),
         }, { serverDrops });
         // Completing the tutorial (win or lose) reveals the base and makes the run
         // skippable thereafter (OQ-M3-7). Persist the flag with the settlement.
@@ -2223,6 +2258,14 @@ async function main(): Promise<void> {
           loot: w.loot,
           planet: w.config.planet ?? 0,
           catalysts: w.config.catalysts ?? [],
+          // 촉매 드랍축 4종(id 21·33·38·45)의 배율. ⚠️ **주입 목록이 아니라 귀속 원장**에서
+          // 나온다 — 카드를 꽂았다는 사실만으로 서는 배율은 헌장 §상한 근거 규율이 금지한
+          // 무조건 배율이고, 구 모델이 정확히 그 실수를 했다(인계 §5-3).
+          // 무촉매 런은 `catalystContributions` 가 undefined 라 **필드를 아예 안 싣는다** →
+          // 입력 객체 형상까지 종전과 동일하다(드랍 결과는 물론 비트 동일).
+          ...(catalystContributions !== undefined
+            ? { catalystDropMult: catalystDropMultFromContributions(catalystContributions) }
+            : {}),
         });
         catalystDropTotal = catalystDrops.reduce((n, d) => n + d.qty, 0);
         catalystDropList = catalystDrops;
@@ -2238,7 +2281,33 @@ async function main(): Promise<void> {
         // push 가 끼어들면 재-pull 확인이 흔들린다.
         // 실패해도 원장 행은 서버에 남으므로 **다음 부팅의 배송 재개**가 줍는다.
         if (serverDrops && dropRunId !== null) {
-          void deliverRunDrops(dropRunId, w.loot.length, {
+          // `id 18 mercantile` 압류와 도박 강 '청산' 소멸을 **서버 권위 경로에도 실제로
+          // 적용**한다. 이 모드에서 settleRun 은 전리품을 굴리지 않으므로(itemsGained 가 빈
+          // 배열) 정산이 뺄 아이템이 없다 — 둘이 일어나는 유일한 자리가 여기, 클라가 주장하는
+          // **개수**다. 이걸 안 깎으면 결과 화면은 "N점 압류"라고 적는데 서버는 전량을
+          // 배송한다(이 리포가 반복해 대가를 치른 「화면과 실제가 조용히 갈리는 두 자리」).
+          //
+          // ## ✅ 이 클라측 감산은 안전하다 — 2026-08-08 코드 검토 결론(재조사 금지)
+          // 배선 레인이 *"서버 레인이 알지 못하는 클라측 감산"* 이라 검토 대상으로 남긴
+          // 자리다. 세 축을 실제로 읽고 확인했다:
+          //  ① **서버 검증은 천장뿐이다.** `grant_run_drops` 는
+          //     `v_grant := least(claimed, 시간개연성, CAP_DROPS_PER_RUN)`
+          //     (`supabase/migrations/20260808010000_item_grants_ledger.sql`)로 **줄이기만**
+          //     한다. 주장을 낮추면 결과는 같거나 더 작다 — 낮춘 주장이 더 많은 지급을 만드는
+          //     경로가 원리적으로 없다.
+          //  ② **원장·영수증과 갈릴 수 없다.** `item_grants` 행은 `v_grant` 개수만큼 **그
+          //     자리에서** 만들어지므로 "클라가 받았어야 할 수"라는 별도 서버 기대값이 존재하지
+          //     않는다. 영수증의 `claimed` 는 클라가 보낸 값 그대로라, 이미 깎아서 보낸 수가
+          //     그대로 실린다(정직한 플레이면 `clamped` 는 계속 false 다).
+          //  ③ **화면과 실지급이 같은 수를 쓴다.** 결과 화면의 `debtSeized` 와 여기 `seized` 는
+          //     **같은 `lastOutcome.catalystDebt.seized`** 한 값에서 나온다(두 번 계산하지
+          //     않는다). 서버 모드의 "획득 N점"은 `itemsGained.length` = 0 이라 압류분을 이중
+          //     계상하지도 않는다.
+          // 결론: 고칠 것이 없다. **깎는 쪽을 늘릴 때는 반드시 이 세 축을 다시 확인해라** —
+          // 특히 ①이 깨지는(주장을 하한으로도 쓰는) 서버 변경이 오면 이 감산이 손해가 된다.
+          const seized = lastOutcome?.catalystDebt?.seized ?? 0;
+          const voided = lastOutcome?.sealedVoided ?? 0;
+          void deliverRunDrops(dropRunId, Math.max(0, w.loot.length - seized - voided), {
             planet: w.config.planet ?? 0,
             stage: w.config.stage ?? 1,
             levelCap: dropLevelCap,
@@ -2281,6 +2350,14 @@ async function main(): Promise<void> {
                 // 내역이 있으면 정산이 개별 아이콘 칩으로 편다(사용자 요청 2026-07-28).
                 ...(catalystDropTotal > 0
                   ? { catalystDrops: catalystDropTotal, catalystDropList }
+                  : {}),
+                // `id 18 mercantile` — 상환분과 압류분을 **갈라서** 넘긴다(ADR-0052 명세 `신호:`).
+                // 부채가 없으면 `catalystDebt` 자체가 없어 두 칸 다 안 실린다.
+                ...(o.catalystDebt !== undefined && o.catalystDebt.repaid > 0
+                  ? { debtRepaid: o.catalystDebt.repaid }
+                  : {}),
+                ...(o.catalystDebt !== undefined && o.catalystDebt.seized > 0
+                  ? { debtSeized: o.catalystDebt.seized }
                   : {}),
                 // M5 C2: 획득 전투력 합계 + 등급별 장비 칩 목록(정산 완성판).
                 combatPower: totalCombatPower(o.itemsGained),

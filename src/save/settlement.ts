@@ -26,7 +26,7 @@
 import { rollItem } from '../items/roll.js';
 import { blueprintDropsFromLoot } from '../../data/planets/index.js';
 import type { BlueprintGrant } from '../../data/planets/blueprints.js';
-import { RARITY_BY_CODE } from '../items/types.js';
+import { RARITY_BY_CODE, SEALED_RARITY_CODE } from '../items/types.js';
 import type { Item } from '../items/types.js';
 import type { LootRecord } from '../sim/world.js';
 import { xpToNextMeta, lowStageXpDecayPercent } from './progressionPath.js';
@@ -43,6 +43,49 @@ import { multFromCenti, NEUTRAL_MULT_CENTI } from '../economy/planetPopularity.j
  * 주석 참조.
  */
 const XP_FLOOR_PERCENT = 30;
+
+// ---------------------------------------------------------------------------
+// `id 18 mercantile` — 런 안에서 닫히는 부채 (ADR-0052)
+// ---------------------------------------------------------------------------
+//
+// 카드 규칙: *"레벨업 3택 한 칸이 빚 카드가 된다 — 지금 받으면 2중첩으로 들어오고, 런 종료 시
+// 그만큼 자원을 갚는다. 못 갚으면 미상환분만큼 그 런의 전리품이 압류된다."*
+//
+// ## ⚠️ 부채는 **런 안에서 닫힌다** — 프로필로 넘어가지 않는다
+// 사유가 카탈로그에 명시돼 있다: ADR-0029 §적용 단위("런 1회 소모형") 위반 · 서버 원장에 부채
+// 스키마 요구 · **무촉매 런이 촉매 효과를 받아** 바이트 불변 규율이 위태로워짐 · 크래시·오프라인
+// 시 부채가 증발하는 위조 창구. 그래서 여기서 못 갚은 잔액은 **그대로 소멸**한다
+// (`Profile` 에 부채 칸을 만들면 위 넷이 전부 되살아난다 — 만들지 마라).
+
+/**
+ * 부채가 실린 슬롯 index. **정본은 `src/sim/catalystSlots.ts` 의 `MercantileSlot.Debt`** 이고
+ * 여기는 그 값을 숫자로 되적은 것뿐이다(정산이 칸에 새 이름을 붙이면 정본이 둘이 된다).
+ *
+ * 숫자로 적는 사유: `const enum` 은 `isolatedModules` 빌드에서 **런타임 값이 없다** — import
+ * 하면 번들에서 `undefined` 가 된다. `tests/catalystResource.test.ts` 가 같은 이유로 같은
+ * 형태를 쓴다. 배정표와 어긋나지 않는지는 테스트가 `catalystSlots.ts` 소스를 직접 읽어 잠근다.
+ */
+const SLOT_MERCANTILE_DEBT = 6;
+
+/**
+ * 압류 환산 — 전리품 **1점이 갚는 부채 액수**.
+ *
+ * 도출: 빚 카드 1장이 얹는 부채가 40(`src/sim/catalyst/resource.ts` `MERCANTILE_DEBT_PER_PICK`)
+ * 이므로 **미상환 빚 카드 1장 = 전리품 1점**이 된다. 카드가 약속한 교환("지금 파워업, 나중에
+ * 전리품")이 1:1 로 읽히는 유일한 값이다. // BALANCE
+ */
+const DEBT_PER_SEIZED_ITEM = 40;
+
+/**
+ * 정산 채널(슬롯 한 벌)에서 부채를 읽는다. 채널이 없으면(무촉매 런) 0 — 그래서 무촉매 런의
+ * 정산 산술이 종전과 **비트 동일**하다.
+ */
+function catalystDebtOf(settlement: readonly number[] | undefined): number {
+  if (settlement === undefined) return 0;
+  const raw = settlement[SLOT_MERCANTILE_DEBT];
+  if (raw === undefined || !Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.floor(raw);
+}
 
 function xpAppliedPercent(decayPct: number, result: RunResult): number {
   const centi = result.planetMultCenti ?? NEUTRAL_MULT_CENTI;
@@ -116,6 +159,31 @@ export interface RunResult {
    * 정산이 칸에 이름을 붙이면 정본이 둘이 된다.
    */
   catalystSettlement?: readonly number[];
+  /**
+   * 촉매별 **기여 명세**(ADR-0052 헌장 §귀속 규율 2) — 발동 횟수 / 번 액수 / **조건 미달로
+   * 놓친 액수**. sim `catalystContributionsOf` 파생이고 무촉매 런은 `undefined` 라 필드가 아예
+   * 안 실린다(`catalystSettlement` 와 동일 규율).
+   *
+   * ## 왜 슬롯 한 벌로는 부족한가
+   * `catalystSettlement` 는 **슬롯 24칸의 최종값**이라 "어느 카드가 얼마를 벌었나"를 못 말한다.
+   * 헌장은 초판이 자원 적립 8종을 전부 "상승하는 금빛 숫자"로 만들어 **어느 촉매의 신호인지
+   * 알 수 없었던 것**을 결함으로 지목했고, 그 해소가 이 칸이다. 특히 `missed` 는 조건부 카드가
+   * "다음 판에 조건을 추구할" 이유를 만드는 유일한 표시다.
+   *
+   * ## ⚠️ 원시값만 — sim 의 타입을 여기 들이지 마라
+   * 구조를 **그 자리에 적는다**(`import` 하지 않는다). `catalystSettlement` 주석이 적은 것과
+   * 같은 이유다 — `tests/catalystFoundation.test.ts` 가 이 파일에 sim 월드 상태 타입 이름이
+   * 한 번도 안 나오는 것을 기계로 검사하고, 그 벽이 촉매 48종이 정산을 임의로 오염시키지
+   * 못하게 막는 유일한 경계다.
+   *
+   * 값의 **의미**(id 가 어느 카드인가)는 `src/data/catalysts.ts` 가 소유한다.
+   */
+  catalystContributions?: readonly {
+    id: number;
+    fired: number;
+    earned: number;
+    missed: number;
+  }[];
 }
 
 /** Summary of what a run added to the profile (for the result overlay). */
@@ -153,6 +221,31 @@ export interface SettlementOutcome {
    * 실패 모드(조용한 배선 누락)가 정확히 그 틈으로 들어온다.
    */
   commission: boolean;
+  /**
+   * `id 18 mercantile` 의 **부채 정산 결과**. 부채가 0 이면 undefined 라 종전 호출부는 무영향.
+   *
+   * ⚠️ 상환분과 압류분은 **갈려 있어야 한다**(명세의 `신호:` 칸) — 둘을 한 숫자로 합치면
+   * 플레이어는 "자원이 왜 줄었는지"와 "장비가 왜 사라졌는지"를 구분할 수 없다.
+   */
+  catalystDebt?: {
+    /** 이 런에 쌓인 총 부채(자원 단위). */
+    total: number;
+    /** 런 자원에서 실제로 갚은 액수. */
+    repaid: number;
+    /** 못 갚은 잔액(자원 단위). */
+    unpaid: number;
+    /** 미상환분 때문에 **이 런의 전리품에서** 압류된 점수. */
+    seized: number;
+  };
+  /**
+   * 도박 강 공명 '청산'이 **패배로 소멸시킨** 봉인 전리품 수(항상 0 또는 1 — 봉인은 첫 전리품
+   * 하나뿐이다). 소멸이 없으면 undefined 라 종전 호출부는 무영향.
+   *
+   * ⚠️ **압류(`catalystDebt.seized`)와 갈라서 낸다.** 둘을 합치면 플레이어는 "빚 때문에
+   * 뜯긴 것"과 "도박에 져서 날아간 것"을 구분할 수 없다 — 부채 칸이 상환분과 압류분을 가른
+   * 것과 같은 사유다. 서버 권위 드랍 모드의 호출부도 이 값을 **따로** 빼야 한다.
+   */
+  sealedVoided?: number;
 }
 
 /** {@link settleRun} 의 모드 스위치. */
@@ -190,6 +283,49 @@ export function settleRun(
   //    올라가, 방금 레벨업한 런에서만 더 무거운 장비가 나오는 비대칭이 생긴다.
   //    ⚠️ 순서 의존이므로 3단계(`grantXp`)를 이 위로 옮기지 마라.
   const runShipLevel = activeShip(profile).level;
+
+  // 0-. 도박 강 공명 '청산'의 **마지막 조항**: *"보스를 처치하면 최고 등급으로 열리고,
+  //     지면 그것만 사라진다."* sim 이 개봉(승리)까지 하고 소멸(패배)은 여기 몫이다 — sim 은
+  //     "졌다"를 런 안에서 관측하지 않기 때문이다(패배는 정산이 받는 `victory: false` 다).
+  //
+  //     현행 이전에는 봉인 레코드가 `RARITY_BY_CODE[9] ?? 'normal'` 로 **최저 등급으로 접힐 뿐
+  //     사라지지 않았다**(높은 등급으로 새지는 않아 안전 방향이긴 했다).
+  //
+  //     ⚠️ **제거는 `id 18` 압류 계산보다 앞이다.** 뒤에 두면 이미 사라질 레코드가 압류 대상
+  //     개수를 채워, 빚을 실제로는 "없는 전리품"으로 갚는 셈이 된다. 앞에 두면 압류가 **살아
+  //     남은 전리품**에서만 일어나 두 규칙문이 각자 말한 그대로가 된다.
+  //
+  //     ⚠️⚠️ **촉매 드랍(`catalystDropsFromRun`)은 이 제거의 영향을 받지 않는다** — 그쪽은
+  //     호출부(`main.ts`)가 `w.loot` 원본을 그대로 넘기고, 여기서 만드는 것은 정산 지역 사본이다.
+  //     그것이 규칙문에 맞다: *"**그것만** 사라진다"* 의 「그것」은 봉인된 **전리품 1점**이고,
+  //     촉매 드랍은 드랍 시드에서 파생하는 **다른 축**이다. 여기서 시드를 빼면 규칙문에 없는
+  //     두 번째 대가(촉매 한 번의 게이트 소멸)가 조용히 붙는다. 같은 사유로 **설계도 파생**
+  //     (`blueprintDropsFromLoot`)도 `result.loot` 원본을 계속 읽는다. `id 18` 압류가 정확히
+  //     같은 선택을 하고 있다(압류가 촉매 원장·설계도를 안 깎는다) — 두 규칙이 같은 계층이다.
+  const sealedVoided =
+    result.victory ? 0 : result.loot.reduce((n, r) => (r.rarity === SEALED_RARITY_CODE ? n + 1 : n), 0);
+  const settledLoot: readonly LootRecord[] =
+    sealedVoided === 0 ? result.loot : result.loot.filter((r) => r.rarity !== SEALED_RARITY_CODE);
+
+  // 0. `id 18 mercantile` 부채 상환·압류 — **아이템 확정 전에** 정해야 한다.
+  //    압류는 *"그 런의 전리품"* 에서만 일어나므로(보유 인벤토리는 손대지 않는다), 확정한 뒤
+  //    인벤에서 도로 빼는 것이 아니라 **애초에 확정하지 않는** 형태로 구현한다 — 그래야
+  //    "인벤에 잠깐 들어왔다 사라지는" 중간 상태가 만들어지지 않는다.
+  //    상환은 자원이 먼저다: 갚을 수 있으면 전리품은 안 건드린다(카드 문장 그대로).
+  const debtTotal = catalystDebtOf(result.catalystSettlement);
+  const runResources = Math.max(0, Math.floor(result.resources));
+  const debtRepaid = Math.min(debtTotal, runResources);
+  const debtUnpaid = debtTotal - debtRepaid;
+  //    압류 점수 = 올림(미상환분 / 전리품 1점 환산). 전리품이 모자라면 거기서 멈추고 **잔액은
+  //    소멸**한다(위 §부채는 런 안에서 닫힌다).
+  //    ⚠️ 뒤에서부터 뺀다 — 늦게 주운 것이 먼저 압류된다(어느 쪽이든 임의지만, 앞에서 빼면
+  //    보스 확정 드랍처럼 런의 첫 전리품이 사라져 체감이 훨씬 나쁘다).
+  const seizedItems =
+    debtUnpaid <= 0
+      ? 0
+      : Math.min(settledLoot.length, Math.ceil(debtUnpaid / DEBT_PER_SEIZED_ITEM));
+  const keptLootCount = settledLoot.length - seizedItems;
+
   const itemsGained: Item[] = [];
   // ⭐ 서버 권위 모드(ADR-0050 §3 단계 1)에서는 **여기서 굴리지 않는다.** 클라는 주운 개수만
   //    주장하고 서버가 자기 시드로 굴려 원장에 적으며, 아이템은 배송 경로
@@ -197,7 +333,9 @@ export function settleRun(
   //    ⚠️ 그렇다고 이 루프를 지우면 안 된다. 미설정(오프라인 단일플레이)은 여전히 이 경로로
   //    돌고, 그것이 게임이 로그인 없이도 플레이되는 근거다(`isNetConfigured()` false).
   if (!opts.serverDrops) {
-    for (const rec of result.loot) {
+    // 부채 압류(0단계)로 잘려 나간 뒷부분은 확정하지 않는다. 부채가 없으면 `keptLootCount ===
+    // result.loot.length` 라 루프가 종전과 완전히 같다.
+    for (const rec of settledLoot.slice(0, keptLootCount)) {
       const rarity = RARITY_BY_CODE[rec.rarity] ?? 'normal';
       itemsGained.push(
         rollItem(rec.seed, rarity, {
@@ -248,7 +386,9 @@ export function settleRun(
   // 4. Resources → credits. 재화 서버 권위(ADR-0027): 순수 정산은 델타를 **계산·반환만** 하고
   //    프로필 미러에 가산하지 않는다 — 재화 지급은 호출부가 온라인=서버 RPC(settle_pve_run) /
   //    미설정=로컬 미러 가산으로 가른다(위조 불가: 클라가 정산으로 재화를 창조 못 함).
-  const creditsGained = Math.max(0, Math.floor(result.resources));
+  //    ⚠️ 부채 상환(0단계)은 **여기서 빠진다** — 카드가 갚기로 한 것이 곧 이 런의 자원이다.
+  //    부채가 0 이면 `debtRepaid === 0` 이라 산술이 종전과 비트 동일하다.
+  const creditsGained = runResources - debtRepaid;
 
   // 5. On victory, record the planet clear (drives 정제소 unlock + 단계 개방 상한, ADR-0022).
   //    승리한 단계가 실제로 기록돼야 개방이 진행된다(핵심 배선 — 누락 시 개방 영영 안 됨).
@@ -284,6 +424,12 @@ export function settleRun(
     overflow,
     blueprintsGained,
     commission: result.commission === true,
+    // 부채가 없으면 칸 자체를 안 싣는다(무촉매 런 · 빚 카드 미수락 런은 종전과 동일한 형상).
+    ...(debtTotal > 0
+      ? { catalystDebt: { total: debtTotal, repaid: debtRepaid, unpaid: debtUnpaid, seized: seizedItems } }
+      : {}),
+    // 소멸이 없으면 칸 자체를 안 싣는다(공명 미발동 런·승리 런은 종전과 같은 형상).
+    ...(sealedVoided > 0 ? { sealedVoided } : {}),
     ...(story.shardGained !== undefined ? { shardGained: story.shardGained } : {}),
     ...(story.rewardCredits > 0 ? { storyRewardCredits: story.rewardCredits } : {}),
   };
