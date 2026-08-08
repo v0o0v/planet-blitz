@@ -26,6 +26,8 @@ import type { WorldState } from '../world.js';
 import type { ChainParams } from '../chainHooks.js';
 import { skillLv } from '../../items/skills.js';
 
+import { relayRadiusAdd, relayTargetsAdd } from './arccasterScaling.js';
+
 const enum Sk {
   /** CH2 연쇄 확장 회로 */ relayCircuit = 1,
 }
@@ -54,6 +56,6 @@ function lv(state: WorldState, flat: Sk): number {
 export function arccasterChainParams(state: WorldState, params: ChainParams): void {
   const ch2 = lv(state, Sk.relayCircuit);
   if (ch2 < 1) return;
-  params.radius += 20 + 6 * ch2;
-  params.maxTargets += 1 + Math.floor(ch2 / 7);
+  params.radius += relayRadiusAdd(ch2);
+  params.maxTargets += relayTargetsAdd(ch2);
 }

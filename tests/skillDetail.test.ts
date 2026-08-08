@@ -23,7 +23,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { SHIP_TYPES, SKILLS_PER_AXIS, flattenShipNodes } from '../data/ships/index.js';
-import { STRIKER_SKILL_DETAIL, skillDetailOf } from '../src/ui/skillDetail.js';
+import { SKILL_DETAIL_BY_SHIP, skillDetailOf } from '../src/ui/skillDetail.js';
 import {
   killMomentumCharge,
   shatterRadius,
@@ -37,59 +37,87 @@ import {
 import { POPUP_COLUMNS } from '../src/ui/pixi/researchLab.js';
 import { DESIGN_WIDTH } from '../src/render/app.js';
 
-const STRIKER = SHIP_TYPES[0]!;
-const NODES = flattenShipNodes(STRIKER);
+/**
+ * 상세 표가 **등록된** 기체만 검사한다.
+ *
+ * ⚠️ 목록을 손으로 적지 않고 레지스트리에서 뽑는다. 손으로 적으면 기체를 새로 채우고도
+ * 여기 추가하는 것을 잊어 **커버리지 단언이 그 기체를 그냥 건너뛴다** — 통과하는데 검사는
+ * 안 되는 상태가 되고, 그것이 이 파일이 막으려는 실패 모드와 정확히 같은 형태다.
+ */
+const REGISTERED = SHIP_TYPES.filter((s) => SKILL_DETAIL_BY_SHIP[s.slug] !== undefined);
 
 /** 레벨 손잡이가 **없는** 셋. 설계 문면이 「만충」·「면역」·「반감」이라 벌릴 축이 원리적으로 없다. */
 const FLAT_SKILLS = new Set([
   'striker-retaliation-sight',
   'striker-sustain-field',
   'striker-signal-chaser',
+  'arccaster-echo-mount',
 ]);
 
 // ===========================================================================
 // ① 커버리지
 // ===========================================================================
 
-describe('① 스트라이커 30스킬 전부 상세가 있다', () => {
-  it('기체가 스트라이커이고 축당 10스킬이다(전제 확인)', () => {
-    expect(STRIKER.slug).toBe('striker');
-    expect(NODES.length).toBe(STRIKER.trees.length * SKILLS_PER_AXIS);
-    expect(NODES.length).toBe(30);
+describe('① 등록된 기체는 30스킬이 하나도 안 빠진다', () => {
+  it('적어도 한 기체는 등록돼 있다 (레지스트리가 비면 아래가 전부 공허하다)', () => {
+    expect(REGISTERED.length).toBeGreaterThan(0);
+  });
+
+  it('축당 10스킬 · 기체당 30스킬이다 (전제 확인)', () => {
+    for (const ship of REGISTERED) {
+      const nodes = flattenShipNodes(ship);
+      expect(nodes.length, ship.slug).toBe(ship.trees.length * SKILLS_PER_AXIS);
+      expect(nodes.length, ship.slug).toBe(30);
+    }
   });
 
   it('빠진 스킬이 하나도 없다', () => {
-    const missing = NODES.filter((n) => skillDetailOf('striker', n.id) === null).map((n) => n.code);
+    const missing: string[] = [];
+    for (const ship of REGISTERED) {
+      for (const n of flattenShipNodes(ship)) {
+        if (skillDetailOf(ship.slug, n.id) === null) missing.push(`${ship.slug}:${n.code}`);
+      }
+    }
     // 나쁜 상태: 빠진 스킬은 화면에서 **조용히** 예전 한 줄로 내려앉는다 — 눈으로 못 잡는다.
     expect(missing).toEqual([]);
   });
 
   it('표에 유령 항목이 없다 (스킬 id 오타 검출)', () => {
-    // 표의 키는 `id` 에서 `striker-` 접두사를 뗀 부분이다(skillDetail.ts 표 주석).
-    const ids = new Set(NODES.map((n) => n.id.replace(/^striker-/, '')));
-    const ghosts = Object.keys(STRIKER_SKILL_DETAIL).filter((k) => !ids.has(k));
-    // 나쁜 상태: 오타 난 키는 ①을 통과시키지 못하지만, id 를 바꾼 뒤 옛 키가 남으면 ①은
-    // 초록인 채 죽은 문안이 쌓인다.
+    const ghosts: string[] = [];
+    for (const ship of REGISTERED) {
+      const ids = new Set(flattenShipNodes(ship).map((n) => n.id.slice(ship.slug.length + 1)));
+      for (const k of Object.keys(SKILL_DETAIL_BY_SHIP[ship.slug]!)) {
+        if (!ids.has(k)) ghosts.push(`${ship.slug}:${k}`);
+      }
+    }
+    // 나쁜 상태: 오타 난 키는 위 단언이 잡지만, id 를 바꾼 뒤 옛 키가 남으면 위는 초록인 채
+    // 죽은 문안이 쌓인다.
     expect(ghosts).toEqual([]);
   });
 
   it('모든 항목이 네 칸을 다 채운다', () => {
-    for (const n of NODES) {
-      const d = skillDetailOf('striker', n.id)!;
-      expect(d.body.length, `${n.code} body`).toBeGreaterThan(10);
-      expect(d.scale.length, `${n.code} scale`).toBeGreaterThan(5);
-      expect(d.lv1.length, `${n.code} lv1`).toBeGreaterThan(5);
-      expect(d.max.length, `${n.code} max`).toBeGreaterThan(5);
-      expect(d.values(1).length, `${n.code} values`).toBeGreaterThan(0);
+    for (const ship of REGISTERED) {
+      for (const n of flattenShipNodes(ship)) {
+        const d = skillDetailOf(ship.slug, n.id)!;
+        const tag = `${ship.slug}:${n.code}`;
+        expect(d.body.length, `${tag} body`).toBeGreaterThan(10);
+        expect(d.scale.length, `${tag} scale`).toBeGreaterThan(5);
+        expect(d.lv1.length, `${tag} lv1`).toBeGreaterThan(5);
+        expect(d.max.length, `${tag} max`).toBeGreaterThan(5);
+        expect(d.values(1).length, `${tag} values`).toBeGreaterThan(0);
+      }
     }
   });
 
   it('본체가 `desc` 한 줄보다 **더 말한다**', () => {
-    for (const n of NODES) {
-      const d = skillDetailOf('striker', n.id)!;
-      // 나쁜 상태: body 에 desc 를 그대로 복사해 두면 ①~④가 전부 초록인데 화면은 예전과 같다.
-      expect(d.body, `${n.code}`).not.toBe(n.desc);
-      expect(d.body.length, `${n.code}`).toBeGreaterThanOrEqual(n.desc.length);
+    for (const ship of REGISTERED) {
+      for (const n of flattenShipNodes(ship)) {
+        const d = skillDetailOf(ship.slug, n.id)!;
+        const tag = `${ship.slug}:${n.code}`;
+        // 나쁜 상태: body 에 desc 를 그대로 복사해 두면 나머지가 전부 초록인데 화면은 예전과 같다.
+        expect(d.body, tag).not.toBe(n.desc);
+        expect(d.body.length, tag).toBeGreaterThanOrEqual(n.desc.length);
+      }
     }
   });
 });
@@ -102,7 +130,12 @@ describe('① 스트라이커 30스킬 전부 상세가 있다', () => {
 // 때 같은 자리를 다시 밟으므로 기계로 잠근다.
 
 describe('①-bis 문체·용어', () => {
-  const ALL = NODES.map((n) => ({ code: n.code, d: skillDetailOf('striker', n.id)! }));
+  const ALL = REGISTERED.flatMap((ship) =>
+    flattenShipNodes(ship).map((n) => ({
+      code: `${ship.slug}:${n.code}`,
+      d: skillDetailOf(ship.slug, n.id)!,
+    })),
+  );
 
   it('설명이 합니다체다 (게임의 다른 설명과 같은 문체)', () => {
     // 액티브 스킬 "…무시합니다" · 공명 "처치가 연쇄합니다" · 시그니처 설명이 전부 합니다체다.
@@ -150,25 +183,31 @@ describe('①-bis 문체·용어', () => {
 // ===========================================================================
 
 describe('② 레벨을 바꾸면 수치가 따라 바뀐다', () => {
-  it('손잡이가 있는 27스킬은 Lv1 과 Lv20 의 문자열이 다르다', () => {
-    const frozen = NODES.filter((n) => !FLAT_SKILLS.has(n.id)).filter(
-      (n) =>
-        skillDetailOf('striker', n.id)!.values(1).join('|') ===
-        skillDetailOf('striker', n.id)!.values(20).join('|'),
-    );
+  it('손잡이가 있는 스킬은 Lv1 과 Lv20 의 문자열이 다르다', () => {
+    const frozen: string[] = [];
+    for (const ship of REGISTERED) {
+      for (const n of flattenShipNodes(ship)) {
+        if (FLAT_SKILLS.has(n.id)) continue;
+        const d = skillDetailOf(ship.slug, n.id)!;
+        if (d.values(1).join('|') === d.values(20).join('|')) frozen.push(`${ship.slug}:${n.code}`);
+      }
+    }
     // 나쁜 상태: 문안에 "+2" 를 손으로 적어 두면 모든 레벨에서 같은 값이 뜬다 — 그것이
     // 정확히 "수치를 보여 준다"의 반대다(틀린 수치를 확신 있게 보여 준다).
-    expect(frozen.map((n) => n.code)).toEqual([]);
+    expect(frozen).toEqual([]);
   });
 
-  it('손잡이가 없는 셋은 레벨에 무관하고, 그 사실을 문장으로 말한다', () => {
+  it('손잡이가 없는 스킬은 레벨에 무관하고, 그 사실을 문장으로 말한다', () => {
     for (const id of FLAT_SKILLS) {
-      const d = skillDetailOf('striker', id)!;
-      expect(d.values(1)).toEqual(d.values(20));
+      const slug = id.slice(0, id.indexOf('-'));
+      const d = skillDetailOf(slug, id);
+      // 나쁜 상태: 목록에 오타가 있으면 `null` 이 되고 아래 단언이 통째로 안 돈다.
+      expect(d, id).not.toBeNull();
+      expect(d!.values(1)).toEqual(d!.values(20));
       // 나쁜 상태: 말하지 않으면 플레이어가 20포인트를 붓고 나서야 안다. 문구가 아니라
       // **약속 두 개**를 잠근다 — ①레벨을 올려도 안 커진다고 말할 것 ②더 넣지 말라고 말할 것.
-      expect(d.scale, `${id} scale`).toContain('커지지 않습니다');
-      expect(d.max, `${id} max`).toContain('얻는 것이 없습니다');
+      expect(d!.scale, `${id} scale`).toContain('커지지 않습니다');
+      expect(d!.max, `${id} max`).toContain('얻는 것이 없습니다');
     }
   });
 });
@@ -238,12 +277,16 @@ describe('③ 화면 수치 = sim 함수 결과 (여러 레벨에서)', () => {
 // ===========================================================================
 
 describe('④ sim 은 스케일 모듈을 쓴다', () => {
-  const src = new TextDecoder().decode(
-    readFileSync(fileURLToPath(new URL('../src/sim/skills/striker.ts', import.meta.url))),
-  );
+  const read = (f: string): string =>
+    new TextDecoder().decode(
+      readFileSync(fileURLToPath(new URL(`../src/sim/skills/${f}`, import.meta.url))),
+    );
+  const src = read('striker.ts');
 
-  it('스케일 모듈을 import 한다', () => {
-    expect(src).toContain("from './strikerScaling.js'");
+  it('등록된 기체의 sim 이 전부 스케일 모듈을 import 한다', () => {
+    for (const ship of REGISTERED) {
+      expect(read(`${ship.slug}.ts`), ship.slug).toContain(`from './${ship.slug}Scaling.js'`);
+    }
   });
 
   it('뽑아낸 공식이 인라인으로 되살아나지 않았다', () => {
