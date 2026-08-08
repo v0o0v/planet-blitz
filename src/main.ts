@@ -99,7 +99,7 @@ import {
   createWorld,
   markTainted,
   DT,
-  xpToNext,
+  xpToNextForRun,
   comboMultiplier,
   DEFAULT_CONFIG,
   echoStabilizedOf,
@@ -2944,7 +2944,9 @@ async function main(): Promise<void> {
         hp: p?.hp ?? 0,
         maxHp: p?.maxHp ?? 0,
         xp: w.xp,
-        xpNeed: xpToNext(w.level),
+        // 분모는 **판정과 같은 함수**로 뽑는다(`checkLevelUp` 도 `xpToNextForRun`). 여기서
+        // `xpToNext` 를 직접 부르면 침공 런 분모가 11배로 부푼다 — 그 함수 주석 참조.
+        xpNeed: xpToNextForRun(w),
         level: w.level,
         // ⚠️ **누적 틱 기준**이다. 의뢰 다구간 런은 `w.tick` 이 구간마다 0 으로 돌아가므로
         // 그대로 쓰면 **마지막 구간의 시간만** 보인다(5구간 의뢰가 30초로 표시되고, 런 중
