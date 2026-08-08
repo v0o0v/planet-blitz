@@ -29,8 +29,10 @@ import {
   onEnemyStepCatalyst,
   onPowerupPickedCatalyst,
   onKillsDeltaCatalyst,
+  onLootRollCatalyst,
   onTickCatalyst,
 } from '../src/sim/catalystHooks.js';
+import { bonusLootSeeds } from '../src/sim/drops.js';
 import { readCatalystSlot } from '../src/sim/catalystSlots.js';
 import { readMark } from '../src/sim/catalystMarks.js';
 import {
@@ -38,7 +40,7 @@ import {
   CATALYST_ORE_MARK,
   isCatalystObjective,
 } from '../src/sim/catalyst/shared.js';
-import { resourceOnVolleyParams } from '../src/sim/catalyst/resource.js';
+import { resourceOnLootRoll, resourceOnVolleyParams } from '../src/sim/catalyst/resource.js';
 import type { VolleyParams } from '../src/sim/skillHooks.js';
 import { isObjectiveDestructible } from '../src/sim/modes/objective.js';
 import { summonEnemy } from '../src/sim/waves.js';
@@ -484,6 +486,42 @@ describe('id 16 foundry — 적 셋마다 포탑, 대신 화력이 나뉜다', (
     const s = w([CARD_FOUNDRY]);
     onKillsDeltaCatalyst(s, 9);
     expect(turrets(s)).toHaveLength(3);
+  });
+
+  // ⚠️ 2026-08-08 사용자 판정 — 정본 초안의 *"포탑이 처치한 적은 자원을 두 배 뱉는다"* 는
+  //    내려갔고(포탑 탄 귀속이 `ownerId` 해시 폴드를 요구 · `id 16` 단독 런에는 두 배로 만들
+  //    자원 사건 자체가 없음) 상한 축이 자원 → **드랍**으로 옮겨갔다. 판정 술어는 대가 쪽과
+  //    같은 `foundryTurretCount` 하나라 새 칸도 새 귀속도 없다.
+  it('⭐ 이득 — 포탑이 서 있는 동안 쓰러진 적은 전리품을 더 뱉는다', () => {
+    const s = w([CARD_FOUNDRY]);
+    // 포탑 0기 — 배율이 **정확히 1** 이라 추가 전리품이 없다.
+    expect(onLootRollCatalyst(s, 1, 1, 0, 0, true).count).toBe(1);
+
+    onKillsDeltaCatalyst(s, 3); // 포탑 1기
+    expect(turrets(s)).toHaveLength(1);
+    const lr = onLootRollCatalyst(s, 1, 1, 0, 0, true);
+    expect(lr.count).toBeCloseTo(1.8, 6);
+    expect(lr.rarity).toBe(1); // 등급 축은 이 카드 소관이 아니다
+
+    // ⭐⭐ 배율이 **실제 전리품 수에 도달**하는지 본다 — 적립 액수만 재면 반쪽이다.
+    //     `bonusLootSeeds` 가 개수 배율을 추가 드랍 시드로 바꾸는 유일한 자리이고
+    //     (`world.ts` 의 엘리트·보스 두 호출부가 그 배열을 그대로 민다), ×1.8 은 정수부가 0 이고
+    //     소수부 0.8 이 시드 파생 게이트라 시드마다 갈린다. 그래서 열 시드를 훑어 «한 번도 안
+    //     나오는» 퇴화를 막고, 중립 배율은 **전 시드에서 0** 임을 같이 못 박는다.
+    const hit = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter((k) => bonusLootSeeds(k, lr.count).length > 0);
+    expect(hit.length, '배율 1.8 이 추가 전리품에 한 번도 도달하지 않는다').toBeGreaterThan(0);
+    for (let k = 0; k < 10; k++) expect(bonusLootSeeds(k, 1)).toEqual([]);
+
+    // 귀속 장부에 이 카드 몫이 적힌다.
+    expect((s.catalystLedger ?? []).find((r) => r.id === CARD_FOUNDRY)?.earned).toBeGreaterThan(0);
+  });
+
+  it('안 실으면 전리품 배율도 중립이다 (음성 대조)', () => {
+    // ⚠️ 여기서는 **그룹 함수를 직접** 부른다. `OTHER_CARD`(= `id 1 plunder`)도 같은 앵커에서
+    //    개수 배율을 곱하므로 디스패처로 재면 다른 카드의 배율을 이 카드 것으로 오독한다.
+    const s = w([OTHER_CARD]);
+    onKillsDeltaCatalyst(s, 9);
+    expect(resourceOnLootRoll(s, 0, 0, true).count).toBe(1);
   });
 
   it('⭐ 대가 — 포탑이 서 있는 동안 주무기 피해가 1기당 15% 나뉜다', () => {

@@ -16,6 +16,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { resonanceOf, resonanceVoidOnPlanet } from '../src/data/catalystResonance.js';
 import { createWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
@@ -939,6 +942,30 @@ describe("침식 강 '함몰' — 가장자리가 무너진다 / 격전 통과 �
       const s = world(COMBO.subsidence, planet);
       expect(subsidenceActive(s), `planet ${planet}`).toBe(true);
     }
+  });
+
+  it('⚠️ 축 통일 — sim 게이트와 픽커가 읽는 데이터가 **전 행성에서 같은 답**을 낸다', () => {
+    // 2026-08-08 이전에는 제외 행성 목록이 sim 파일의 지역 상수에만 있어 픽커가 그것을 볼
+    // 수단이 없었다(회색 경고를 낼 수 없었다). 이제 `ResonanceDef.voidOnPlanets` 한 칸이
+    // 양쪽의 답이다 — 그 사실을 행성 0..5 전수로 못 박는다. 여기가 갈리면 화면은 "안 뜬다"고
+    // 하는데 sim 은 돌리는(또는 반대) 상태가 조용히 산다.
+    const def = resonanceOf('erosion', 'strong')!;
+    for (let planet = 0; planet <= 5; planet++) {
+      const s = world(COMBO.subsidence, planet);
+      expect(subsidenceActive(s), `planet ${planet}`).toBe(!resonanceVoidOnPlanet(def, planet));
+    }
+    // 그 답이 실제로 사용자 판정(베르단 1 · 니플헤임 2 미발동)과 같다.
+    expect(def.voidOnPlanets).toEqual([1, 2]);
+  });
+
+  it('⚠️ sim 게이트가 행성 번호를 **직접 비교하지 않는다**(축이 다시 갈리는 통로를 막는다)', () => {
+    const src = new TextDecoder().decode(
+      readFileSync(fileURLToPath(new URL('../src/sim/catalyst/resonance.ts', import.meta.url))),
+    );
+    const body = src.slice(src.indexOf('export function subsidenceActive('));
+    const fn = body.slice(0, body.indexOf('\n}'));
+    expect(fn).toContain('resonanceVoidOnPlanet');
+    expect(fn).not.toMatch(/PLANET_(BERDAN|NIFLHEIM)/);
   });
 
   it('대가: 시간이 갈수록 반경이 줄고, 밖에 있으면 안으로 되밀린다', () => {

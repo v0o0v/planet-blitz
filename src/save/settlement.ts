@@ -26,7 +26,7 @@
 import { rollItem } from '../items/roll.js';
 import { blueprintDropsFromLoot } from '../../data/planets/index.js';
 import type { BlueprintGrant } from '../../data/planets/blueprints.js';
-import { RARITY_BY_CODE } from '../items/types.js';
+import { RARITY_BY_CODE, SEALED_RARITY_CODE } from '../items/types.js';
 import type { Item } from '../items/types.js';
 import type { LootRecord } from '../sim/world.js';
 import { xpToNextMeta, lowStageXpDecayPercent } from './progressionPath.js';
@@ -237,6 +237,15 @@ export interface SettlementOutcome {
     /** 미상환분 때문에 **이 런의 전리품에서** 압류된 점수. */
     seized: number;
   };
+  /**
+   * 도박 강 공명 '청산'이 **패배로 소멸시킨** 봉인 전리품 수(항상 0 또는 1 — 봉인은 첫 전리품
+   * 하나뿐이다). 소멸이 없으면 undefined 라 종전 호출부는 무영향.
+   *
+   * ⚠️ **압류(`catalystDebt.seized`)와 갈라서 낸다.** 둘을 합치면 플레이어는 "빚 때문에
+   * 뜯긴 것"과 "도박에 져서 날아간 것"을 구분할 수 없다 — 부채 칸이 상환분과 압류분을 가른
+   * 것과 같은 사유다. 서버 권위 드랍 모드의 호출부도 이 값을 **따로** 빼야 한다.
+   */
+  sealedVoided?: number;
 }
 
 /** {@link settleRun} 의 모드 스위치. */
@@ -275,6 +284,29 @@ export function settleRun(
   //    ⚠️ 순서 의존이므로 3단계(`grantXp`)를 이 위로 옮기지 마라.
   const runShipLevel = activeShip(profile).level;
 
+  // 0-. 도박 강 공명 '청산'의 **마지막 조항**: *"보스를 처치하면 최고 등급으로 열리고,
+  //     지면 그것만 사라진다."* sim 이 개봉(승리)까지 하고 소멸(패배)은 여기 몫이다 — sim 은
+  //     "졌다"를 런 안에서 관측하지 않기 때문이다(패배는 정산이 받는 `victory: false` 다).
+  //
+  //     현행 이전에는 봉인 레코드가 `RARITY_BY_CODE[9] ?? 'normal'` 로 **최저 등급으로 접힐 뿐
+  //     사라지지 않았다**(높은 등급으로 새지는 않아 안전 방향이긴 했다).
+  //
+  //     ⚠️ **제거는 `id 18` 압류 계산보다 앞이다.** 뒤에 두면 이미 사라질 레코드가 압류 대상
+  //     개수를 채워, 빚을 실제로는 "없는 전리품"으로 갚는 셈이 된다. 앞에 두면 압류가 **살아
+  //     남은 전리품**에서만 일어나 두 규칙문이 각자 말한 그대로가 된다.
+  //
+  //     ⚠️⚠️ **촉매 드랍(`catalystDropsFromRun`)은 이 제거의 영향을 받지 않는다** — 그쪽은
+  //     호출부(`main.ts`)가 `w.loot` 원본을 그대로 넘기고, 여기서 만드는 것은 정산 지역 사본이다.
+  //     그것이 규칙문에 맞다: *"**그것만** 사라진다"* 의 「그것」은 봉인된 **전리품 1점**이고,
+  //     촉매 드랍은 드랍 시드에서 파생하는 **다른 축**이다. 여기서 시드를 빼면 규칙문에 없는
+  //     두 번째 대가(촉매 한 번의 게이트 소멸)가 조용히 붙는다. 같은 사유로 **설계도 파생**
+  //     (`blueprintDropsFromLoot`)도 `result.loot` 원본을 계속 읽는다. `id 18` 압류가 정확히
+  //     같은 선택을 하고 있다(압류가 촉매 원장·설계도를 안 깎는다) — 두 규칙이 같은 계층이다.
+  const sealedVoided =
+    result.victory ? 0 : result.loot.reduce((n, r) => (r.rarity === SEALED_RARITY_CODE ? n + 1 : n), 0);
+  const settledLoot: readonly LootRecord[] =
+    sealedVoided === 0 ? result.loot : result.loot.filter((r) => r.rarity !== SEALED_RARITY_CODE);
+
   // 0. `id 18 mercantile` 부채 상환·압류 — **아이템 확정 전에** 정해야 한다.
   //    압류는 *"그 런의 전리품"* 에서만 일어나므로(보유 인벤토리는 손대지 않는다), 확정한 뒤
   //    인벤에서 도로 빼는 것이 아니라 **애초에 확정하지 않는** 형태로 구현한다 — 그래야
@@ -291,8 +323,8 @@ export function settleRun(
   const seizedItems =
     debtUnpaid <= 0
       ? 0
-      : Math.min(result.loot.length, Math.ceil(debtUnpaid / DEBT_PER_SEIZED_ITEM));
-  const keptLootCount = result.loot.length - seizedItems;
+      : Math.min(settledLoot.length, Math.ceil(debtUnpaid / DEBT_PER_SEIZED_ITEM));
+  const keptLootCount = settledLoot.length - seizedItems;
 
   const itemsGained: Item[] = [];
   // ⭐ 서버 권위 모드(ADR-0050 §3 단계 1)에서는 **여기서 굴리지 않는다.** 클라는 주운 개수만
@@ -303,7 +335,7 @@ export function settleRun(
   if (!opts.serverDrops) {
     // 부채 압류(0단계)로 잘려 나간 뒷부분은 확정하지 않는다. 부채가 없으면 `keptLootCount ===
     // result.loot.length` 라 루프가 종전과 완전히 같다.
-    for (const rec of result.loot.slice(0, keptLootCount)) {
+    for (const rec of settledLoot.slice(0, keptLootCount)) {
       const rarity = RARITY_BY_CODE[rec.rarity] ?? 'normal';
       itemsGained.push(
         rollItem(rec.seed, rarity, {
@@ -396,6 +428,8 @@ export function settleRun(
     ...(debtTotal > 0
       ? { catalystDebt: { total: debtTotal, repaid: debtRepaid, unpaid: debtUnpaid, seized: seizedItems } }
       : {}),
+    // 소멸이 없으면 칸 자체를 안 싣는다(공명 미발동 런·승리 런은 종전과 같은 형상).
+    ...(sealedVoided > 0 ? { sealedVoided } : {}),
     ...(story.shardGained !== undefined ? { shardGained: story.shardGained } : {}),
     ...(story.rewardCredits > 0 ? { storyRewardCredits: story.rewardCredits } : {}),
   };

@@ -275,23 +275,50 @@ describe('id 26 rapidcore — 입력으로 판정하고 피격이 초기화한�
     expect(readCatalystSlot(s.catalystSlots, RapidcoreSlot.HeldTicks)).toBe(59);
   });
 
-  it('방향을 꺾으면 다시 세고, 유지가 길수록 피해가 커진다', () => {
+  it('방향을 꺾으면 다시 세고, 유지가 길수록 볼리 피해가 커진다', () => {
     const s = world([CARD_RAPIDCORE]);
     const p = playerOf(s);
     p.vx = 300;
     p.vy = 0;
     for (let i = 0; i < 90; i++) powerOnTick(s, p);
-    const half = enemy(s, p.x + 40, p.y);
-    powerOnEnemyDamaged(s, half, 10, p);
-    expect(half.hp).toBe(95); // 90/180 = 배율 1.5
+    const half = volleyOf(10);
+    powerOnVolleyParams(s, p, half);
+    expect(half.damage).toBe(15); // 유지 89/180 = 배율 0.494 → 추가 5
 
     p.vx = 0;
     p.vy = 300;
     powerOnTick(s, p);
     expect(readCatalystSlot(s.catalystSlots, RapidcoreSlot.HeldTicks)).toBe(0);
-    const cold = enemy(s, p.x + 40, p.y);
-    powerOnEnemyDamaged(s, cold, 10, p);
-    expect(cold.hp).toBe(100);
+    const cold = volleyOf(10);
+    powerOnVolleyParams(s, p, cold);
+    expect(cold.damage).toBe(10);
+  });
+
+  it('명중 앵커는 더 이상 id 26 으로 피해를 얹지 않는다 (이중 계상 방지)', () => {
+    // 옮긴 뒤 옛 자리를 안 지우면 **같은 유지가 두 번** 실려 카드가 조용히 두 배가 된다.
+    const s = world([CARD_RAPIDCORE]);
+    const p = playerOf(s);
+    p.vx = 300;
+    p.vy = 0;
+    for (let i = 0; i < 90; i++) powerOnTick(s, p);
+    const target = enemy(s, p.x + 40, p.y);
+    powerOnEnemyDamaged(s, target, 10, p);
+    expect(target.hp, 'id 26 이 명중 앵커에도 남아 있다').toBe(100);
+  });
+
+  it('id 25 와 함께 실으면 두 배율이 한 번에 더해져 한 번만 반올림된다', () => {
+    // 카드마다 따로 round 를 돌리면 낮은 피해 구간에서 절삭이 겹쳐 곡선이 갈린다.
+    const s = world([CARD_OVERDRIVE, CARD_RAPIDCORE]);
+    const p = playerOf(s);
+    p.vx = 300;
+    p.vy = 0;
+    for (let i = 0; i < 45; i++) powerOnTick(s, p); // 유지 44/180
+    for (let i = 0; i < 15; i++) powerOnVolleyFired(s, p); // 열 15/60
+    const v = volleyOf(7);
+    powerOnVolleyParams(s, p, v);
+    // 0.25 + 44/180 = 0.49444… → round(7 × 0.49444) = round(3.461) = 3
+    // 따로 반올림했다면 round(1.75) + round(1.711) = 2 + 2 = 4 로 갈렸다.
+    expect(v.damage).toBe(10);
   });
 
   it('피격당하면 두 칸 모두 초기화된다', () => {

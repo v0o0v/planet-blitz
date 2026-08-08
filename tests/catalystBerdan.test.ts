@@ -32,6 +32,7 @@ import {
   type ShrinkRuntime,
 } from '../src/sim/modes/shrink.js';
 import { isCatalystHazard } from '../src/sim/catalyst/shared.js';
+import { bonusLootSeeds } from '../src/sim/drops.js';
 import { CATALYST_FX } from '../src/sim/catalyst/fx.js';
 import {
   berdanOnTick,
@@ -362,7 +363,10 @@ describe('id 34 berdan-royal-jelly', () => {
     expect(berdanOnEnemyStep(s, starved)).toBeGreaterThan(1);
   });
 
-  it('경제 — 젤리 위에서 죽은 적만 자원을 뱉고, 못 먹은 적은 **놓친 몫**으로 남는다', () => {
+  // ⚠️ 2026-08-08 사용자 판정으로 이 카드의 상한 축이 **자원 → 드랍**으로 옮겨갔다. 종전
+  //    구현(처치당 자원 3 절대량 적립)은 처치 수에 선형이라 선언 상한이 유계하지 못했다.
+  //    그래서 이 절은 `state.resources` 가 아니라 **전리품 개수 배율**을 잰다.
+  it('경제 — 젤리 위에서 죽은 적만 전리품을 더 뱉고, 못 먹은 적은 **놓친 몫**으로 남는다', () => {
     const s = berdanWorld([ROYAL_JELLY]);
     const rt = s.shrinkRuntime as ShrinkRuntime;
     rt.graceTicks = 0;
@@ -373,15 +377,42 @@ describe('id 34 berdan-royal-jelly', () => {
     if (j === undefined) return;
 
     const res0 = s.resources;
-    berdanOnEnemyDeath(s, j.x, j.y, false);
-    expect(s.resources).toBeGreaterThan(res0);
+    const fed = berdanOnLootRoll(s, j.x, j.y, true);
+    expect(fed.count).toBeGreaterThan(1);
+    // ⭐⭐ 배율이 **실제 전리품 수에 도달**하는지 본다 — 적립 액수만 재면 반쪽이다.
+    //     `bonusLootSeeds` 가 개수 배율을 추가 드랍 시드로 바꾸는 유일한 자리이고
+    //     (`world.ts` 의 엘리트·보스 두 호출부가 그 배열을 그대로 `lootDrops` 에 민다),
+    //     정수부 1.4 ≥ 1 이라 시드가 **최소 한 알** 나와야 한다.
+    expect(bonusLootSeeds(0x9e3779b9, fed.count).length).toBeGreaterThanOrEqual(1);
+    // 자원 경로로는 한 톨도 안 간다(축이 옮겨간 것이지 둘 다 주는 것이 아니다).
+    expect(s.resources).toBe(res0);
     const led = (s.catalystLedger ?? []).find((r) => r.id === ROYAL_JELLY);
     expect(led?.earned).toBeGreaterThan(0);
 
-    const res1 = s.resources;
-    berdanOnEnemyDeath(s, j.x + 90_000, j.y, false);
-    expect(s.resources).toBe(res1);
+    const starved = berdanOnLootRoll(s, j.x + 90_000, j.y, true);
+    expect(starved.count).toBe(1);
+    expect(bonusLootSeeds(0x9e3779b9, starved.count)).toEqual([]);
     expect((s.catalystLedger ?? []).find((r) => r.id === ROYAL_JELLY)?.missed).toBeGreaterThan(0);
+  });
+
+  it('앵커가 옮겨간 자리 — `onEnemyDeath` 는 이제 이 카드에 아무 일도 안 한다', () => {
+    // 종전 자리에 적립이 남아 있으면 **이득이 두 번** 붙는다(드랍 배율 + 자원). 그 회귀를 잡는다.
+    const s = berdanWorld([ROYAL_JELLY]);
+    const rt = s.shrinkRuntime as ShrinkRuntime;
+    rt.graceTicks = 0;
+    rt.safeRadius = 4000;
+    berdanOnTick(s, player(s));
+    const j = jellies(s)[0];
+    if (j === undefined) throw new Error('젤리 부재');
+    const res0 = s.resources;
+    berdanOnEnemyDeath(s, j.x, j.y, false);
+    expect(s.resources).toBe(res0);
+    expect(s.catalystResourceMilli).toBe(0);
+    // ⚠️ 장부 자체는 비어 있지 않다 — 젤리가 깔릴 때 `trigger` 가 `fired` 를 올린다. 이 절이
+    //    잡는 것은 **적립·놓침**이 이 앵커에서 생기지 않는다는 것이다.
+    const led = (s.catalystLedger ?? []).find((r) => r.id === ROYAL_JELLY);
+    expect(led?.earned ?? 0).toBe(0);
+    expect(led?.missed ?? 0).toBe(0);
   });
 
   it('RNG 를 한 칸도 소비하지 않는다(각도가 반경의 순수 파생이다)', () => {

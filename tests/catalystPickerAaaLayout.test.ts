@@ -234,3 +234,37 @@ describe('시네마틱 전환에서 지켜야 할 배선', () => {
     expect(SRC).toContain('catalystLocked(def, this.opts.planet)');
   });
 });
+
+// ---------------------------------------------------------------------------
+// 회색 경고가 **공명까지** 덮는다 (2026-08-08)
+// ---------------------------------------------------------------------------
+
+describe('회색 무효 경고 — 카드와 공명 둘 다', () => {
+  /** `warningRows` 본문만 떼어 본다(다른 메서드의 같은 이름 호출과 섞이지 않게). */
+  const warn = SRC.slice(SRC.indexOf('private warningRows('), SRC.indexOf('private renderEffectColumn('));
+
+  it('카드 줄과 공명 줄이 **둘 다** 있다', () => {
+    expect(warn, '카드 회색 줄이 없다').toContain('catalystVoidOnPlanet(def, planet)');
+    expect(warn, '공명 회색 줄이 없다').toContain('resonanceVoidOnPlanet(reso, planet)');
+  });
+
+  it('공명 회색 줄이 카드 줄과 **같은 색·같은 문구**를 쓴다', () => {
+    // 색이나 문구가 갈리면 플레이어가 두 경고를 다른 종류로 읽는다.
+    const gray = warn.match(/color: WARN_VOID_COLOR/g) ?? [];
+    expect(gray.length).toBe(2);
+    const said = warn.match(/t\('catalyst\.warn\.voidOnPlanet'\)/g) ?? [];
+    expect(said.length).toBe(2);
+  });
+
+  it('공명 줄이 카드 줄 **뒤**다(원인 → 결과 순서)', () => {
+    expect(warn.indexOf('catalystVoidOnPlanet(def, planet)')).toBeLessThan(
+      warn.indexOf('resonanceVoidOnPlanet(reso, planet)'),
+    );
+  });
+
+  it('⚠️ 픽커가 무효를 **스스로 판정하지 않는다** — 데이터 술어만 부른다', () => {
+    // 여기서 행성 번호를 직접 비교하기 시작하면 sim 게이트와 갈린다(축 통일이 깨진다).
+    expect(warn).not.toMatch(/planet\s*===\s*\d/);
+    expect(warn).not.toMatch(/planet\s*!==\s*\d/);
+  });
+});

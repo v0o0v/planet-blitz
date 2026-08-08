@@ -14,7 +14,7 @@
  *
  * **폐기**: `RewardAxis`·`PenaltyAxis`·`PowerStat` 6+6+5 격자 · `perStack` 스칼라 4상수 ·
  * `catalystRewardMult`/`catalystPenaltyMult`/`catalystPowerMult`.
- * **신설**: `tags`(공명 재료) · `cap`(정산 유계) · `hook`(훅 예산 회계) · `voidOnModes`(픽커 경고).
+ * **신설**: `tags`(공명 재료) · `cap`(정산 유계) · `hook`(훅 예산 회계) · `voidOnPlanets`(픽커 경고).
  * **불변**: `id`·`slug`·`dropWeight`·아이콘 48장 — 서버 원장·상점 가격·i18n 앵커가 여기 매달려
  * 있다. `dropWeight` 를 건드리면 구매가·환급액이 조용히 갈린다.
  *
@@ -106,13 +106,20 @@ export interface CatalystDef {
    */
   readonly modeHook?: string;
   /**
-   * **이 행성 모드에서 구조적으로 무효**인 경우의 모드 인덱스 목록. 픽커가 **회색 경고**를 띄운다
+   * **이 행성에서 구조적으로 무효**인 경우의 행성 인덱스 목록. 픽커가 **회색 경고**를 띄운다
    * (촉매 간 충돌로 인한 축소 작동은 **노랑**이고 그것은 런타임 판정이라 여기 안 적는다).
+   *
+   * ⚠️ **축은 행성 인덱스다**(`config.planet` = 0..5) — 모드 인덱스(`PLANET_MODE`)가 아니다.
+   * 종전 이름은 `voidOnModes` 였고 상수도 `MODE_ARKE`/`MODE_KRAS` 였는데 담긴 값 3·5 는 실제로
+   * **아르케·크라스의 행성 인덱스**였다(`PLANET_MODE.racing` 은 2, `blockBreak` 은 1 이라 모드로
+   * 읽으면 아예 다른 행성을 가리킨다). 소비자 전부가 이미 `config.planet` 을 넘기고 있었으므로
+   * **동작은 처음부터 행성 축**이었고 이름만 거짓말을 했다 — 2026-08-08 에 이름을 값에 맞췄다.
+   * 공명 쪽 짝은 `catalystResonance.ts` 의 `ResonanceDef.voidOnPlanets` 이고 **같은 축**이다.
    *
    * ⚠️ §축소 작동 규율: 무효화는 **픽커의 사전 경고로만** 존재하고, 런 안에서는 반드시 축소된
    * 형태로라도 작동해야 한다. 이 칸이 있다고 sim 이 그 카드를 꺼도 된다는 뜻이 아니다.
    */
-  readonly voidOnModes?: readonly number[];
+  readonly voidOnPlanets?: readonly number[];
 }
 
 // ---------------------------------------------------------------------------
@@ -208,9 +215,14 @@ export const MODE_HOOK = {
   krasColossus: 'kras-colossus',
 } as const;
 
-/** 강제 스크롤 모드 인덱스 — `voidOnModes` 가 반복해서 쓴다(아르케 racing · 크라스 blockBreak). */
-const MODE_ARKE = 3;
-const MODE_KRAS = 5;
+/**
+ * 강제 스크롤 행성의 **행성 인덱스** — `voidOnPlanets` 가 반복해서 쓴다.
+ * 값은 위 {@link MODE_HOOK} 주석의 행성 번호와 같은 축이다(아르케(3) racing · 크라스(5)
+ * blockBreak). ⚠️ 모드 인덱스(`PLANET_MODE.racing` = 2, `blockBreak` = 1)와 **다른 축**이다 —
+ * 종전 이름 `MODE_ARKE`/`MODE_KRAS` 가 그 둘을 뒤섞어 읽히게 했다.
+ */
+const PLANET_ARKE = 3;
+const PLANET_KRAS = 5;
 
 // ---------------------------------------------------------------------------
 // 48종 카탈로그 (id 순 = 배열 인덱스. 접근은 catalystById 로.)
@@ -228,7 +240,7 @@ export const CATALYSTS: readonly CatalystDef[] = [
   // 엘리트·보스는 처치해도 안 뱉는다 — 몸으로 부딪혀 강탈하고, 그것은 접촉 피해다.
   { id: 1, slug: 'plunder', kind: 'common', tags: ['gamble', 'ignite'], cap: { axis: 'drop', mult: 1.8 }, hook: 'A', dropWeight: W_COMMON },
   // 적이 죽은 자리에 수확 지대 — 그 위에서 탄이 관통하지만 밟으면 느려진다.
-  { id: 2, slug: 'harvest', kind: 'common', tags: ['harvest', 'precision'], cap: { axis: 'xp', mult: 2.2 }, hook: 'A', dropWeight: W_COMMON, voidOnModes: [MODE_ARKE, MODE_KRAS] },
+  { id: 2, slug: 'harvest', kind: 'common', tags: ['harvest', 'precision'], cap: { axis: 'xp', mult: 2.2 }, hook: 'A', dropWeight: W_COMMON, voidOnPlanets: [PLANET_ARKE, PLANET_KRAS] },
   // 피격 자리에 현상금 표식 — 주우면 자원, 적이 먼저 밟으면 그 적이 먹고 강화된다.
   { id: 3, slug: 'bounty', kind: 'common', tags: ['harvest', 'gamble'], cap: { axis: 'resource', mult: 2.0 }, hook: 'A', dropWeight: W_COMMON },
   // 레벨업 시 바닥 전리품이 전부 폭발해 적을 태운다 — 터진 것은 등급이 한 단계 내려간다.
@@ -261,8 +273,14 @@ export const CATALYSTS: readonly CatalystDef[] = [
   // ── 공용: 자원 결 (id 15~19) ──────────────────────────────────────────────
   // 보급 습격 자원이 적들에게 실린다 — 죽이면 전리품으로 굳고, 화면을 벗어나면 사라진다.
   { id: 15, slug: 'extraction', kind: 'common', tags: ['harvest', 'gamble'], cap: { axis: 'drop', mult: 2.4 }, hook: 'A', dropWeight: W_COMMON },
-  // 적 셋마다 포탑이 선다(20초) — 대신 포탑 수만큼 네 공격력이 나뉜다.
-  { id: 16, slug: 'foundry', kind: 'common', tags: ['density', 'erosion'], cap: { axis: 'resource', mult: 1.8 }, hook: 'B', dropWeight: W_COMMON },
+  // 적 셋마다 포탑이 선다(20초) — 그동안 쓰러진 적은 전리품을 더 뱉고, 대신 포탑 수만큼 네 공격력이 나뉜다.
+  // ⚠️ 상한 축은 **드랍**이다(2026-08-08 사용자 판정). 종전 선언 `자원 ×1.8` 이 딛고 있던
+  // 정본 조항(*"포탑이 처치한 적은 자원을 두 배 뱉는다"*)은 배선이 불가능해 내려갔다 —
+  // 포탑 탄 귀속은 `ownerId`(= `ENTITY_HASH_LAYOUT` u32 폴드 대상)에 스탬프를 요구해
+  // 골든 전량 재생성 + §C 승격을 부르고, `id 16` 단독 런에는 두 배로 만들 자원 사건 자체가
+  // 없다(적 처치 자원은 `id 15`·`17`·`19` 소지 시뿐). 규칙에 없는 축을 상한에만 남기면
+  // 헌장 §상한 근거 규율 위반이므로 축도 같이 드랍으로 옮겼다.
+  { id: 16, slug: 'foundry', kind: 'common', tags: ['density', 'erosion'], cap: { axis: 'drop', mult: 1.8 }, hook: 'B', dropWeight: W_COMMON },
   // 자원이 그 값어치만큼 적이 되어 나타난다 — 죽이면 세 배, 못 죽이면 증발한다.
   { id: 17, slug: 'greed', kind: 'common', tags: ['density', 'gamble'], cap: { axis: 'resource', mult: 2.6 }, hook: 'A', dropWeight: W_COMMON },
   // 3택 한 칸이 빚 카드 — 2중첩으로 받고 런 종료 시 자원으로 갚는다(런 안에서 닫힌다).
@@ -310,8 +328,12 @@ export const CATALYSTS: readonly CatalystDef[] = [
   // ── 특산: 베르단 (planet 1, shrink) id 33~35 ──────────────────────────────
   // 안전 원이 따라오지 않고 15초마다 점프한다 — 점프 직후 5초간 새 원 안의 적이 즉사한다.
   { id: 33, slug: 'berdan-collapse', kind: 'signature', planet: 1, tags: ['precision', 'harvest'], cap: { axis: 'catalystDrop', mult: 1.5 }, hook: 'B', dropWeight: W_SIGNATURE, modeHook: MODE_HOOK.berdanCollapse },
-  // 수축에 밀려난 자리에 젤리가 남는다 — 먹은 적은 느려지고 못 먹은 적은 빨라진다.
-  { id: 34, slug: 'berdan-royal-jelly', kind: 'signature', planet: 1, tags: ['harvest'], cap: { axis: 'resource', mult: 2.4 }, hook: 'A', dropWeight: W_SIGNATURE, modeHook: MODE_HOOK.berdanRoyalJelly },
+  // 수축에 밀려난 자리에 젤리가 남는다 — 먹은 적은 느려지고 전리품을 더 뱉으며 못 먹은 적은 빨라진다.
+  // ⚠️ 상한 축은 **드랍**이다(2026-08-08 사용자 판정). 종전 선언 `자원 ×2.4` 는 유계하지
+  // 못했다 — 잡몹 처치는 원래 자원을 0 주고 `state.resources` 는 보급 습격만 올려서 *"자원을
+  // 세 배"* 에 곱할 기준이 sim 에 없었고, 그래서 처치당 **절대량** 적립이 되어 처치 수에
+  // 선형으로 늘었다. 드랍축은 `bonusLootSeeds` 의 배율 자리가 기준이라 유계가 자연스럽다.
+  { id: 34, slug: 'berdan-royal-jelly', kind: 'signature', planet: 1, tags: ['harvest'], cap: { axis: 'drop', mult: 2.4 }, hook: 'A', dropWeight: W_SIGNATURE, modeHook: MODE_HOOK.berdanRoyalJelly },
   // 보스가 피해를 입으면 그만큼 일벌을 토한다 — 일벌을 죽이면 보스가 그만큼 약해진다.
   { id: 35, slug: 'berdan-hive-queen', kind: 'signature', planet: 1, tags: ['density', 'harvest'], cap: { axis: 'drop', mult: 2.2 }, hook: 'A', dropWeight: W_SIGNATURE_BOSS, modeHook: MODE_HOOK.berdanHiveQueen },
 
@@ -407,11 +429,16 @@ export function hasCatalyst(ids: readonly number[], id: number): boolean {
 }
 
 /**
- * 이 행성 모드에서 그 촉매가 **구조적으로 무효**인가(픽커 회색 경고).
+ * 이 **행성**에서 그 촉매가 구조적으로 무효인가(픽커 회색 경고).
+ *
+ * @param planet 행성 인덱스(`config.planet` = 0..5). **모드 인덱스가 아니다** —
+ *   `voidOnPlanets` doc 의 축 경고 참조. 공명 쪽 짝은
+ *   `catalystResonance.ts` 의 `resonanceVoidOnPlanet` 이고 **같은 인자를 받는다**.
+ *
  * ⚠️ §축소 작동 규율 — 무효는 경고일 뿐이고 런 안에서는 축소된 형태로라도 작동해야 한다.
  */
-export function catalystVoidOnMode(def: CatalystDef, mode: number): boolean {
-  return def.voidOnModes?.includes(mode) ?? false;
+export function catalystVoidOnPlanet(def: CatalystDef, planet: number): boolean {
+  return def.voidOnPlanets?.includes(planet) ?? false;
 }
 
 // ---------------------------------------------------------------------------

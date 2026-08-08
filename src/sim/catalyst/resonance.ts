@@ -55,9 +55,10 @@ import {
 import { CATALYST_LOOT_NEUTRAL, CATALYST_SEED_MARK, CATALYST_TREE_MARK } from './shared.js';
 import type { CatalystLootRoll, VolleyParams } from './shared.js';
 import { CATALYST_FX, notifyCatalystFx, creditCatalyst, missCatalyst } from './fx.js';
-import { resolveResonance } from '../../data/catalystResonance.js';
+import { resolveResonance, resonanceVoidOnPlanet } from '../../data/catalystResonance.js';
 import type { ResonanceDef } from '../../data/catalystResonance.js';
 import { catalystById } from '../../data/catalysts.js';
+import { SEALED_RARITY_CODE } from '../../items/types.js';
 import { SEGMENTS } from '../../../data/waves.js';
 
 /** 점화 약 — slug `ember`. */
@@ -255,8 +256,12 @@ const ADVANCE_SALT = 0xadd0_1c3e;
  * 봉인 등급의 **예약값**. `RARITY_BY_CODE` 는 0..3 뿐이라 이 값은 어느 등급도 아니다
  * (`items/types.ts` §"NEVER renumber" 구간 밖). 신규 칸 0 — `replay.ts` 가 `hashU32(rarity)`
  * 로 접으므로 예약값도 결정론적이다.
+ *
+ * ⚠️ **값의 정본은 `items/types.ts` 의 `SEALED_RARITY_CODE`** 다 — 이 규칙의 마지막 조항
+ * (*"지면 그것만 사라진다"*)을 집행하는 것은 정산(`save/settlement.ts`)인데, 그쪽은 sim 을
+ * import 할 수 없어 코드 표를 소유한 리프가 유일한 공통 조상이다. 여기 이름은 그 별칭이다.
  */
-export const SEALED_RARITY = 9;
+export const SEALED_RARITY = SEALED_RARITY_CODE;
 /** 보스를 처치했을 때 봉인이 열리는 등급(최고). */
 const SEALED_OPEN_RARITY = RARITY_MAX;
 
@@ -278,15 +283,6 @@ const SUBSIDE_DROP_PER_STEP = 0.1;
 const SUBSIDE_FRUIT_SALT = 0x5eed_c011;
 /** `catalyst/chain.ts` 의 `FRUIT_RARITY_CODE` 와 같은 값 — 열매는 무등급이다. */
 const SUBSIDE_FRUIT_RARITY = 0;
-
-/** 베르단(planet 1) — 안전 원과 **이중 수축**이라 함몰이 발동하지 않는다. */
-const PLANET_BERDAN = 1;
-/**
- * 니플헤임(planet 2) — 마지막 일반 세그먼트가 대피소 **전량 확보**를 요구하는데(`chase.ts`)
- * 반경이 줄면 바깥 대피소에 물리적으로 못 닿아 런이 승리도 패배도 아닌 상태로 멈춘다
- * (헌장 §페널티 4 진행 교착). 베르단 선례를 그대로 확장한 **사용자 판정(2026-08-08)** 이다.
- */
-const PLANET_NIFLHEIM = 2;
 
 /**
  * 중반 격전 세그먼트의 인덱스 — `SEGMENTS` 에서 **도출**한다(리터럴 3 을 코드에 적지 않는다).
@@ -668,11 +664,18 @@ function abrasionTick(state: WorldState, player: Entity): void {
  * 수축이고, 니플헤임은 마지막 일반 세그먼트가 대피소 전량 확보를 요구해 반경이 줄면 바깥
  * 대피소에 물리적으로 못 닿는다. **여기 한 곳이 유일한 게이트다**(반경 계산·지형 붕괴·드랍
  * 밀도 셋이 전부 이 술어를 통과해야 갈리지 않는다).
+ *
+ * ## ⚠️ 제외 행성 **목록은 여기 없다** — `ResonanceDef.voidOnPlanets` 가 정본이다
+ * 종전에는 이 파일의 지역 상수 둘(`PLANET_BERDAN`·`PLANET_NIFLHEIM`)이 답을 갖고 있었고,
+ * 픽커는 그 목록을 볼 수단이 없어 «함몰은 이 행성에서 안 뜬다»를 **고지하지 못했다**
+ * (헌장 §축소 작동 규율이 요구하는 회색 경고). 이제 데이터 한 칸이 픽커와 sim 양쪽의 답이라
+ * 두 화면이 갈릴 수 없다. 축은 **행성 인덱스**(`config.planet`)로 통일했다 — 카드 쪽
+ * `voidOnPlanets` 와 같은 축이다.
  */
 export function subsidenceActive(state: WorldState): boolean {
-  if (!isReso(state, RESO_SUBSIDENCE)) return false;
-  const planet = state.config.planet ?? 0;
-  return planet !== PLANET_BERDAN && planet !== PLANET_NIFLHEIM;
+  const r = activeResonance(state);
+  if (r === null || r.slug !== RESO_SUBSIDENCE) return false;
+  return !resonanceVoidOnPlanet(r, state.config.planet ?? 0);
 }
 
 /**

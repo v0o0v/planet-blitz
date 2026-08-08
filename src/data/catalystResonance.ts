@@ -59,7 +59,38 @@ export interface ResonanceDef {
   readonly cap: { readonly axis: CatalystCapAxis; readonly mult: number };
   /** 훅 예산 등급 — **공명도 예산에 든다**(예산 밖에 두면 회계가 아니다). */
   readonly hook: CatalystHookGrade;
+  /**
+   * **이 행성에서 구조적으로 무효**인 경우의 행성 인덱스 목록 — `CatalystDef.voidOnPlanets` 의
+   * 공명 짝이고 **완전히 같은 축**(`config.planet` = 0..5)이다.
+   *
+   * ## 왜 필요한가 (2026-08-08)
+   * 헌장 §축소 작동 규율이 *"무효화는 픽커에서 사전 경고로만 존재한다(회색 = 이 행성에서
+   * 무효)"* 를 의무로 세웠는데, 이 칸이 없던 동안 **공명은 그 고지를 낼 수단이 아예 없었다**.
+   * 그 사이 사용자 판정(2026-08-08)이 «침식 강 '함몰' × 니플헤임 진행 교착 → 니플헤임
+   * 미발동»을 확정했고, 고지가 없으면 플레이어가 침식 3장을 바치고 **아무 일도 안 일어나는
+   * 것을 본다**.
+   *
+   * ## ⚠️ 이 칸이 sim 게이트의 **유일 정본**이다
+   * `sim/catalyst/resonance.ts` 의 `subsidenceActive` 가 종전에는 자기 파일의 지역 상수로
+   * 판정했다 — 픽커가 낼 답과 sim 이 낼 답이 **두 곳에 따로** 적혀 있었다는 뜻이고, 이 저장소가
+   * 이미 겪은 *"같은 술어를 여러 곳에 적어 화면과 규칙이 갈린"* 형태다. 이제 그 함수가
+   * {@link resonanceVoidOnPlanet} 을 부른다.
+   *
+   * ⚠️ 서버 미러(`catalyst_resonances`)에는 **없는 칸**이다 — 픽커 경고와 sim 게이트는 클라
+   * 축이고 서버가 계산하는 것은 상한·영수증뿐이라 읽을 소비자가 없다. 미러 계약 테스트도 열
+   * 단위 대조라 여기 칸을 늘려도 갈리지 않는다.
+   */
+  readonly voidOnPlanets?: readonly number[];
 }
+
+/** 베르단(1) — 안전 원과 **이중 수축**이라 함몰이 겹치면 진행이 막힌다. */
+const PLANET_BERDAN = 1;
+/**
+ * 니플헤임(2) — 마지막 일반 세그먼트가 대피소 **전량 확보**를 요구하는데(`chase.ts`) 반경이
+ * 줄면 바깥 대피소에 물리적으로 못 닿아 런이 승리도 패배도 아닌 상태로 멈춘다
+ * (헌장 §페널티 4 진행 교착). 베르단 선례를 확장한 **사용자 판정(2026-08-08)** 이다.
+ */
+const PLANET_NIFLHEIM = 2;
 
 /**
  * 공명 12종. 태그 6 × 2단.
@@ -104,12 +135,24 @@ export const RESONANCES: readonly ResonanceDef[] = [
   // 약 · 마모: 30초마다 이동 속도가 오르고 피격 반경이 커진다(웨이브 전환 시 복구).
   { tag: 'erosion', tier: 'weak', slug: 'abrasion', cap: { axis: 'drop', mult: 1.2 }, hook: 'A' },
   // 강 · 함몰: 30초마다 가장자리부터 무너져 반경이 줄고 드랍 밀도가 오른다. 격전 통과 시 절반 복구.
-  { tag: 'erosion', tier: 'strong', slug: 'subsidence', cap: { axis: 'drop', mult: 2.0 }, hook: 'A' },
+  { tag: 'erosion', tier: 'strong', slug: 'subsidence', cap: { axis: 'drop', mult: 2.0 }, hook: 'A', voidOnPlanets: [PLANET_BERDAN, PLANET_NIFLHEIM] },
 ] as const;
 
 const BY_KEY: ReadonlyMap<string, ResonanceDef> = new Map(
   RESONANCES.map((r) => [`${r.tag}:${r.tier}`, r]),
 );
+
+/**
+ * 이 **행성**에서 그 공명이 구조적으로 무효인가 — `catalystVoidOnPlanet` 의 공명 짝이고
+ * **같은 인자·같은 축**(행성 인덱스 `config.planet`)을 받는다.
+ *
+ * 소비자는 둘뿐이고 **둘 다 이 함수를 통해야 한다**: 픽커의 회색 경고 줄과 sim 의
+ * `subsidenceActive`. 어느 한쪽이 따로 판정하면 «픽커는 뜬다는데 sim 은 안 돌린다»(또는 반대)가
+ * 조용히 생긴다.
+ */
+export function resonanceVoidOnPlanet(def: ResonanceDef, planet: number): boolean {
+  return def.voidOnPlanets?.includes(planet) ?? false;
+}
 
 /** 태그·단으로 공명을 얻는다. 12종이 전부 있으므로 미지 조합은 undefined 가 아니라 버그다. */
 export function resonanceOf(tag: CatalystTag, tier: ResonanceTier): ResonanceDef | undefined {

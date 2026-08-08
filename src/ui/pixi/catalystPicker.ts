@@ -50,7 +50,7 @@ import {
   catalystById,
   catalystIconFallbackKey,
   catalystIconKey,
-  catalystVoidOnMode,
+  catalystVoidOnPlanet,
   normalizeCatalystArray,
   SIGNATURE_CAP,
   SLOT_CAP,
@@ -60,6 +60,7 @@ import {
   RESONANCE_STRONG_COUNT,
   RESONANCE_WEAK_COUNT,
   resolveResonance,
+  resonanceVoidOnPlanet,
   tagCounts,
   type ResonanceDef,
 } from '../../data/catalystResonance.js';
@@ -198,7 +199,7 @@ const BADGE = 0x8affc0;
 const RESONANCE_COLOR = 0x8affc0;
 const WARN_COLOR = 0xb9b3a6;
 /**
- * 경고 2단의 색(헌장 §축소 작동 규율) — **회색 = 이 행성에서 무효**(구조적, `voidOnModes`) /
+ * 경고 2단의 색(헌장 §축소 작동 규율) — **회색 = 이 행성에서 무효**(구조적, `voidOnPlanets`) /
  * **노랑 = 촉매 간 충돌**(축소 작동, 런타임 판정).
  *
  * ⚠️ 둘 다 **경고일 뿐**이다. sim 이 그 카드를 끄는 근거가 아니고, 런 안에서는 축소된 형태로라도
@@ -924,8 +925,15 @@ export class CatalystPicker {
   /**
    * 경고 2단(헌장 §축소 작동 규율).
    *
-   *  - **회색** = 이 행성에서 구조적으로 무효(`def.voidOnModes`, 데이터가 미리 안다).
+   *  - **회색** = 이 행성에서 구조적으로 무효(데이터가 미리 안다). **카드와 공명 둘 다** 낸다 —
+   *    카드는 `def.voidOnPlanets`, 공명은 `ResonanceDef.voidOnPlanets` 다.
    *  - **노랑** = 촉매 간 충돌로 축소 작동(`catalystConflicts.ts` 가 판정 정본).
+   *
+   * ## ⚠️ 공명 회색 줄이 없으면 «3장을 바치고 아무 일도 안 일어난다»가 된다
+   * 공명은 카드 셋을 같은 태그로 맞춰야 뜨는 **가장 비싼 선택**인데, 2026-08-08 이전에는
+   * `ResonanceDef` 에 무효 칸이 아예 없어 «침식 강 함몰은 베르단·니플헤임에서 안 뜬다»를
+   * 픽커가 낼 수단이 **존재하지 않았다**. sim 게이트(`subsidenceActive`)와 이 줄이 지금은
+   * 같은 데이터 한 칸을 읽으므로 화면과 규칙이 갈릴 수 없다.
    *
    * ⚠️ **둘은 섞이지 않는다.** 회색은 카드↔행성이고 노랑은 카드↔카드(또는 카드↔공명)다 —
    * 한 카드가 이 행성에서 무효라는 것과 다른 카드가 그것을 깎는다는 것은 다른 사실이라 두 줄로
@@ -945,13 +953,23 @@ export class CatalystPicker {
     for (const id of ids) {
       const def = catalystById(id);
       if (def === undefined) continue;
-      if (catalystVoidOnMode(def, planet)) {
+      if (catalystVoidOnPlanet(def, planet)) {
         rows.push({
           label: stripEmoji(catalystName(def)),
           value: t('catalyst.warn.voidOnPlanet'),
           color: WARN_VOID_COLOR,
         });
       }
+    }
+
+    // 회색(공명) — 카드 줄 **뒤**다. 공명은 카드 셋의 결과라 원인(카드)을 먼저 읽고 결과를
+    // 읽는 순서가 맞고, 순서를 뒤집으면 "왜 무효인가"의 근거가 아래에 오게 된다.
+    if (reso !== null && resonanceVoidOnPlanet(reso, planet)) {
+      rows.push({
+        label: stripEmoji(resonanceName(reso)),
+        value: t('catalyst.warn.voidOnPlanet'),
+        color: WARN_VOID_COLOR,
+      });
     }
 
     // 노랑 — 지금 고른 조합(부분 선택 포함)에서 **실제로 발동하는** 충돌만.
@@ -1052,7 +1070,7 @@ export class CatalystPicker {
   /**
    * 셀 상태 한 줄 — 우선순위는 **회색 무효 경고 > 주입됨 > 거부 사유**.
    *
-   * ⚠️ 무효 경고(`voidOnModes`)가 거부 사유보다 위인 이유: 이 행성에서 구조적으로 무효인 카드도
+   * ⚠️ 무효 경고(`voidOnPlanets`)가 거부 사유보다 위인 이유: 이 행성에서 구조적으로 무효인 카드도
    * **넣을 수는 있다**(헌장 §축소 작동 규율 — 무효화는 경고로만 존재하고 런 안에서는 축소된
    * 형태로라도 작동한다). 그래서 "왜 회색인가"가 "왜 못 넣는가"보다 먼저 읽혀야 한다.
    *
@@ -1060,7 +1078,7 @@ export class CatalystPicker {
    */
   private cellStatus(def: CatalystDef): { text: string; color: number } | null {
     const planet = this.opts?.planet;
-    if (planet !== undefined && catalystVoidOnMode(def, planet)) {
+    if (planet !== undefined && catalystVoidOnPlanet(def, planet)) {
       return { text: `${t('catalyst.warn.badgeVoid')} · ${t('catalyst.warn.voidOnPlanet')}`, color: WARN_VOID_COLOR };
     }
     if (this.injectedCountOf(def.id) > 0) return { text: t('catalyst.picker.injected'), color: BADGE };

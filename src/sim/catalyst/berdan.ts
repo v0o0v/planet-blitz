@@ -128,11 +128,11 @@ function collapseKill(state: WorldState): void {
 //
 // ## 왜 어그로 변경이 필요 없는가
 // **플레이어가 먹는 것이 아니라 적에게 먹이는 구조**다. 젤리는 수축 흔적에 깔리고 적이 그 위를
-// 지나가면 굼떠지며(그리고 그 자리에서 죽으면 자원을 뱉고) 못 지나간 적은 빨라진다. 플레이어의
-// 조작은 "원이 넓은 초반에 띠를 길게 깔아 두는 운용"이지 젤리를 주우러 가는 것이 아니다.
+// 지나가면 굼떠지며(그리고 그 자리에서 죽으면 전리품을 더 뱉고) 못 지나간 적은 빨라진다.
+// 플레이어의 조작은 "원이 넓은 초반에 띠를 길게 깔아 두는 운용"이지 젤리를 주우러 가는 것이 아니다.
 //
 // ## 표식이 필요 없다 — **위치가 곧 상태다**
-// "젤리를 먹은 적"을 `aux0` 에 적지 않는다. 감속도 자원 3배도 **판정 시점에 젤리 위인가** 하나로
+// "젤리를 먹은 적"을 `aux0` 에 적지 않는다. 감속도 전리품 배율도 **판정 시점에 젤리 위인가** 하나로
 // 결정되므로 적별 장부가 원리적으로 불필요하다(인계 §2 가 지목한 "장부가 필요하면 §B 로
 // 뒤집힌다"를 이 형태가 피한다).
 
@@ -151,8 +151,18 @@ const JELLY_SLOW_MULT = 0.55;
 /** 못 먹은 적의 이동 배율(가속) — *"먹지 못한 적은 그만큼 빨라진다"*. */
 const JELLY_HASTE_MULT = 1.25;
 
-/** 젤리 위에서 죽은 적이 뱉는 자원(milli). 1000 = 자원 1(보급 습격 1회분과 같은 눈금). */
-const JELLY_RESOURCE_MILLI = 3000;
+/**
+ * 젤리 위에서 죽은 적의 **전리품 개수 배율**. 선언 상한(`data/catalysts.ts` `id 34` = 드랍
+ * ×2.4)과 **같은 값이다** — 배율이 상한을 넘을 수 없게 하는 가장 값싼 형태다.
+ *
+ * ## ⚠️ 왜 자원이 아니라 드랍인가 (2026-08-08 사용자 판정)
+ * 종전 구현은 처치마다 **자원 3 을 절대량으로** 적립했다. 잡몹 처치는 원래 자원이 0 이고
+ * `state.resources` 는 보급 습격만 올려서 *"자원을 세 배"* 에 **곱할 기준이 sim 에 없었기**
+ * 때문이다. 그 형태는 처치 수에 선형이라 선언 상한 `자원 ×2.4` 가 유계하지 못했다.
+ * 드랍축은 이미 기준이 있다 — `bonusLootSeeds(seed, mult)` 의 `mult` 자리. 그래서 축을 옮기면
+ * 상한이 **구조적으로** 선다(격추 한 건이 만드는 배율의 상한이 곧 이 상수다).
+ */
+export const JELLY_LOOT_MULT = 2.4;
 
 /** 젤리 각도 파생 전용 소금. */
 const JELLY_SALT = 0x27d4eb2f;
@@ -452,28 +462,17 @@ export function berdanOnEnemyDamaged(
 }
 
 /**
- * {@link import('../catalystHooks.js').onEnemyDeathCatalyst} 의 berdan 몫 —
- * **`id 34` 의 자원 회수**(젤리 위에서 죽은 적은 자원을 뱉는다).
+ * {@link import('../catalystHooks.js').onEnemyDeathCatalyst} 의 berdan 몫. **미배선**.
  *
- * 못 먹은 적은 `missCatalyst` 로 **놓친 몫**이 화면에 남는다 — 헌장 §귀속 규율 2.
+ * ⚠️ 종전에는 여기가 `id 34` 의 자원 회수 자리였다. 축이 드랍으로 옮겨가면서
+ * ({@link JELLY_LOOT_MULT}) 그 몫이 {@link berdanOnLootRoll} 로 갔다 — 드랍 배율이 확정되는
+ * 앵커가 거기 하나뿐이라, 여기 남겨 두면 배율을 얹을 자리가 없다.
  */
 export function berdanOnEnemyDeath(state: WorldState, x: number, y: number, elite: boolean): void {
+  void state;
+  void x;
+  void y;
   void elite;
-  if (!carries(state, CARD_BERDAN_ROYAL_JELLY)) return;
-  if (!onRoyalJelly(state, x, y)) {
-    if (anyJelly(state)) missCatalyst(state, CARD_BERDAN_ROYAL_JELLY, JELLY_RESOURCE_MILLI / 1000);
-    return;
-  }
-  // 자원은 **milli 캐리**로 적립한다 — 보급 습격 경로(`world.ts:5127`)와 같은 눈금이라
-  // 소수분이 조용히 유실되지 않는다. 정수 산술뿐.
-  state.catalystResourceMilli += JELLY_RESOURCE_MILLI;
-  const whole = Math.floor(state.catalystResourceMilli / 1000);
-  if (whole > 0) {
-    state.resources += whole;
-    state.catalystResourceMilli -= whole * 1000;
-    creditCatalyst(state, CARD_BERDAN_ROYAL_JELLY, whole);
-  }
-  notifyCatalystFx(state, CARD_BERDAN_ROYAL_JELLY, CATALYST_FX.credit, x, y);
 }
 
 /** {@link import('../catalystHooks.js').onLevelUpCatalyst} 의 berdan 몫. **미배선**. */
@@ -528,10 +527,16 @@ export function berdanOnBossDeath(state: WorldState, x: number, y: number): bool
 }
 
 /**
- * {@link import('../catalystHooks.js').onLootRollCatalyst} 의 berdan 몫 — `id 35` 의 경제 축.
- * *"일벌은 전리품을 뱉는다"* — 일벌이 많이 떠 있을수록 같은 격추가 더 뱉는다.
+ * {@link import('../catalystHooks.js').onLootRollCatalyst} 의 berdan 몫 — **경제 축 둘**.
+ *
+ * - `id 34` — 젤리 위에서 죽은 적은 ×{@link JELLY_LOOT_MULT}. 못 먹은 적은 배율이 1 이고
+ *   `missCatalyst` 로 **놓친 몫**이 화면에 남는다(헌장 §귀속 규율 2). 살아 있는 젤리가 하나도
+ *   없으면 놓친 것도 아니므로 장부에 적지 않는다.
+ * - `id 35` — *"일벌은 전리품을 뱉는다"*. 일벌이 많이 떠 있을수록 같은 격추가 더 뱉는다.
  *
  * ⚠️ **재롤이 아니다** — 이미 뽑힌 롤에 곱하는 배율만 돌려준다(헌장 공통-B(c)).
+ * ⚠️ 이 앵커는 **엘리트 드랍·보스 확정 드랍 두 지점**에만 걸린다(그 훅 주석이 정본). 즉
+ * `id 34` 의 이득은 "젤리 위에서 죽은 **엘리트**"에 붙는다 — `id 19 motherlode` 와 같은 좁힘이다.
  */
 export function berdanOnLootRoll(
   state: WorldState,
@@ -539,14 +544,27 @@ export function berdanOnLootRoll(
   y: number,
   elite: boolean,
 ): CatalystLootRoll {
-  void x;
-  void y;
   void elite;
-  if (!carries(state, CARD_BERDAN_HIVE_QUEEN)) return CATALYST_LOOT_NEUTRAL;
-  const n = liveHiveWorkers(state);
-  if (n === 0) return CATALYST_LOOT_NEUTRAL;
-  let count = 1 + n * HIVE_LOOT_STEP;
-  if (count > HIVE_LOOT_CAP) count = HIVE_LOOT_CAP;
+  let count = 1;
+  if (carries(state, CARD_BERDAN_ROYAL_JELLY)) {
+    if (onRoyalJelly(state, x, y)) {
+      count *= JELLY_LOOT_MULT;
+      creditCatalyst(state, CARD_BERDAN_ROYAL_JELLY, JELLY_LOOT_MULT - 1);
+      notifyCatalystFx(state, CARD_BERDAN_ROYAL_JELLY, CATALYST_FX.credit, x, y);
+    } else if (anyJelly(state)) {
+      missCatalyst(state, CARD_BERDAN_ROYAL_JELLY, JELLY_LOOT_MULT - 1);
+      notifyCatalystFx(state, CARD_BERDAN_ROYAL_JELLY, CATALYST_FX.miss, x, y);
+    }
+  }
+  if (carries(state, CARD_BERDAN_HIVE_QUEEN)) {
+    const n = liveHiveWorkers(state);
+    if (n > 0) {
+      let hive = 1 + n * HIVE_LOOT_STEP;
+      if (hive > HIVE_LOOT_CAP) hive = HIVE_LOOT_CAP;
+      count *= hive;
+    }
+  }
+  if (count === 1) return CATALYST_LOOT_NEUTRAL;
   return { rarity: 1, count };
 }
 

@@ -29,7 +29,7 @@ import {
 import { CATALYSTS } from '../src/data/catalysts.js';
 import { settleRun } from '../src/save/settlement.js';
 import { defaultProfile } from '../src/save/profile.js';
-import { RARITY_CODE } from '../src/items/types.js';
+import { RARITY_CODE, SEALED_RARITY_CODE } from '../src/items/types.js';
 import { ResultOverlayScreen } from '../src/ui/pixi/resultOverlay.js';
 import type { ResultState } from '../src/ui/resultOverlay.js';
 
@@ -356,5 +356,122 @@ describe('③ 정산 화면이 상환분과 압류분을 두 줄로 가른다', 
     expect(all).not.toContain('부채 상환');
     expect(all).not.toContain('전리품 압류');
     overlay.hide();
+  });
+});
+
+// ===========================================================================
+// ③ 도박 강 공명 '청산' — 패배 시 **봉인 전리품이 사라진다** (2026-08-08)
+// ===========================================================================
+//
+// 규칙문: *"첫 전리품이 봉인된다. 보스를 처치하면 최고 등급으로 열리고, **지면 그것만
+// 사라진다**."* sim 이 봉인·개봉까지 하고, 마지막 조항(소멸)은 정산 몫이다 — sim 은 "졌다"를
+// 런 안에서 관측하지 않는다. 이 절이 없던 동안 봉인 레코드는 최저 등급으로 접힐 뿐 사라지지
+// 않았다.
+
+describe("③ 도박 강 '청산' — 패배 소멸", () => {
+  /** 첫 칸이 봉인된 전리품 5점. */
+  const SEALED5 = [
+    { seed: 0x2001, rarity: SEALED_RARITY_CODE, planet: 1, stage: 3, elite: 1 } as const,
+    ...LOOT5.slice(1),
+  ];
+
+  it('패배: 봉인 레코드가 **드랍 목록에서 사라진다**(최저 등급으로 접히는 게 아니다)', () => {
+    const p = defaultProfile();
+    const out = settleRun(p, { ...RUN, victory: false, loot: SEALED5, resources: 0 });
+    expect(out.sealedVoided).toBe(1);
+    expect(out.itemsGained.length).toBe(4); // 5 − 봉인 1
+    expect(p.inventory.length).toBe(4);
+    // ⚠️ 개수만 보면 옛 상태(`RARITY_BY_CODE[9] ?? 'normal'` 로 **접혀서** normal 한 점이 남는)와
+    //    5 vs 4 로 갈리긴 하지만, 더 강하게 못 박는다: **봉인분을 애초에 뺀 목록**으로 돈 런과
+    //    확정된 아이템이 한 점씩 같아야 한다(= 봉인분이 흔적 없이 빠졌다).
+    const control = defaultProfile();
+    const same = settleRun(control, { ...RUN, victory: false, loot: [...LOOT5.slice(1)], resources: 0 });
+    expect(out.itemsGained).toEqual(same.itemsGained);
+  });
+
+  it('승리: 사라지지 않는다 — 개봉은 sim 이 이미 했고 정산은 그대로 확정한다', () => {
+    const p = defaultProfile();
+    // 승리 런은 sim 이 봉인을 최고 등급(3)으로 열어 둔 상태로 넘어온다.
+    const opened = [{ ...SEALED5[0]!, rarity: RARITY_CODE.unique }, ...LOOT5.slice(1)];
+    const out = settleRun(p, { ...RUN, victory: true, loot: opened, resources: 0 });
+    expect(out.sealedVoided).toBeUndefined();
+    expect(out.itemsGained.length).toBe(5);
+    expect(out.itemsGained[0]?.rarity).toBe('unique');
+  });
+
+  it('⚠️ 봉인이 안 걸린 런은 형상이 **한 칸도 안 바뀐다**(패배여도)', () => {
+    const p = defaultProfile();
+    const out = settleRun(p, { ...RUN, victory: false, loot: [...LOOT5], resources: 0 });
+    expect(out.sealedVoided).toBeUndefined();
+    expect(out.itemsGained.length).toBe(5);
+  });
+
+  it('⚠️ 소멸이 압류(`id 18`)보다 **앞**이다 — 없는 전리품으로 빚을 갚지 않는다', () => {
+    const p = defaultProfile();
+    const out = settleRun(p, {
+      ...RUN,
+      victory: false,
+      loot: SEALED5,
+      resources: 0,
+      catalystSettlement: slots(80), // 미상환 80 → 압류 2점
+    });
+    expect(out.sealedVoided).toBe(1);
+    expect(out.catalystDebt?.seized).toBe(2);
+    // 5 − 봉인 1 − 압류 2 = 2. 순서가 뒤였다면 압류가 이미 사라질 레코드를 먹어 3점이 남는다.
+    expect(out.itemsGained.length).toBe(2);
+  });
+
+  it('⚠️ 소멸은 **촉매 드랍 축을 안 깎는다** — 규칙문의 「그것만」', () => {
+    // 정산은 지역 사본만 거른다. 촉매 드랍은 호출부가 `w.loot` 원본을 넘기므로 영향이 없다.
+    const src = new TextDecoder().decode(
+      readFileSync(fileURLToPath(new URL('../src/save/settlement.ts', import.meta.url))),
+    );
+    // 설계도 파생도 원본을 계속 읽는다(`id 18` 압류와 같은 계층).
+    expect(src).toContain('blueprintDropsFromLoot(result.loot,');
+    expect(src).not.toContain('blueprintDropsFromLoot(settledLoot');
+  });
+});
+
+// ===========================================================================
+// ④ 서버 권위 드랍 모드의 클라측 감산 (2026-08-08 검토 결론을 회귀로 못 박는다)
+// ===========================================================================
+//
+// 이 모드에서 `settleRun` 은 전리품을 굴리지 않으므로(`itemsGained` 가 빈 배열) 압류·소멸이
+// 일어나는 유일한 자리가 **클라가 주장하는 개수**다. 서버는 `least(주장, 개연성, 캡)` 으로
+// 줄이기만 하므로 낮춰 보내는 것은 항상 안전하다 — 근거 전문은 `main.ts` 의 호출부 주석.
+
+describe('④ 서버 권위 드랍 — 압류·소멸이 주장 개수에서 빠진다', () => {
+  const MAIN = new TextDecoder().decode(
+    readFileSync(fileURLToPath(new URL('../src/main.ts', import.meta.url))),
+  );
+
+  it('배송 개수에서 압류와 소멸을 **둘 다** 뺀다', () => {
+    expect(MAIN).toContain('Math.max(0, w.loot.length - seized - voided)');
+  });
+
+  it('두 값이 정산 결과에서 나온다(호출부가 다시 계산하지 않는다)', () => {
+    // 다시 계산하면 화면에 적힌 수와 실지급이 갈린다 — 이 리포의 지배적 실패 모드.
+    expect(MAIN).toContain('lastOutcome?.catalystDebt?.seized ?? 0');
+    expect(MAIN).toContain('lastOutcome?.sealedVoided ?? 0');
+  });
+
+  it('서버 권위 모드에서도 정산이 두 값을 **정확히** 낸다(빈 itemsGained 와 무관하게)', () => {
+    const p = defaultProfile();
+    const out = settleRun(
+      p,
+      {
+        ...RUN,
+        victory: false,
+        loot: [{ seed: 0x2001, rarity: SEALED_RARITY_CODE, planet: 1, stage: 3, elite: 1 } as const, ...LOOT5.slice(1)],
+        resources: 0,
+        catalystSettlement: slots(80),
+      },
+      { serverDrops: true },
+    );
+    expect(out.itemsGained).toEqual([]); // 서버가 굴린다
+    expect(out.sealedVoided).toBe(1);
+    expect(out.catalystDebt?.seized).toBe(2);
+    // 주장 개수 = 5 − 1 − 2 = 2.
+    expect(5 - (out.catalystDebt?.seized ?? 0) - (out.sealedVoided ?? 0)).toBe(2);
   });
 });

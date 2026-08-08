@@ -42,7 +42,7 @@ import {
   catalystIconKey,
   catalystIsPurchasable,
   catalystSalvageValue,
-  catalystVoidOnMode,
+  catalystVoidOnPlanet,
   hasCatalyst,
   isWithinSignatureCap,
   isWithinSlotCap,
@@ -230,13 +230,15 @@ describe('상한 — 하드 천장 · 축 5종 · 보상 축 쿼터', () => {
   it('보상 축 쿼터 — 축별 종수가 설계 정본 집계와 일치한다', () => {
     const counts = new Map<CatalystCapAxis, number>();
     for (const c of CATALYSTS) counts.set(c.cap.axis, (counts.get(c.cap.axis) ?? 0) + 1);
-    // ⚠️ `audit.md` §보상 축 분포는 드랍 14 · 자원 12 로 기록돼 있으나 구현 데이터는
-    //   드랍 15 · 자원 11 이다(`id 15 extraction` 이 자원축 → 드랍축으로 옮겨간 결과).
-    //   자원 쿼터(≤12)는 여전히 충족이고 드랍은 "12 안팎" 대비 초과폭이 audit 기록보다 1 크다.
-    //   상위에 보고된 차이이므로 값을 그대로 잠근다.
+    // ⚠️ 설계 정본 초판 집계는 드랍 14 · 자원 12 였다. 실제 데이터가 거기서 **두 번** 갈렸다:
+    //   ① `id 15 extraction` 이 자원 → 드랍(앞 레인) → 드랍 15 · 자원 11.
+    //   ② 2026-08-08 사용자 판정으로 `id 16 foundry` · `id 34 berdan-royal-jelly` 가 자원 →
+    //      드랍 → **드랍 17 · 자원 9**.
+    //   자원 쿼터(≤12)는 충족이지만 **드랍은 "12 안팎"을 5 초과**한다 — 이것은 판정의 알려진
+    //   귀결이고 상위에 보고된 사항이므로, 감추지 말고 값을 그대로 잠근다.
     expect(Object.fromEntries(counts)).toEqual({
-      drop: 15,
-      resource: 11,
+      drop: 17,
+      resource: 9,
       rarity: 10,
       xp: 8,
       catalystDrop: 4,
@@ -332,30 +334,30 @@ describe('SLOT_CAP / SIGNATURE_CAP — 중복 제거 후 판정', () => {
   });
 });
 
-describe('hasCatalyst / catalystVoidOnMode — 술어 단일 정본', () => {
+describe('hasCatalyst / catalystVoidOnPlanet — 술어 단일 정본', () => {
   it('hasCatalyst 는 소지 여부를 그대로 답한다', () => {
     expect(hasCatalyst([1, 5, 20], 5)).toBe(true);
     expect(hasCatalyst([1, 5, 20], 6)).toBe(false);
     expect(hasCatalyst([], 0)).toBe(false);
   });
 
-  it('catalystVoidOnMode: id 2(harvest)는 아르케(3)·크라스(5)에서 무효, 그 밖에서는 유효', () => {
+  it('catalystVoidOnPlanet: id 2(harvest)는 아르케(3)·크라스(5)에서 무효, 그 밖에서는 유효', () => {
     const harvest = catalystById(2)!;
-    expect(harvest.voidOnModes).toEqual([3, 5]);
-    expect(catalystVoidOnMode(harvest, 3)).toBe(true);
-    expect(catalystVoidOnMode(harvest, 5)).toBe(true);
-    expect(catalystVoidOnMode(harvest, 0)).toBe(false);
+    expect(harvest.voidOnPlanets).toEqual([3, 5]);
+    expect(catalystVoidOnPlanet(harvest, 3)).toBe(true);
+    expect(catalystVoidOnPlanet(harvest, 5)).toBe(true);
+    expect(catalystVoidOnPlanet(harvest, 0)).toBe(false);
   });
 
-  it('voidOnModes 가 없는 카드는 어느 모드에서도 무효가 아니다', () => {
+  it('voidOnPlanets 가 없는 카드는 어느 행성에서도 무효가 아니다', () => {
     const abundance = catalystById(0)!;
-    expect(abundance.voidOnModes).toBeUndefined();
-    for (let m = 0; m <= 5; m++) expect(catalystVoidOnMode(abundance, m), `mode ${m}`).toBe(false);
+    expect(abundance.voidOnPlanets).toBeUndefined();
+    for (let m = 0; m <= 5; m++) expect(catalystVoidOnPlanet(abundance, m), `planet ${m}`).toBe(false);
   });
 
-  it('voidOnModes 는 있다면 전부 유효 모드 인덱스(0..5)다', () => {
+  it('voidOnPlanets 는 있다면 전부 유효 행성 인덱스(0..5)다', () => {
     for (const c of CATALYSTS) {
-      for (const m of c.voidOnModes ?? []) {
+      for (const m of c.voidOnPlanets ?? []) {
         expect(m, c.slug).toBeGreaterThanOrEqual(0);
         expect(m, c.slug).toBeLessThanOrEqual(5);
       }
@@ -418,7 +420,10 @@ describe('axisCapMult — 1 + Σ(cap−1)×0.5, 축 격리', () => {
 
   it('SLOT_CAP 3장 조합의 전축 상한은 설계 사거리(×3.9) 안이다', () => {
     // 자원축 최악(설계 문서 §상한 합성): greed 2.6 + motherlode 2.4 + 남은 자원축 최대.
-    const worstResource = [17, 19, 34]; // 2.6 + 2.4 + 2.4(berdan-royal-jelly)
+    // ⚠️ 2026-08-08 사용자 판정으로 `16`·`34` 가 자원 → 드랍으로 옮겨갔다. 셋째 자리는
+    // `40 arke-ancient-core`(자원 2.4)로 바뀌었고 **최댓값 3.2 는 한 자리도 안 움직였다**
+    // (`pnpm cap:sweep` 실측 — 그래서 `catalyst_cap_resource_mult_max()` = 3.2 도 그대로다).
+    const worstResource = [17, 19, 40]; // 2.6 + 2.4 + 2.4(arke-ancient-core)
     expect(axisCapMult(worstResource, 'resource')).toBeCloseTo(1 + (1.6 + 1.4 + 1.4) * 0.5, 10);
     expect(allAxisCapMult(worstResource)).toBeLessThanOrEqual(3.9);
   });
@@ -548,7 +553,8 @@ describe('SQL 미러 — CATALYST_CAP_MIRROR / CATALYST_RESOURCE_MIRROR', () => 
       }
     }
     // 자원축이 하나도 없으면 위 루프가 통째로 else 만 돌아도 통과한다 — 긍정 짝.
-    expect(resourceRows).toBe(11);
+    // 11 → **9**: 2026-08-08 사용자 판정으로 `id 16`·`id 34` 가 드랍축으로 옮겨갔다.
+    expect(resourceRows).toBe(9);
   });
 
   it('RESOURCE_MIRROR 의 1 은 합성식의 중립원이라 총상한을 안 움직인다', () => {

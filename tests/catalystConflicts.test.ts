@@ -8,7 +8,7 @@
  *     (못 뜨는 경고는 그 자체가 죽은 데이터다)
  *  ④ 대표 조합이 실제로 경고를 낸다
  *  ⑤ **거짓 양성 방지** — 무충돌 조합은 아무 경고도 안 내고, 전수 스윕에서 경고가 소수다
- *  ⑥ **회색과 노랑이 섞이지 않는다** — 행성 무효(`voidOnModes`)는 노랑을 하나도 만들지 않는다
+ *  ⑥ **회색과 노랑이 섞이지 않는다** — 행성 무효(`voidOnPlanets`)는 노랑을 하나도 만들지 않는다
  *  ⑦ 축소의 결 전부가 EN·KO 문구를 갖는다
  *
  * ⚠️ 조합은 전부 **실제 카드 id** 로 쓴다. 태그를 흉내 낸 가짜 입력으로 실증하면 카탈로그가
@@ -26,7 +26,7 @@ import {
   CATALYSTS,
   SLOT_CAP,
   catalystById,
-  catalystVoidOnMode,
+  catalystVoidOnPlanet,
   isWithinSignatureCap,
 } from '../src/data/catalysts.js';
 import { RESONANCES, resolveResonance } from '../src/data/catalystResonance.js';
@@ -255,8 +255,8 @@ describe('거짓 양성 방지', () => {
 describe('회색과 노랑의 분리', () => {
   it('행성 무효는 노랑을 하나도 만들지 않는다', () => {
     for (const def of CATALYSTS) {
-      for (let mode = 0; mode < 6; mode++) {
-        if (!catalystVoidOnMode(def, mode)) continue;
+      for (let planet = 0; planet < 6; planet++) {
+        if (!catalystVoidOnPlanet(def, planet)) continue;
         // 무효 카드 한 장만 골라도 충돌은 0 이다 — 회색은 카드↔행성, 노랑은 카드↔카드다.
         expect(hitsOf([def.id])).toEqual([]);
       }

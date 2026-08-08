@@ -100,10 +100,21 @@ describe('catalystCapSweep — 전수 스윕 최악 조합 재현 (리터럴 잠
     expect(axisTotal(combo, 'drop')).toBeCloseTo(3.0, 10);
   });
 
-  it('resource 축 최댓값 x3.2000 (id 17+19+34, harvest:weak 공명 — resource 축엔 기여 없음)', () => {
-    const combo = buildCombo([17, 19, 34]);
+  // ⚠️ 2026-08-08 사용자 판정으로 `id 16 foundry`·`id 34 berdan-royal-jelly` 가 자원 → 드랍으로
+  //    옮겨갔다. 자원축 최악의 셋째 자리가 `34` → `40 arke-ancient-core` 로 바뀌었을 뿐
+  //    **최댓값 3.2000 은 한 자리도 안 움직였다**(둘 다 자원 2.4). 드랍축 최악도 셋째 자리가
+  //    `42` → `34` 로 바뀌지만 값이 같아 위 리터럴이 그대로 선다(`42` 조합도 여전히 3.0).
+  it('resource 축 최댓값 x3.2000 (id 17+19+40, harvest:weak 공명 — resource 축엔 기여 없음)', () => {
+    const combo = buildCombo([17, 19, 40]);
     expect(isValidCombo(combo.defs)).toBe(true);
     expect(axisTotal(combo, 'resource')).toBeCloseTo(3.2, 10);
+  });
+
+  it('축 이전 후에도 `id 34` 조합이 드랍축 최댓값 3.0000 을 그대로 만든다', () => {
+    // 최악 조합의 **구성원만** 바뀌고 값은 안 바뀌었다는 것의 물증(스윕 실측 재현).
+    const combo = buildCombo([15, 20, 34]);
+    expect(isValidCombo(combo.defs)).toBe(true);
+    expect(axisTotal(combo, 'drop')).toBeCloseTo(3.0, 10);
   });
 
   it('rarity 축 최댓값 x3.4000 (id 5+6+44, gamble:strong 공명)', () => {

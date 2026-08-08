@@ -433,7 +433,13 @@ export function powerOnWallDestroyed(state: WorldState, wall: Entity): void {
 
 /**
  * {@link import('../catalystHooks.js').onVolleyParamsCatalyst} 의 power 몫 —
- * **`id 25 overdrive`: 총열이 뜨거울수록 주무기가 세진다.**
+ * **`id 25 overdrive`: 총열이 뜨거울수록 주무기가 세진다.** ·
+ * **`id 26 rapidcore`: 같은 방향을 오래 유지할수록 주무기가 세진다.**
+ *
+ * ## ⚠️ 둘의 배율은 **한 번에 더해서 한 번 반올림**한다
+ * `bonus` 를 합산한 뒤 `round` 를 한 번만 돈다. 카드마다 따로 `round` 를 돌리면 낮은 피해
+ * 구간에서 두 번의 절삭이 겹쳐 곡선이 갈린다(옛 명중 앵커가 둘을 `bonus +=` 로 합산해
+ * 한 번만 반올림했던 것과 같은 식이다 — 그 곡선을 그대로 옮긴다).
  *
  * ## 이 카드의 세 조각이 여기서 한 곡선으로 이어진다
  * ```
@@ -461,8 +467,9 @@ export function powerOnVolleyParams(
   volley: VolleyParams,
 ): void {
   void player;
-  if (!carries(state, CARD_OVERDRIVE)) return;
-  const bonus = overdriveBonus(state);
+  let bonus = 0;
+  if (carries(state, CARD_OVERDRIVE)) bonus += overdriveBonus(state);
+  if (carries(state, CARD_RAPIDCORE)) bonus += rapidcoreBonus(state);
   if (bonus <= 0) return;
   // `damage` 는 **전 아키타입이 읽는** 칸이라(빔조차 읽는다) 어느 무기에서도 안 샌다.
   volley.damage += Math.round(volley.damage * bonus);
@@ -619,9 +626,9 @@ export function powerOnDamageChain(state: WorldState, player: Entity, dmg: numbe
 
 /**
  * {@link import('../catalystHooks.js').onEnemyDamagedCatalyst} 의 power 몫 —
- * `id 26` 의 **피해 상승**과 `id 27` 의 **관통 처치 되돌림**.
+ * `id 27` 의 **관통 처치 되돌림**.
  *
- * ## ⚠️ `id 25 overdrive` 는 **여기서 나갔다** — 볼리 앵커가 정본이다
+ * ## ⚠️ `id 25 overdrive`·`id 26 rapidcore` 는 **여기서 나갔다** — 볼리 앵커가 정본이다
  * 종전에는 이 함수가 `id 25`·`id 26` **둘 다**의 피해 상승을 사후 추가 피해로 얹었다. 사유는
  * *"볼리 파라미터 레코드는 스킬 전용 앵커라 촉매 팬아웃이 없다"* 였고 그때는 사실이었다.
  * **이제 아니다** — {@link import('../catalystHooks.js').onVolleyParamsCatalyst} 가 생겨
@@ -635,15 +642,15 @@ export function powerOnDamageChain(state: WorldState, player: Entity, dmg: numbe
  *    그 초과분은 애초에 발생하지 않는다.
  * `id 25` 의 규칙은 *"총열이 뜨거울수록 강해진다"* = **무기 강화**라 볼리 앵커가 맞다.
  *
- * ## ⛔ `id 26 rapidcore` 는 **일부러 안 옮겼다** (보고 대상 — 판단 필요)
- * 구조적으로 `id 25` 와 **완전히 같은 형태**라 같은 왜곡을 그대로 받는다. 그럼에도 남긴 것은
- * 이 레인의 위임 범위가 `id 25` 하나였기 때문이다(범위를 말없이 넓히지 않는다). 옮길지는
- * `id 26` 의 규칙 문장이 *무기 강화*인지 *명중 시 추가타*인지로 갈린다 — 그 판정을 받고 나서
- * 옮겨라. 옮긴다면 {@link powerOnVolleyParams} 에 한 줄 더하고 여기서 빼면 된다.
+ * ## ✅ `id 26 rapidcore` 도 뒤따라 옮겼다 (2026-08-08 판정)
+ * 규칙 문장이 *"같은 방향으로 계속 이동할수록 **공격력이 오른다**(최대 2배)"* 라 `id 25` 와
+ * 같은 **무기 강화**다(*"명중 시 추가타"* 가 아니다). 구조도 완전히 같은 형태라 여기 남으면
+ * 위 두 왜곡(관통 곡선·과잉피해)을 그대로 받는다 → {@link powerOnVolleyParams} 로 옮겼다.
+ * 피격 초기화는 {@link powerOnPlayerDamaged} 몫이라 그대로다(슬롯 하나를 공유한다).
  *
- * ⚠️ **`dead` 를 직접 세운다.** 호출부는 이 훅 **앞**에서 격추 판정을 끝냈으므로, 여기서
- * hp 만 0 으로 만들고 마킹을 빠뜨리면 처치도 젬도 전리품도 안 나오는 **좀비**가 된다
- * (`stepCatalystHazards` 가 같은 사유로 같은 줄을 갖고 있다).
+ * ⚠️ 그래서 이 앵커는 이제 **hp 를 한 칸도 안 건드린다** — 남은 몫(`id 27`)은 이미 죽은 적을
+ * 읽어 최대 HP 를 되돌릴 뿐이다. 여기에 피해를 다시 얹으려면 `dead` 를 직접 세워야 하고
+ * (호출부가 격추 판정을 이 훅 **앞**에서 끝낸다) 위 두 왜곡을 도로 들여오는 것이므로 하지 마라.
  */
 export function powerOnEnemyDamaged(
   state: WorldState,
@@ -654,15 +661,8 @@ export function powerOnEnemyDamaged(
   if (target.kind !== 'enemy' && target.kind !== 'boss') return;
   // `id 36` 그림자는 죽일 수 없다 — 조준 제외와 쌍이다(`catalyst/shared.ts`).
   if (isCatalystShadow(target)) return;
-  let bonus = 0;
-  if (carries(state, CARD_RAPIDCORE)) bonus += rapidcoreBonus(state);
-  if (bonus > 0 && source !== undefined) {
-    const extra = Math.round(dmg * bonus);
-    if (extra > 0) {
-      target.hp -= extra;
-      if (target.hp <= 0) target.dead = true;
-    }
-  }
+  void dmg;
+  void source;
   if (!carries(state, CARD_AFTERBURNER)) return;
   if (target.kind !== 'enemy' || target.hp > 0) return;
   if (readMark(target, 'pierced') === 0) return;

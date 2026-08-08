@@ -79,7 +79,7 @@ insert into public.catalyst_defs (catalyst_id, cap_axis, cap_mult, resource_mult
   (13, 'xp', 2.6, 1, array['precision']::text[]),
   (14, 'drop', 1.6, 1, array['precision']::text[]),
   (15, 'drop', 2.4, 1, array['harvest','gamble']::text[]),
-  (16, 'resource', 1.8, 1.8, array['density','erosion']::text[]),
+  (16, 'drop', 1.8, 1, array['density','erosion']::text[]),
   (17, 'resource', 2.6, 2.6, array['density','gamble']::text[]),
   (18, 'resource', 1.8, 1.8, array['gamble']::text[]),
   (19, 'resource', 2.4, 2.4, array['harvest','ignite']::text[]),
@@ -97,7 +97,7 @@ insert into public.catalyst_defs (catalyst_id, cap_axis, cap_mult, resource_mult
   (31, 'drop', 2, 1, array['ignite','erosion']::text[]),
   (32, 'rarity', 2.2, 1, array['precision']::text[]),
   (33, 'catalystDrop', 1.5, 1, array['precision','harvest']::text[]),
-  (34, 'resource', 2.4, 2.4, array['harvest']::text[]),
+  (34, 'drop', 2.4, 1, array['harvest']::text[]),
   (35, 'drop', 2.2, 1, array['density','harvest']::text[]),
   (36, 'resource', 2.2, 2.2, array['precision','gamble']::text[]),
   (37, 'rarity', 2, 1, array['harvest','precision']::text[]),
@@ -178,7 +178,10 @@ on conflict (tag, tier) do update
 --    scripts/catalystCapSweep.ts (= `pnpm cap:sweep`) 가 48C3 = 17,296 조합을 전수로 돌려
 --    특산 필터(3장 전부 특산 · 서로 다른 행성 특산 2장) 제외 후 유효 12,430 조합의 축별
 --    합성 상한(`1 + Σ(cap − 1) × 0.5`, 공명 포함)을 산출한 결과다.
---    자원축 최악 조합: #17 greed + #19 motherlode + #34 berdan-royal-jelly (공명 harvest:weak).
+--    자원축 최악 조합: #17 greed + #19 motherlode + #40 arke-ancient-core (공명 harvest:weak).
+--    ⚠️ 2026-08-08 사용자 판정으로 `#16 foundry`·`#34 berdan-royal-jelly` 가 자원 → 드랍으로
+--    옮겨갔다. 셋째 자리가 #34 → #40 으로 바뀌었을 뿐 **최댓값 3.20 은 한 자리도 안 움직였다**
+--    (재실행 실측). 그래서 이 값은 여전히 실측을 정확히 덮는다.
 --    종전 리터럴 2.2 는 이 설계 상한을 **31% 잘라내** 영수증 단계에서 실지급을 조용히 깎았다.
 --    ⚠️ 카탈로그(cap_mult)나 공명 표(catalyst_resonances)를 고치면 이 값도 스윕으로 재확정해야
 --    한다. 이 함수가 **유일한 선언 지점**이다 — 아래 (e) grant_currency_for 도 이 함수를 부른다.

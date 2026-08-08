@@ -2281,13 +2281,33 @@ async function main(): Promise<void> {
         // push 가 끼어들면 재-pull 확인이 흔들린다.
         // 실패해도 원장 행은 서버에 남으므로 **다음 부팅의 배송 재개**가 줍는다.
         if (serverDrops && dropRunId !== null) {
-          // `id 18 mercantile` 압류를 **서버 권위 경로에도 실제로 적용**한다. 이 모드에서
-          // settleRun 은 전리품을 굴리지 않으므로(itemsGained 가 빈 배열) 정산이 뺄 아이템이
-          // 없다 — 압류가 일어나는 유일한 자리가 여기, 클라가 주장하는 **개수**다.
-          // 이걸 안 깎으면 결과 화면은 "N점 압류"라고 적는데 서버는 전량을 배송한다(이 리포가
-          // 반복해 대가를 치른 「화면과 실제가 조용히 갈리는 두 자리」).
+          // `id 18 mercantile` 압류와 도박 강 '청산' 소멸을 **서버 권위 경로에도 실제로
+          // 적용**한다. 이 모드에서 settleRun 은 전리품을 굴리지 않으므로(itemsGained 가 빈
+          // 배열) 정산이 뺄 아이템이 없다 — 둘이 일어나는 유일한 자리가 여기, 클라가 주장하는
+          // **개수**다. 이걸 안 깎으면 결과 화면은 "N점 압류"라고 적는데 서버는 전량을
+          // 배송한다(이 리포가 반복해 대가를 치른 「화면과 실제가 조용히 갈리는 두 자리」).
+          //
+          // ## ✅ 이 클라측 감산은 안전하다 — 2026-08-08 코드 검토 결론(재조사 금지)
+          // 배선 레인이 *"서버 레인이 알지 못하는 클라측 감산"* 이라 검토 대상으로 남긴
+          // 자리다. 세 축을 실제로 읽고 확인했다:
+          //  ① **서버 검증은 천장뿐이다.** `grant_run_drops` 는
+          //     `v_grant := least(claimed, 시간개연성, CAP_DROPS_PER_RUN)`
+          //     (`supabase/migrations/20260808010000_item_grants_ledger.sql`)로 **줄이기만**
+          //     한다. 주장을 낮추면 결과는 같거나 더 작다 — 낮춘 주장이 더 많은 지급을 만드는
+          //     경로가 원리적으로 없다.
+          //  ② **원장·영수증과 갈릴 수 없다.** `item_grants` 행은 `v_grant` 개수만큼 **그
+          //     자리에서** 만들어지므로 "클라가 받았어야 할 수"라는 별도 서버 기대값이 존재하지
+          //     않는다. 영수증의 `claimed` 는 클라가 보낸 값 그대로라, 이미 깎아서 보낸 수가
+          //     그대로 실린다(정직한 플레이면 `clamped` 는 계속 false 다).
+          //  ③ **화면과 실지급이 같은 수를 쓴다.** 결과 화면의 `debtSeized` 와 여기 `seized` 는
+          //     **같은 `lastOutcome.catalystDebt.seized`** 한 값에서 나온다(두 번 계산하지
+          //     않는다). 서버 모드의 "획득 N점"은 `itemsGained.length` = 0 이라 압류분을 이중
+          //     계상하지도 않는다.
+          // 결론: 고칠 것이 없다. **깎는 쪽을 늘릴 때는 반드시 이 세 축을 다시 확인해라** —
+          // 특히 ①이 깨지는(주장을 하한으로도 쓰는) 서버 변경이 오면 이 감산이 손해가 된다.
           const seized = lastOutcome?.catalystDebt?.seized ?? 0;
-          void deliverRunDrops(dropRunId, Math.max(0, w.loot.length - seized), {
+          const voided = lastOutcome?.sealedVoided ?? 0;
+          void deliverRunDrops(dropRunId, Math.max(0, w.loot.length - seized - voided), {
             planet: w.config.planet ?? 0,
             stage: w.config.stage ?? 1,
             levelCap: dropLevelCap,

@@ -92,6 +92,27 @@ const FOUNDRY_DAMAGE_MULT_PER_TURRET = 0.85;
 const FOUNDRY_TURRET_CAP = 6;
 
 /**
+ * `id 16` — 포탑이 **한 기라도 서 있는 동안** 쓰러진 적의 전리품 개수 배율. 선언 상한
+ * (`data/catalysts.ts` `id 16` = 드랍 ×1.8)과 **같은 값이다** — 배율이 상한을 넘을 수 없게
+ * 하는 가장 값싼 형태다.
+ *
+ * ## ⚠️ 왜 "포탑이 처치한 적"이 아니라 "포탑이 서 있는 동안"인가 (2026-08-08 사용자 판정)
+ * 설계 정본 초안은 *"포탑이 처치한 적은 자원을 두 배 뱉는다"* 였다. 배선이 두 겹으로 막혔다:
+ *  1. **탄 귀속이 없다.** 포탑 탄에 스탬프를 찍으려면 `ownerId` 를 써야 하는데 그 필드는
+ *     `ENTITY_HASH_LAYOUT` 의 u32 폴드 대상이라 골든 전량 재생성 + EF 재배포가 한 원자가 되고
+ *     `id 16` 이 §B → §C 로 올라간다(§C 예산은 지금까지 0 을 쓴 적이 없다).
+ *  2. **두 배로 만들 자원이 없다.** 적 처치에서 자원이 나오는 경로는 `id 15`·`17`·`19` 소지
+ *     시뿐이고 `onResourceGranted` 앵커는 보급 습격 격추 하나에만 붙는다 — `id 16` 단독 런에는
+ *     그 조항이 붙을 **사건 자체가 없다.**
+ * 그래서 자원 조항을 내리고 상한 축을 자원 → 드랍으로 옮겼다. 판정 술어는 이미 있는
+ * {@link foundryTurretCount} 하나뿐이라 새 칸도 새 귀속도 필요 없다(§B 등급 불변).
+ *
+ * ⚠️ 이득의 축이 옮겨 온 것이지 **대가가 약해진 것이 아니다** — 보스전에서 포탑이 화력만
+ * 갉는 구간은 그대로다({@link resourceOnVolleyParams} §주석).
+ */
+export const FOUNDRY_LOOT_MULT = 1.8;
+
+/**
  * 지금 살아 있는 `id 16` 포탑 수. **이득(스폰 상한)과 대가(피해 배율)가 같은 수를 본다** —
  * 두 곳이 따로 세면 화면(포탑 개수)과 규칙(배율)이 조용히 갈린다.
  */
@@ -644,13 +665,24 @@ export function resourceOnBossDeath(state: WorldState, x: number, y: number): bo
   return false;
 }
 
-/** {@link import('../catalystHooks.js').onLootRollCatalyst} 의 resource 몫. **미배선**(위 §주석). */
+/**
+ * {@link import('../catalystHooks.js').onLootRollCatalyst} 의 resource 몫 —
+ * **`id 16 foundry` 의 이득 축**(2026-08-08 사용자 판정으로 자원 → 드랍으로 이전,
+ * {@link FOUNDRY_LOOT_MULT} §주석이 사유의 정본이다).
+ *
+ * 포탑이 **한 기라도 서 있으면** 그 격추의 전리품 개수에 ×{@link FOUNDRY_LOOT_MULT}. 포탑이
+ * 0 기면 **정확히 중립**이라 곱셈이 무연산이다.
+ *
+ * ⚠️ **재롤이 아니다** — 이미 뽑힌 롤에 곱할 배율만 돌려주고 난수를 한 칸도 안 쓴다
+ * (배율은 살아 있는 포탑 수의 순수 파생이다 — 대가 쪽과 같은 술어를 본다).
+ */
 export function resourceOnLootRoll(state: WorldState, x: number, y: number, elite: boolean): CatalystLootRoll {
-  void state;
-  void x;
-  void y;
   void elite;
-  return CATALYST_LOOT_NEUTRAL;
+  if (!carries(state, CARD_FOUNDRY)) return CATALYST_LOOT_NEUTRAL;
+  if (foundryTurretCount(state) <= 0) return CATALYST_LOOT_NEUTRAL;
+  creditCatalyst(state, CARD_FOUNDRY, FOUNDRY_LOOT_MULT - 1);
+  notifyCatalystFx(state, CARD_FOUNDRY, CATALYST_FX.credit, x, y);
+  return { rarity: 1, count: FOUNDRY_LOOT_MULT };
 }
 
 /**
