@@ -317,8 +317,11 @@ describe('밀도 — 실제 런 배선', () => {
     const a = pressure(one, 1500);
     const b = pressure(four, 1500);
     expect(b.integral).toBeGreaterThan(a.integral);
-    // 한 바퀴짜리는 이 구간이 완전히 비어 있어야 한다(그게 구 침공의 '빈 화면'의 정체다).
-    expect(a.integral).toBe(0);
+    // ⚠️ 예전에는 `a.integral === 0`(한 바퀴짜리는 이 구간이 완전히 빈다)까지 박았다. 기본
+    // 수비대 레벨이 밸런스 기본값(×4.70)으로 올라가면서 앞 바퀴의 적이 이 구간까지 살아남아
+    // 더 이상 0 이 아니다. "빈 화면"은 밀도의 성질이지 **적 내구도와 무관한 상수가 아니다** —
+    // 두 축이 섞인 단언이었으므로 방향 비교만 남긴다.
+    expect(b.integral).toBeGreaterThan(a.integral * 2);
   });
 
   it('간격만 줄이면 동시 적 수는 안 올라간다(튜닝 함정 — 웨이브가 겹쳐야 오른다)', () => {

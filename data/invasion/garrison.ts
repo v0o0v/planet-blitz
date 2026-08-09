@@ -40,6 +40,7 @@ import type {
   InvasionRef,
   InvasionStepContext,
 } from '../../src/sim/invasion/types.js';
+import { INVASION_LEVEL_MAX, INVASION_LEVEL_MIN } from '../../src/sim/invasion/constants.js';
 import { FORMATION_SCOUT_DRONES } from './formations.js';
 import { GARRISON_FACILITY_CATALOG_ID, SPAWNER_FACILITY_CATALOG_ID } from './facilities.js';
 
@@ -54,10 +55,45 @@ export const GARRISON_FORMATION_CATALOG_ID = FORMATION_SCOUT_DRONES;
 export { GARRISON_FACILITY_CATALOG_ID };
 
 /**
- * 충원 방어체의 강화 3축 — lv1 · 승급 0 · 노말 · 어픽스 시드 0.
- * 카탈로그 배율 산식(formationPowerCp 등)에서 정확히 100cp(=×1.00)가 나오는 기준값이다.
+ * 충원 방어체 레벨의 **중립값** — 강화 산식에서 정확히 100cp(×1.00)가 나오는 기준점이다.
+ * 이 모듈은 순수 파생이므로 기본값도 중립이어야 한다(밸런스 수치를 데이터 층에 두면
+ * 이 함수를 쓰는 모든 테스트가 밸런스 기본값 위에 올라탄다 — 실제로 한 번 그렇게 만들었다가
+ * 침공 배선 테스트 29파일이 후보로 걸렸다).
+ *
+ * **실 침공 런이 쓰는 밸런스 기본값은 {@link INVASION_GARRISON_LEVEL_DEFAULT} 다** — 적용은
+ * 런 조립 층(`src/main.ts` 의 침공 진입 두 경로)에서 한다.
  */
 export const GARRISON_LEVEL = 1;
+
+/**
+ * **실 침공 런의 기본 수비대 레벨** — 밸런스 값.
+ *
+ * ## 왜 1 이 아닌가 (2026-08-10)
+ * 충원체는 오래 lv1 이었다(카탈로그 기본 스탯 그대로 — 정찰드론 HP 30 · 박격포 26).
+ * 그 값은 **침공에서 조종사 레벨이 봉인돼 있던 시절**의 것이다. 봉인을 풀면서 공격측이
+ * Lv100 에서 피해·최대HP ×4.69 를 받게 되자 기본 수비대가 종잇장이 됐다 — 사용자 제기
+ * "적의 기체 HP가 너무 낮아".
+ *
+ * 그래서 **공격측 만렙 배율에 대칭**인 레벨로 잡는다. 편대 강화가 `100 + (lv-1)*5` cp 이므로:
+ *
+ *   lv75 → `100 + 74*5 = 470` cp = **×4.70** ≈ 공격측 Lv100 의 ×4.69
+ *
+ * 침공은 엔드게임이라 **Lv100 이 시작점**이라는 것이 사용자가 잡은 전제다(기준선도 "만렙
+ * 기체가 기본 수비대를 어느 정도 클리어하는가"). 그 위에서는 만렙 대칭이 중립이고, 저레벨
+ * 공격자가 불리한 것은 설계 의도다.
+ *
+ * ## 왜 데이터 층이 아니라 런 조립 층에서 거는가
+ * `garrisonRef`/`garrisonLayers` 의 기본값으로 두면 **침공 config 를 직접 만드는 테스트
+ * 전부**(29파일)가 이 밸런스 값 위에서 돌게 된다. 그 테스트들은 대부분 Lv1 관측자로 배선을
+ * 보는 것이라, ×4.70 아래에서는 관찰 창 안에 진행을 못 해 "배선이 없다"와 "배선은 있는데
+ * 느리다"가 구분되지 않는다. 실제로 그렇게 만들었다가 되돌렸다.
+ *
+ * ⚠️ **이 값은 출발점이다.** 확정은 사용자가 하네스 침공 탭의 「수비대Lv」 슬라이더로 직접
+ * 플레이해 정한다. 배치된 슬롯에는 걸리지 않으므로(방어자가 정한 레벨이 우선) 이 축이
+ * 움직이는 것은 「아무것도 배치 안 한 기지」의 바닥뿐이다.
+ */
+export const INVASION_GARRISON_LEVEL_DEFAULT = 75;
+
 /** 충원 방어체 승급 단계. */
 export const GARRISON_ASCENSION = 0;
 /** 충원 방어체 등급 코드(0 = normal). */
@@ -65,15 +101,35 @@ export const GARRISON_RARITY = 0;
 /** 충원 방어체 어픽스 시드(고정 0 — 어픽스 없음). */
 export const GARRISON_AFFIX_SEED = 0;
 
-/** 충원용 Ref 1건을 만든다. 전 필드 정수 · 입력 무관 상수라 결정론적이다. */
-export function garrisonRef(catalogId: number): InvasionRef {
+/**
+ * 충원용 Ref 1건을 만든다. 전 필드 정수 · 입력의 순수 함수라 결정론적이다.
+ *
+ * `level` 은 튜닝 축이다({@link Invasion3Config.garrisonLevel}) — 미지정이면
+ * {@link GARRISON_LEVEL}(1)로 구 거동과 바이트 동일하다. 등급·승급·어픽스 시드는 고정으로
+ * 둔다: 레벨은 매끄러운 축이라 슬라이더로 다루기 좋지만, 등급은 계단이라 같은 자리에 두면
+ * "한 칸 올렸는데 체감이 확 뛴다"가 된다.
+ */
+export function garrisonRef(catalogId: number, level: number = GARRISON_LEVEL): InvasionRef {
   return {
     catalogId,
-    level: GARRISON_LEVEL,
+    level,
     ascension: GARRISON_ASCENSION,
     affixSeed: GARRISON_AFFIX_SEED,
     rarity: GARRISON_RARITY,
   };
+}
+
+/**
+ * 기본 수비대 레벨을 정규형으로 접는다. 손상 입력·미지정은 {@link GARRISON_LEVEL}(1).
+ * 상한은 배치 Ref 와 같은 도메인이다(`INVASION_LEVEL_MAX`) — 두 축이 같은 산식을 쓰므로
+ * 범위도 같아야 한다.
+ */
+export function normalizeGarrisonLevel(raw: number | undefined): number {
+  if (raw === undefined || !Number.isFinite(raw)) return GARRISON_LEVEL;
+  const v = Math.trunc(raw);
+  if (v < INVASION_LEVEL_MIN) return INVASION_LEVEL_MIN;
+  if (v > INVASION_LEVEL_MAX) return INVASION_LEVEL_MAX;
+  return v;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,11 +150,12 @@ const cache = new WeakMap<InvasionLayers, Map<number, InvasionLayers>>();
 function fillSlots(
   slots: readonly (InvasionRef | null)[],
   catalogId: number,
+  level: number,
 ): (InvasionRef | null)[] {
   const out: (InvasionRef | null)[] = new Array<InvasionRef | null>(slots.length);
   for (let i = 0; i < slots.length; i++) {
     const ref = slots[i];
-    out[i] = ref === null || ref === undefined ? garrisonRef(catalogId) : ref;
+    out[i] = ref === null || ref === undefined ? garrisonRef(catalogId, level) : ref;
   }
   return out;
 }
@@ -115,6 +172,7 @@ function fillSlots(
 function fillFacilitySlots(
   slots: readonly (InvasionRef | null)[],
   spawners: number,
+  level: number,
 ): (InvasionRef | null)[] {
   const out: (InvasionRef | null)[] = new Array<InvasionRef | null>(slots.length);
   let remaining = spawners;
@@ -125,10 +183,10 @@ function fillFacilitySlots(
       continue;
     }
     if (remaining > 0) {
-      out[i] = garrisonRef(SPAWNER_FACILITY_CATALOG_ID);
+      out[i] = garrisonRef(SPAWNER_FACILITY_CATALOG_ID, level);
       remaining--;
     } else {
-      out[i] = garrisonRef(GARRISON_FACILITY_CATALOG_ID);
+      out[i] = garrisonRef(GARRISON_FACILITY_CATALOG_ID, level);
     }
   }
   return out;
@@ -140,25 +198,33 @@ function fillFacilitySlots(
  * L3(기물·수호·보스·코어 모듈)는 손대지 않으므로 `l3` 는 원본 객체를 그대로 공유한다 —
  * 사본을 만들 이유가 없고, 공유해야 코어 HP 같은 런타임 참조가 원본과 갈리지 않는다.
  */
-export function garrisonLayers(layers: InvasionLayers, spawners = 0): InvasionLayers {
+export function garrisonLayers(
+  layers: InvasionLayers,
+  spawners = 0,
+  level: number = GARRISON_LEVEL,
+): InvasionLayers {
   const n = Number.isFinite(spawners) && spawners > 0 ? Math.trunc(spawners) : 0;
-  let byCount = cache.get(layers);
-  if (byCount === undefined) {
-    byCount = new Map<number, InvasionLayers>();
-    cache.set(layers, byCount);
+  const lv = normalizeGarrisonLevel(level);
+  // 캐시 키는 (기수, 레벨) 두 축이다. 하나로 접으면 슬라이더 하나를 돌릴 때 다른 축의
+  // 옛 사본이 반환돼 "노브가 안 먹는다"가 된다.
+  const key = n * (INVASION_LEVEL_MAX + 1) + lv;
+  let byKey = cache.get(layers);
+  if (byKey === undefined) {
+    byKey = new Map<number, InvasionLayers>();
+    cache.set(layers, byKey);
   }
-  const hit = byCount.get(n);
+  const hit = byKey.get(key);
   if (hit !== undefined) return hit;
   const filled: InvasionLayers = {
-    l1: { waveSlots: fillSlots(layers.l1.waveSlots, GARRISON_FORMATION_CATALOG_ID) },
+    l1: { waveSlots: fillSlots(layers.l1.waveSlots, GARRISON_FORMATION_CATALOG_ID, lv) },
     l2: {
       templateId: layers.l2.templateId,
-      sockets: fillFacilitySlots(layers.l2.sockets, n),
+      sockets: fillFacilitySlots(layers.l2.sockets, n, lv),
     },
     // L3 는 충원 대상이 아니다(기물=비움 / 보스=coreRoom 폴백 / 수호·모듈=자산).
     l3: layers.l3,
   };
-  byCount.set(n, filled);
+  byKey.set(key, filled);
   return filled;
 }
 
@@ -170,7 +236,7 @@ export function garrisonLayers(layers: InvasionLayers, spawners = 0): InvasionLa
  * `runtime` 은 **참조로** 넘겨 페이즈 머신이 갱신하는 같은 객체를 계속 보게 한다.
  */
 export function withGarrison(ctx: InvasionStepContext): InvasionStepContext {
-  const filled = garrisonLayers(ctx.layers, ctx.density.l2GarrisonSpawners);
+  const filled = garrisonLayers(ctx.layers, ctx.density.l2GarrisonSpawners, ctx.garrisonLevel);
   if (filled === ctx.layers) return ctx;
   return { ...ctx, layers: filled };
 }

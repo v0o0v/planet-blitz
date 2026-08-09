@@ -218,6 +218,8 @@ function firedBullets(snapshot: GuardianSnapshot, ticks = 120): Entity[] {
     maintenance: MAINTENANCE_FULL,
     density: INVASION_DENSITY_LEGACY,
     defenseBonusBp: 0,
+    // 기본 수비대도 중립 레벨(=100cp, ×1.00)로 고정 — 위 LEGACY 밀도와 같은 이유다.
+    garrisonLevel: 1,
   };
   for (let t = 0; t < ticks; t++) stepInvasionGuardians(state, player, ctx);
   return state.entities.filter((e) => e.kind === 'enemyBullet' && !e.dead);

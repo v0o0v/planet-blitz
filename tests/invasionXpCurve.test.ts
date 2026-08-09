@@ -119,11 +119,73 @@ describe('침공 — 레벨업 없음(계약)', () => {
   });
 });
 
-describe('침공 — 메타 성장은 살아 있다', () => {
+describe('침공 — 젬 없이 메타 성장만 남는다', () => {
   it('런 풀 3택은 없어도 메타 풀(기체 영구 레벨)은 계속 쌓인다', () => {
-    // 없앤 것은 '카드'뿐이다. 이것까지 죽으면 침공을 돌 이유가 사라진다(ADR-0036 이원화).
+    // 없앤 것은 '카드'와 '젬'뿐이다. 이것까지 죽으면 침공을 돌 이유가 사라진다(ADR-0036 이원화).
     const r = runInvasion();
     expect(r.picks).toBe(0);
     expect(r.xpTotal).toBeGreaterThan(0);
+  });
+
+  it('젬 엔티티가 단 하나도 바닥에 떨어지지 않는다', () => {
+    // 사용자 지시 "레벨업 카드 없으니 젬도 없애줘". 자석·수집 행동 자체를 없애는 것이 목적이라
+    // "줍히면 XP 를 안 준다"로는 부족하다 — **생성되지 않아야** 한다.
+    const s: WorldState = createWorld(SEEDS[0], invasionConfig());
+    let sawGem = false;
+    let killed = 0;
+    for (let i = 0; i < 6000; i++) {
+      stepWorld(s, autopilotInput(s));
+      for (const e of s.entities) {
+        if (e.kind === 'gem' && !e.dead) sawGem = true;
+      }
+      killed = s.kills;
+      if (s.gameOver || s.victory) break;
+    }
+    expect(killed, '적을 하나도 못 잡았다면 이 테스트는 공허하다').toBeGreaterThan(0);
+    expect(sawGem).toBe(false);
+    expect(s.xpTotal, '젬 없이도 XP 는 적립돼야 한다').toBeGreaterThan(0);
+  });
+
+  it('행성런에는 젬이 그대로 떨어진다(반대편으로 새지 않았는가)', () => {
+    const s: WorldState = createWorld(SEEDS[0], { ...DEFAULT_CONFIG } as WorldConfig);
+    let sawGem = false;
+    for (let i = 0; i < 3000 && !sawGem; i++) {
+      stepWorld(s, autopilotInput(s));
+      for (const e of s.entities) if (e.kind === 'gem' && !e.dead) sawGem = true;
+    }
+    expect(sawGem).toBe(true);
+  });
+});
+
+describe('침공 — 기본 수비대 레벨', () => {
+  /** 첫 편대가 뜰 때까지 굴려 적 최대 HP 를 본다. */
+  function firstEnemyMaxHp(garrisonLevel: number): number {
+    const s: WorldState = createWorld(SEEDS[0], {
+      ...invasionConfig(),
+      invasion3: { ...(invasionConfig().invasion3 as object), garrisonLevel },
+    } as WorldConfig);
+    for (let i = 0; i < 1200; i++) {
+      stepWorld(s, autopilotInput(s));
+      let mx = 0;
+      for (const e of s.entities) if (e.kind === 'enemy' && !e.dead && e.maxHp > mx) mx = e.maxHp;
+      if (mx > 0) return mx;
+    }
+    return 0;
+  }
+
+  it('레벨을 올리면 기본 수비대 내구도가 오른다', () => {
+    const lv1 = firstEnemyMaxHp(1);
+    const lv50 = firstEnemyMaxHp(50);
+    expect(lv1, '적이 안 떴다면 공허하다').toBeGreaterThan(0);
+    expect(lv50).toBeGreaterThan(lv1);
+    // 편대 강화 산식 `100 + (lv-1)*5` → lv50 = 345cp = ×3.45. 정확한 값을 박지 않는 이유는
+    // 사용자가 이 레벨을 계속 돌릴 것이기 때문이다 — 방향과 대략의 배수만 지킨다.
+    expect(lv50).toBeGreaterThan(lv1 * 3);
+  });
+
+  it('미지정은 lv1(구 거동)이다', () => {
+    expect(firstEnemyMaxHp(1)).toBe(firstEnemyMaxHp(1));
+    const s = createWorld(1, invasionConfig());
+    expect(s.config.invasion3?.garrisonLevel).toBeUndefined();
   });
 });

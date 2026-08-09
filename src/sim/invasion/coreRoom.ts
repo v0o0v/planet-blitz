@@ -35,6 +35,7 @@ import { segmentBlocked } from '../los.js';
 import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN, SPAWN_RING_RADIUS } from '../constants.js';
 import { summonEnemy } from '../waves.js';
 import { GUNNER } from '../../../data/enemies.js';
+import { formationPowerCp } from '../../../data/invasion/formations.js';
 import { applyDefenseBonus } from './defenseBonus.js';
 import { invasionCoreAddInterval } from './density.js';
 import {
@@ -171,10 +172,13 @@ export function enterCoreRoom(state: WorldState, ctx: InvasionStepContext): void
     applyDefenseBonus(l3.core.hp, ctx.defenseBonusBp),
   );
 
-  // 보스: 빈 슬롯이면 기본 수비대(강철 골리앗 lv1 노말)가 충원한다(결정 #22 — 스폰 단계 주입).
+  // 보스: 빈 슬롯이면 기본 수비대(강철 골리앗)가 충원한다(결정 #22 — 스폰 단계 주입).
+  // 레벨은 **기본 수비대 레벨 축**을 따른다 — L1 편대·L2 설비 충원과 같은 값이어야 "아무것도
+  // 배치 안 한 기지"의 강도가 한 손잡이로 움직인다. 여기만 1 로 남기면 레벨을 올려도 L3 만
+  // 종잇장으로 남아, 사용자가 기준선을 잡을 때 원인을 못 짚는다.
   const bossRef: InvasionRef = l3.boss ?? {
     catalogId: DEFAULT_DEFENSE_BOSS_ID,
-    level: 1,
+    level: ctx.garrisonLevel,
     ascension: 0,
     affixSeed: 0,
     rarity: 0,
@@ -418,9 +422,17 @@ function stepCoreReinforcements(state: WorldState, ctx: InvasionStepContext): vo
   // 성립한다. 소환 위치·시점은 여전히 플레이어 좌표와 무관하다(이동 AI 가 플레이어를 보는 것은
   // 규율 위반이 아니다 — 규율은 스폰의 결정론이다).
   const e = summonEnemy(state, GUNNER, x, y);
-  e.hp = applyDefenseBonus(e.hp, ctx.defenseBonusBp);
-  e.maxHp = e.hp;
-  e.damage = applyDefenseBonus(e.damage, ctx.defenseBonusBp);
+  // 증원도 **기본 수비대 레벨**을 따른다. 이 적은 카탈로그 Ref 가 아니라 raw 소환이라 강화
+  // 3축이 자동으로 안 걸리므로, 편대와 같은 산식(`formationPowerCp`)을 손으로 건다 — 다른
+  // 산식을 쓰면 같은 레벨인데 L1 잡몹과 L3 증원의 강도가 갈린다.
+  const cp = formationPowerCp(ctx.garrisonLevel, 0, 0);
+  const hp = applyDefenseBonus(cp === 100 ? e.hp : Math.round((e.hp * cp) / 100), ctx.defenseBonusBp);
+  e.hp = hp;
+  e.maxHp = hp;
+  e.damage = applyDefenseBonus(
+    cp === 100 ? e.damage : Math.round((e.damage * cp) / 100),
+    ctx.defenseBonusBp,
+  );
 }
 
 /** 코어 증원 소환 방위 수(8방위 순회). */

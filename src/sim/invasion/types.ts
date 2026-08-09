@@ -199,6 +199,24 @@ export interface Invasion3Config {
    * 아직 배선되지 않았다 — 현재 채워지는 경로는 하네스뿐이고, 실 PvP 침공에서는 0 이다.
    */
   defenseBonusBp?: number;
+  /**
+   * **기본 수비대 레벨** — 빈 슬롯을 자동 충원하는 방어체(`data/invasion/garrison.ts`)와
+   * L3 보스 폴백·코어 증원이 쓰는 레벨. 미지정 = {@link GARRISON_LEVEL}(1, 구 거동).
+   *
+   * ## 왜 필요한가
+   * 충원체가 **lv1 고정**이라 정찰드론 HP 30 · 박격포 26 인데, 침공에서 조종사 레벨 봉인을
+   * 풀면서 공격측이 Lv100 에서 피해 ×4.69 를 받게 됐다. 사용자 제기 "적의 기체 HP가 너무
+   * 낮아"의 실체가 이 비대칭이다.
+   *
+   * 새 산식을 만들지 않고 **기존 강화 3축(레벨·등급·승급)의 레벨 칸**을 그대로 쓴다 —
+   * 배치된 방어체가 강해지는 것과 정확히 같은 경로라 두 축이 갈릴 수 없다. 편대는
+   * `formationPowerCp` 가 `100 + (lv-1)*5` 이므로 lv50 이면 ×3.45 다(HP·접촉 피해 동시).
+   *
+   * ⚠️ **배치된 슬롯에는 걸리지 않는다.** 그쪽 레벨은 방어자가 정한 값이고, 런타임이 덮으면
+   * 배치 계약이 깨진다. 이 축이 움직이는 것은 「아무것도 배치 안 한 기지」의 바닥뿐이다 —
+   * 그게 사용자가 잡은 기준선이다.
+   */
+  garrisonLevel?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +238,8 @@ export interface InvasionStepContext {
   readonly density: InvasionDensity;
   /** 방어측 계보 보너스(basis-point, 0 이상 정수). 0 = 무연산. */
   readonly defenseBonusBp: number;
+  /** 기본 수비대 레벨(정규화 완료, [1, INVASION_LEVEL_MAX]). */
+  readonly garrisonLevel: number;
 }
 
 /** L1 편대 스폰·진행(src/sim/invasion/formation.ts — L3 레인 구현). */
