@@ -24,6 +24,7 @@
 import type { Harness, HarnessScreen } from './core.js';
 import { parseReplay, replaySummary, serializeReplay } from './replayStore.js';
 import { INVASION_PRESET_KINDS } from './presets.js';
+import type { ProfilePresetKind } from './presets.js';
 import type { InvasionPresetKind } from './presets.js';
 import { MAINTENANCE_FULL } from '../sim/invasion/guardian.js';
 import {
@@ -462,6 +463,17 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   /** 공격측 조종사 레벨 강제(침공 탭). 기준선이 만렙이라 100 에서 출발한다. */
   let invasionPilotLevel = 100;
   /**
+   * 침공 시작 시 걸 **공격측 장비 프리셋**. `'none'` 이면 지금 프로필 그대로 쓴다.
+   *
+   * 기본이 `'maxed'` 인 이유는 기준선이 **만렙 장비**이기 때문이다(사용자 결정) — 침공은
+   * 엔드게임이라 "만렙이 기본 수비대를 어느 정도 클리어하는가"가 잣대다.
+   *
+   * ⚠️ 구 동선은 메뉴 탭에서 「프리셋: 만렙」을 누르고 침공 탭으로 건너오는 2단계였고, 그걸
+   * 잊으면 **무장 Lv1 로 재면서 그 사실을 모른다.** 실제로 계측이 그렇게 어긋났다 — 코어 DPS 를
+   * 122 로 재고 "코어가 너무 질기다"고 오판할 뻔했다(만렙 실측은 약 19,000).
+   */
+  let invasionGearPreset: ProfilePresetKind | 'none' = 'maxed';
+  /**
    * 기본 수비대 레벨 — 「아무것도 배치 안 한 기지」의 바닥 강도. 구값 1 은 정찰드론 HP 30 이라
    * Lv100 기체(피해 ×4.69) 앞에서 녹는다("적의 기체 HP가 너무 낮아").
    */
@@ -629,6 +641,9 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     // 이미 예약에 반영됐고, 그 위에 슬롯 편집기가 한 칸씩 얹기 때문이다. 여기서 다시
     // `preset` 을 넘기면 슬롯 편집이 매 시작마다 조용히 되돌려진다.
     lastInvasionLayer = layer;
+    // 장비 프리셋을 **런 시작 직전에** 건다. 여기서의 오염은 무해하다 — 지금 도는 런은 바로
+    // 아래에서 새 런으로 교체된다(위 `presetPending` 과 같은 논리).
+    if (invasionGearPreset !== 'none') harness.preset(invasionGearPreset);
     harness.startInvasion({
       maintenance: invasionMaintCP,
       timeLimitTicks: invasionTimeLimit,
@@ -644,7 +659,8 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     handOver();
     const tail = layer === 1 ? '비오염' : `L${layer} 점프 · 오염`;
     setHint(
-      `침공 ${invasionPreset}(+편집) · Lv${invasionPilotLevel} · 수비대Lv${invasionGarrisonLevel} · ` +
+      `침공 ${invasionPreset}(+편집) · 장비 ${invasionGearPreset} · Lv${invasionPilotLevel} · ` +
+        `수비대Lv${invasionGarrisonLevel} · ` +
         `방어HP ${invasionDefenseHpBp}bp · 방어피해 ${invasionDefenseDamageBp}bp · ` +
         `정비도 ${invasionMaintCP / 100}% · L1 ${invasionDensity.l1IntervalTicks}틱×${invasionDensity.l1Repeats}바퀴 · ` +
         `${Math.round(invasionTimeLimit / 60)}초 (${tail})`,
@@ -1460,6 +1476,45 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       // ── 공격측 · 방어측 성장 축 ────────────────────────────────────────────
       const growRow = document.createElement('div');
       growRow.className = 'pb-c-row';
+
+      // ── 공격측 장비 프리셋 ──────────────────────────────────────────────
+      // 침공 탭 안에 두는 이유: 기준선이 **만렙 장비**인데, 구 동선은 메뉴 탭에서 프리셋을
+      // 걸고 넘어오는 2단계였다. 그걸 잊으면 무장 Lv1 로 재면서 그 사실을 모른다 — 실제로
+      // 코어 DPS 를 122 로 재고 "코어가 너무 질기다"고 오판할 뻔했다(실제 만렙은 약 19,000).
+      const gearLbl = document.createElement('span');
+      gearLbl.className = 'pb-c-lbl';
+      gearLbl.textContent = '장비';
+      const gearSel = document.createElement('select');
+      const GEAR_OPTIONS: readonly (ProfilePresetKind | 'none')[] = [
+        'maxed',
+        'fresh',
+        'gearLocked',
+        'none',
+      ];
+      for (const k of GEAR_OPTIONS) {
+        const o = document.createElement('option');
+        o.value = k;
+        o.textContent = k === 'none' ? '현재 프로필 유지' : k;
+        if (k === invasionGearPreset) o.selected = true;
+        gearSel.appendChild(o);
+      }
+      gearSel.title =
+        '침공 시작 시 걸 공격측 프로필 프리셋.\n' +
+        'maxed = 만렙 기체 + 풀 장비 + 스킬 만투(기준선). fresh = 신규 계정.\n' +
+        '"현재 프로필 유지" 는 지금 프로필을 그대로 쓴다(직접 꾸민 빌드로 잴 때).\n' +
+        '⚠️ 시작 버튼을 누를 때 적용된다 — 지금 도는 런에는 영향이 없다.';
+      gearSel.addEventListener('change', () => {
+        const v = GEAR_OPTIONS.find((k) => k === gearSel.value);
+        if (v === undefined) return;
+        invasionGearPreset = v;
+        setHint(
+          v === 'none'
+            ? '장비: 현재 프로필 유지 — 다음 침공 시작부터'
+            : `장비 프리셋 ${v} — 다음 침공 시작 때 적용`,
+        );
+      });
+      growRow.append(gearLbl, gearSel);
+
       knob(
         growRow,
         '기체Lv',
