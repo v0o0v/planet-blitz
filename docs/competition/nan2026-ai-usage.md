@@ -14,22 +14,22 @@ Planet Blitz는 1인이 26일 동안 만든 온라인 게임이고, 게임 코�
 
 | 지표 | 값 |
 |---|---|
-| 커밋 / 머지된 PR | 1,392 커밋 / 498 PR |
+| 커밋 / 머지된 PR | 1,410 커밋 / 416 PR |
 | TypeScript | 872파일 · 약 29만 줄 |
-| 자동 테스트 | 378파일 · **8,676건 전량 통과** (약 82초) |
+| 자동 테스트 | 379파일 · **8,690건 전량 통과** (약 100초) |
 | 아키텍처 결정 기록(ADR) | 55건 |
 | DB 마이그레이션 / Edge Function | 63건 / 3종 (서버 권위 쓰기) |
 | 픽셀아트 에셋 | PNG 573장 (AI 생성) |
 | 레인 계획·조사·인수인계 문서 | 161건 (`.omc/` 아래) |
 
-전량 AI 작성이라는 말은 직접 세어서 확인하실 수 있습니다. 총 1,392 커밋은 비머지 894건과
-머지 498건으로 나뉘는데, 비머지 894건 가운데 849건(95%)이 `Co-Authored-By: Claude` trailer를
+전량 AI 작성이라는 말은 직접 세어서 확인하실 수 있습니다. 총 1,410 커밋은 비머지 910건과
+머지 500건으로 나뉘는데, 비머지 910건 가운데 858건(94%)이 `Co-Authored-By: Claude` trailer를
 답니다. trailer가 없는 45건도 같은 AI 워크플로의 산출이고, 일부 세션 설정에서 trailer가
 누락됐을 뿐입니다. 아래 명령으로 세어 보실 수 있습니다(2026-08-09 기준).
 
 ```
-git rev-list --count --no-merges HEAD                                      # 894
-git log --no-merges --grep="Co-Authored-By: Claude" --format=%H | wc -l    # 849
+git rev-list --count --no-merges HEAD                                      # 910
+git log --no-merges --grep="Co-Authored-By: Claude" --format=%H | wc -l    # 858
 ```
 
 ## 1. 아키텍처 — AI가 감당할 수 있게 설계했다

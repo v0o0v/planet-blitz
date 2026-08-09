@@ -139,6 +139,51 @@ describe('③ 게이트·리다이렉트 배선', () => {
   });
 });
 
+/**
+ * ④ 게스트 배선(2026-08-09).
+ *
+ * 캔버스는 검증할 수 없으므로 이 파일의 관용구대로 **소스 텍스트로 잠근다**. 여기서 지키는
+ * 것은 값이 아니라 **순서와 조건** 넷이고, 넷 다 틀려도 타입 체크와 단위 테스트는 초록이다.
+ */
+describe('④ 게스트 배선', () => {
+  it('타이틀 미로그인 화면에만 게스트 버튼이 선다', () => {
+    const src = read('ui/pixi/titleScreen.ts');
+    // `} else {` 는 파일 앞쪽에도 있다 — 반드시 분기 시작점 **이후**에서 찾아야 한다.
+    const start = src.indexOf('if (opts.needsSignIn)');
+    const branch = src.slice(start, src.indexOf('} else {', start));
+    expect(branch).toContain('onGuestSignIn()');
+    // 누르기 **전에** 보이는 경고. 모달로 옮기면 이 단언이 깨진다(의도된 마찰).
+    expect(branch).toContain("t('title.guestNote')");
+  });
+
+  it('게스트 로그인 성공은 페이지를 다시 부팅시킨다', () => {
+    // 구글은 리다이렉트라 저절로 재부팅되지만 익명 로그인은 페이지를 안 떠난다. 재부팅이
+    // 없으면 세션만 생기고 화면은 여전히 로그인 요구 상태로 남는다.
+    const src = read('main.ts');
+    const block = src.slice(src.indexOf('onGuestSignIn: () => {'));
+    expect(block.slice(0, 600)).toContain('signInAsGuest()');
+    expect(block.slice(0, 600)).toContain('location.reload()');
+  });
+
+  it('중반 프리셋은 게스트에게만 들어간다', () => {
+    // 구글 계정이 이 경로를 타면 신규 사용자에게 만렙 세이브를 주는 셈이 된다.
+    const src = read('main.ts');
+    expect(src).toContain('user.isGuest ? guestPresetProfile() : newPlayerProfile()');
+  });
+
+  it('서버 시드는 세이브 업로드 성공 뒤에만 부른다', () => {
+    // 시드 RPC 는 profiles 행이 없으면 예외다(그 테이블들이 전부 FK 로 문다). 순서가 뒤집히면
+    // 시드가 통째로 실패하는데 실패를 삼키는 자리라 **아무 말 없이 빈 계정**이 된다.
+    const src = read('main.ts');
+    const block = src.slice(src.indexOf('if (user.isGuest) {'));
+    const push = block.indexOf('pushProfileToServer');
+    const seed = block.indexOf('seedGuestAccount');
+    expect(push).toBeGreaterThanOrEqual(0);
+    expect(seed).toBeGreaterThan(push);
+    expect(block.slice(0, 400)).toContain('if (pushed)');
+  });
+});
+
 describe('④ 로그아웃 순서', () => {
   it('세션 해제 → 로컬 삭제 → 새로고침 순이다', () => {
     const src = read('main.ts');

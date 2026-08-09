@@ -49,7 +49,7 @@ hr { border: none; border-top: 1px solid #ccc; margin: 18px 0; }
 <tbody>
 <tr>
 <td>커밋 / 머지된 PR</td>
-<td>1,392 커밋 / 498 PR</td>
+<td>1,410 커밋 / 416 PR</td>
 </tr>
 <tr>
 <td>TypeScript</td>
@@ -57,7 +57,7 @@ hr { border: none; border-top: 1px solid #ccc; margin: 18px 0; }
 </tr>
 <tr>
 <td>자동 테스트</td>
-<td>378파일 · <strong>8,676건 전량 통과</strong> (약 82초)</td>
+<td>379파일 · <strong>8,690건 전량 통과</strong> (약 100초)</td>
 </tr>
 <tr>
 <td>아키텍처 결정 기록(ADR)</td>
@@ -77,12 +77,12 @@ hr { border: none; border-top: 1px solid #ccc; margin: 18px 0; }
 </tr>
 </tbody>
 </table>
-<p>전량 AI 작성이라는 말은 직접 세어서 확인하실 수 있습니다. 총 1,392 커밋은 비머지 894건과
-머지 498건으로 나뉘는데, 비머지 894건 가운데 849건(95%)이 <code>Co-Authored-By: Claude</code> trailer를
+<p>전량 AI 작성이라는 말은 직접 세어서 확인하실 수 있습니다. 총 1,410 커밋은 비머지 910건과
+머지 500건으로 나뉘는데, 비머지 910건 가운데 858건(94%)이 <code>Co-Authored-By: Claude</code> trailer를
 답니다. trailer가 없는 45건도 같은 AI 워크플로의 산출이고, 일부 세션 설정에서 trailer가
 누락됐을 뿐입니다. 아래 명령으로 세어 보실 수 있습니다(2026-08-09 기준).</p>
-<pre><code>git rev-list --count --no-merges HEAD                                      # 894
-git log --no-merges --grep=&quot;Co-Authored-By: Claude&quot; --format=%H | wc -l    # 849
+<pre><code>git rev-list --count --no-merges HEAD                                      # 910
+git log --no-merges --grep=&quot;Co-Authored-By: Claude&quot; --format=%H | wc -l    # 858
 </code></pre>
 <h2>1. 아키텍처 — AI가 감당할 수 있게 설계했다</h2>
 <p>AI에게 대량의 코드를 맡길 때 가장 큰 위험은 그럴듯하지만 틀린 코드입니다. 이 프로젝트는
