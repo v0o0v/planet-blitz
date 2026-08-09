@@ -133,6 +133,7 @@ import { runBench } from './bench/bench.js';
 import { buildRunConfig } from './run/runConfig.js';
 import { buildCallupPilot } from './run/callupPilot.js';
 import { loadProfile, saveProfile, activeShip, newPlayerProfile } from './save/profile.js';
+import type { Profile } from './save/profile.js';
 // 게스트 첫 부팅의 출발점(중반 진행 프리셋). 구글 계정은 이 경로를 타지 않는다.
 import { guestPresetProfile } from './save/guestPreset.js';
 // 서버가 정본인 축(촉매·설계도·방어체·배치·순위·의뢰서)의 게스트 시드. 서버가 1회성을 지킨다.
@@ -231,7 +232,7 @@ import {
   PHASE_L3,
   normalizeInvasionLayers,
 } from './sim/invasion/index.js';
-import type { Invasion3Config } from './sim/invasion/index.js';
+import type { Invasion3Config, InvasionDensity } from './sim/invasion/index.js';
 import type { CoreModuleConfig } from './sim/moduleEffects.js';
 import type { ModuleInstance } from '../data/coreModules.js';
 // M4 Phase F: 도발 스티커(F2) + 재생 오버레이(F3 UI). 서버 침공 관전(상대 리플레이 로드)은
@@ -1482,11 +1483,30 @@ async function main(): Promise<void> {
    * endRun 이 PvE 정산도 서버 제출도 하지 않는다. 리플레이 recorder 는 정식 런과 똑같이
    * 붙여서(같은 record 경로) 재현·해시 검증이 가능하게 한다.
    */
+  /**
+   * 활성 기체의 레벨만 바꾼 **프로필 사본**. 저장본과 그 안의 배열은 건드리지 않는다.
+   *
+   * 하네스 침공 탭의 레벨 슬라이더 전용이다. 프로필을 직접 변형하면 슬라이더를 한 번 돌린 것이
+   * 이후 실제 런·격납고 표시·저장까지 따라가 조용히 오염된다 — 하네스가 "오염"이라고 표시하는
+   * 것은 그 런의 결과이지 계정 상태가 아니어야 한다.
+   */
+  function withPilotLevel(p: Profile, level: number): Profile {
+    const idx = p.ships[p.activeShipIndex] !== undefined ? p.activeShipIndex : 0;
+    const ship = p.ships[idx];
+    if (ship === undefined) return p;
+    const ships = p.ships.slice();
+    ships[idx] = { ...ship, level };
+    return { ...p, ships };
+  }
+
   function startHarnessInvasionRun(opts: {
     seed: number;
     layers: unknown;
     maintenance: number;
     timeLimitTicks: number;
+    density?: Partial<InvasionDensity>;
+    defenseBonusBp?: number;
+    pilotLevel?: number;
   }): void {
     // 켜져 있을 수 있는 메뉴 화면을 먼저 내린다. 하네스 경유 진입(host.startInvasion)은 이미
     // clearToMenu 를 부르고 오지만(멱등), **방어 사령부의 [시험 침공] 버튼**은 자기 화면만
@@ -1499,10 +1519,17 @@ async function main(): Promise<void> {
       layers: normalizeInvasionLayers(opts.layers),
       timeLimitTicks: opts.timeLimitTicks,
       maintenance: opts.maintenance,
+      // 미지정이면 필드를 두지 않는다 — sim 이 기본값으로 접는다(조건부 접기).
+      ...(opts.density !== undefined ? { density: opts.density } : {}),
+      ...(opts.defenseBonusBp !== undefined ? { defenseBonusBp: opts.defenseBonusBp } : {}),
     };
+    // 조종사 레벨 강제(하네스 전용). **프로필을 변형하지 않고 사본으로** 넘긴다 — 저장본을
+    // 건드리면 하네스에서 슬라이더를 한 번 돌린 것이 이후 실제 런·격납고 표시까지 오염시킨다.
+    // 침공에서 레벨 축이 실제로 살아 있는지(runConfig 의 봉인 해제)가 이 경로로 검증된다.
+    const runProfile = opts.pilotLevel === undefined ? profile : withPilotLevel(profile, opts.pilotLevel);
     // 정식 침공과 **같은 조립**을 탄다(단일 정본). 하네스 런만 다른 config 를 갖게 되면
     // "하네스에서는 되는데 실제 런에서는 안 되는" 결함이 생긴다.
-    const config = buildRunConfig(profile, { planet: 0, stage: 1, invasion3 });
+    const config = buildRunConfig(runProfile, { planet: 0, stage: 1, invasion3 });
     applyShipSprite(textures, config.shipType ?? 0);
     // 정식 침공과 같은 지형·환경 경로(단일 정본) — 하네스에서만 다른 화면이 나오면
     // "하네스에서는 되는데 실제 런에서는 안 되는" 결함이 그대로 숨는다.

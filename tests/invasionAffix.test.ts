@@ -65,6 +65,7 @@ import {
 } from '../data/defenseUnits.js';
 import type { DefenseUnitStatKey } from '../data/defenseUnits.js';
 import { defenseUnitFromRef } from '../src/items/rollDefenseUnit.js';
+import { INVASION_DENSITY_LEGACY } from '../src/sim/invasion/density.js';
 
 // ---------------------------------------------------------------------------
 // 하네스
@@ -80,10 +81,14 @@ const ref = (over: Partial<InvasionRef> = {}): InvasionRef => ({
 });
 
 function ctxOf(layers: InvasionLayers, phase: 0 | 1 | 2): InvasionStepContext {
+  // 밀도 축을 구값으로 고정한다 — 이 파일의 단언은 구 스케줄(720틱·1회 순회) 전제라,
+  // 여기서 LEGACY 를 쓰는 것이 곧 "밀도를 끄면 예전과 같은가"를 지키는 가드가 된다.
   return {
     layers,
     runtime: { phase, phaseEnterTick: 0, scrollX: 0, scrollY: 0, accelCp: 100 },
     maintenance: MAINTENANCE_FULL,
+    density: INVASION_DENSITY_LEGACY,
+    defenseBonusBp: 0,
   };
 }
 

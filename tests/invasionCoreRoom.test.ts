@@ -59,6 +59,7 @@ import { CATALOG_BOSS } from '../data/invasion/catalog.js';
 import { INVASION_TOTAL_TICKS, PHASE_L3 } from '../src/sim/invasion/constants.js';
 import { spriteSlotFor } from '../src/render/entityRenderer.js';
 import { DEFENSE_BOSS_ASSET_FILES, PROP_ASSET_FILES } from '../src/render/textures.js';
+import { INVASION_DENSITY_LEGACY } from '../src/sim/invasion/density.js';
 
 // ---------------------------------------------------------------------------
 // 픽스처
@@ -87,7 +88,15 @@ function layersWith(raw: Record<string, unknown>): InvasionLayers {
 }
 
 function ctxOf(layers: InvasionLayers, maintenance = MAINTENANCE_FULL): InvasionStepContext {
-  return { layers, runtime: { phase: 2, phaseEnterTick: 0, scrollX: 0, scrollY: 0, accelCp: 100 }, maintenance };
+  // 밀도 축을 구값으로 고정한다 — 이 파일의 단언은 구 스케줄(720틱·1회 순회) 전제라,
+  // 여기서 LEGACY 를 쓰는 것이 곧 "밀도를 끄면 예전과 같은가"를 지키는 가드가 된다.
+  return {
+    layers,
+    runtime: { phase: 2, phaseEnterTick: 0, scrollX: 0, scrollY: 0, accelCp: 100 },
+    maintenance,
+    density: INVASION_DENSITY_LEGACY,
+    defenseBonusBp: 0,
+  };
 }
 
 function live(state: WorldState, kind: string): Entity[] {

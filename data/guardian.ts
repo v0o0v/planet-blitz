@@ -8,13 +8,20 @@
  *   2. **남은 성능%(performanceCP)** — 풍화로 감쇠하는 수명형 성능(100%→50%, ADR-0006/0007).
  *      정수 centi-percent(10000=100.00%, 5000=50.00% 바닥).
  *   3. **계보 수호 가지 보너스(lineageBonusBp)** — 모든 수호 기체를 강화하는 계정 단위 보너스.
- *      정수 basis-point(0..5000 = +0%..+50%, 로그 점근 상한 — data/lineage.ts).
+ *      정수 basis-point, 로그 점근 상한. 상한 정본은 `data/lineage.ts` 의
+ *      {@link GUARDIAN_BONUS_CAP_BP} 다(2026-08-10 에 5000 → 37000 상향 — 침공에서 공격측
+ *      조종사 레벨 배율 봉인을 풀면서 방어측 대응 폭을 맞췄다).
+ *
+ * 이 모듈은 `data/lineage.ts` 의 상수 하나만 가져온다. lineage 쪽은 import 가 전혀 없어
+ * 순환이 생기지 않고, 두 파일 다 순수 정수 상수·함수라 sim 리프 import 규율도 그대로다.
  *
  * {@link resolveGuardianStats}가 이 셋을 실효 전투 스탯으로 해석한다. 클라이언트(런 실행)와
  * 서버(전수 재실행 검증)가 **동일 함수**를 호출하므로, 방어 배치 config 에 [스냅샷+성능%+보너스]
  * 만 실으면 양쪽이 비트 동일한 실효 스탯을 재현한다(갈림길①A — 서버 재현 가능). 위조(약한
  * 수호기를 강하다 주장)는 서버가 권위 스냅샷·성능·보너스로 재해석해 hashStream 이 갈려 거부한다.
  */
+
+import { GUARDIAN_BONUS_CAP_BP, LINEAGE_BONUS_CAP_BP } from './lineage.js';
 
 /** 프리셋 코드: 타이탄형(고HP·고화력·저속). 절대 재번호 금지(배치 JSON 계약). */
 export const GUARDIAN_TITAN = 0;
@@ -168,14 +175,37 @@ export function normalizePerformance(perfCP: number | undefined): number {
 }
 
 /**
- * 계보 수호 가지 보너스(basis-point)를 [0, 5000] 로 정규화한다(로그 점근 상한 +50%). 미지정·
- * 비유한·음수는 0(보너스 없음).
+ * 계보 보너스(basis-point)를 `[0, capBp]` 로 정규화한다. 미지정·비유한·음수는 0.
+ *
+ * ## 상한이 인자인 이유 (2026-08-10) — 실제로 샜던 자리다
+ * 여기 상한이 **리터럴 5000 으로 박혀 있었고, 그 함수를 두 가지가 공용했다**:
+ * 수호 가지(`resolveGuardianStats`)와 **공격측 기체 가지**(`src/items/loadout.ts` 의
+ * `applyShipLineageBonus`). 그래서 수호 상한을 올리자 공격측 `damageMult` 가 1.5 → 4.7 로
+ * 같이 튀었다(`tests/loadout.test.ts` 가 잡았다). 두 가지는 곱선도 상한도 다른 축이므로
+ * 상한을 **호출부가 명시**하게 바꿨다.
+ *
+ * 기본값은 **기체 가지 상한**({@link LINEAGE_BONUS_CAP_BP} = 5000)이다 — 인자를 안 넘기는
+ * 기존 호출부(loadout)가 예전과 정확히 같게 돌아야 하기 때문이다. 수호 경로는
+ * {@link GUARDIAN_BONUS_CAP_BP} 를 명시적으로 넘긴다.
+ *
+ * ⚠️ **SQL 정본은 아직 안 따라왔다.** `supabase/migrations/20260721000000_m7a_invasion_3layer.sql`
+ * 의 `inject_guardian_authority` 는 곱선을 **복제**해 두고 있다
+ * (`floor(5000.0 * v_level / (v_level + 20))`, 상한 5000 하드코딩). 그래서 실 PvP 침공에서는
+ * 서버가 여전히 구 상한을 주입한다. 새 상한을 실제로 살리려면 그 함수를 덮는 신규 마이그레이션이
+ * 필요하다 — 이번 레인은 기준선 확정 전이라 SQL 을 건드리지 않았다.
+ *
+ * `scaleStat` 의 곱 범위 주석(“(10000+bonusBp) ≤ 15000”)도 상한과 함께 넓어졌다 —
+ * base ≤ 수천, perfCP ≤ 10000, (10000+47000) → 곱 ≤ 약 2.9e12 로 여전히 2^53 안이라 정수 정확도는
+ * 유지된다.
  */
-export function normalizeLineageBonus(bonusBp: number | undefined): number {
+export function normalizeLineageBonus(
+  bonusBp: number | undefined,
+  capBp: number = LINEAGE_BONUS_CAP_BP,
+): number {
   if (bonusBp === undefined || !Number.isFinite(bonusBp)) return 0;
   const i = Math.trunc(bonusBp);
   if (i <= 0) return 0;
-  if (i >= 5000) return 5000;
+  if (i >= capBp) return capBp;
   return i;
 }
 
@@ -210,7 +240,9 @@ export function resolveGuardianStats(
   bonusBp: number,
 ): GuardianStats {
   const p = normalizePerformance(perfCP);
-  const b = normalizeLineageBonus(bonusBp);
+  // 수호 가지 상한을 **명시적으로** 넘긴다 — 기본값은 기체 가지 상한(5000)이라, 생략하면
+  // 계보를 아무리 올려도 수호기가 +50% 에서 잘린다(그 형태의 결함을 이미 한 번 밟았다).
+  const b = normalizeLineageBonus(bonusBp, GUARDIAN_BONUS_CAP_BP);
   return {
     radius: snapshot.radius,
     hp: scaleStat(snapshot.hp, p, b),

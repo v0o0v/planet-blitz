@@ -32,7 +32,11 @@ import type { Entity, EntityKind, EntitySink } from '../entities.js';
 import { blankEntity, addEntity, spawnEnemyBullet, spawnHazard } from '../entities.js';
 import { atan2, cos, sin, clamp, TWO_PI } from '../math.js';
 import { segmentBlocked } from '../los.js';
-import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN } from '../constants.js';
+import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN, SPAWN_RING_RADIUS } from '../constants.js';
+import { summonEnemy } from '../waves.js';
+import { GUNNER } from '../../../data/enemies.js';
+import { applyDefenseBonus } from './defenseBonus.js';
+import { invasionCoreAddInterval } from './density.js';
 import {
   DEFENSE_BOSS_OVERHEAT_TICKS,
   DEFENSE_BOSS_PHASE1_BP,
@@ -159,7 +163,13 @@ function findCore(state: WorldState): Entity | null {
 export function enterCoreRoom(state: WorldState, ctx: InvasionStepContext): void {
   if (findCore(state) !== null) return;
   const l3 = ctx.layers.l3;
-  const core = spawnInvasionCore(state, l3.core.x, l3.core.y, l3.core.hp);
+  // 코어 HP 도 방어측 계보 보너스를 받는다(방어측 성장 축 — bp=0 이면 무연산이라 바이트 동일).
+  const core = spawnInvasionCore(
+    state,
+    l3.core.x,
+    l3.core.y,
+    applyDefenseBonus(l3.core.hp, ctx.defenseBonusBp),
+  );
 
   // 보스: 빈 슬롯이면 기본 수비대(강철 골리앗 lv1 노말)가 충원한다(결정 #22 — 스폰 단계 주입).
   const bossRef: InvasionRef = l3.boss ?? {
@@ -175,6 +185,7 @@ export function enterCoreRoom(state: WorldState, ctx: InvasionStepContext): void
     l3.core.x + DEFENSE_BOSS_SPAWN_OFFSET.x,
     l3.core.y + DEFENSE_BOSS_SPAWN_OFFSET.y,
     ctx.maintenance,
+    ctx.defenseBonusBp,
   );
 
   // 기물: 빈 소켓은 **비운다**(결정 #22 — 과충전 방지). 소켓 인덱스가 곧 좌표다.
@@ -184,7 +195,15 @@ export function enterCoreRoom(state: WorldState, ctx: InvasionStepContext): void
     if (ref === null || ref === undefined) continue;
     const off = PROP_SOCKET_OFFSETS[i];
     if (off === undefined) continue;
-    const p = spawnL3Prop(state, ref, i, l3.core.x + off.x, l3.core.y + off.y, ctx.maintenance);
+    const p = spawnL3Prop(
+      state,
+      ref,
+      i,
+      l3.core.x + off.x,
+      l3.core.y + off.y,
+      ctx.maintenance,
+      ctx.defenseBonusBp,
+    );
     if (p !== null && p.enemyType === PROP_SHIELD_GENERATOR) generatorShield += p.targetX;
   }
 
@@ -220,6 +239,7 @@ export function spawnDefenseBoss(
   x: number,
   y: number,
   maintenance: number,
+  defenseBonusBp = 0,
 ): Entity {
   const def = defenseBossDef(ref.catalogId);
   const bp = defenseBossPowerBp(ref.level, ref.ascension, ref.rarity);
@@ -230,9 +250,10 @@ export function spawnDefenseBoss(
   b.y = y;
   b.enemyType = ref.catalogId;
   b.radius = def.radius;
-  b.hp = affixHp(scaleByBp(def.hp, bp), mods);
+  // 계보 보너스(내구도·피해 두 축, bp=0 이면 무연산)를 강화 3축·어픽스 위에 곱한다.
+  b.hp = applyDefenseBonus(affixHp(scaleByBp(def.hp, bp), mods), defenseBonusBp);
   b.maxHp = b.hp;
-  b.damage = affixDamage(scaleByBp(def.contactDamage, bp), mods);
+  b.damage = applyDefenseBonus(affixDamage(scaleByBp(def.contactDamage, bp), mods), defenseBonusBp);
   b.phase = 0;
   // 첫 캐스트까지의 지연도 정비도로 스케일 — 방치된 기지는 첫 공격부터 느리다(포탑 선례).
   b.cooldown = affixCooldown(
@@ -253,6 +274,7 @@ export function spawnL3Prop(
   x: number,
   y: number,
   maintenance: number,
+  defenseBonusBp = 0,
 ): Entity | null {
   const spec = propSpec(ref.catalogId);
   if (spec === null) return null;
@@ -267,21 +289,24 @@ export function spawnL3Prop(
   p.radius = spec.radius;
   // 보호막(defShieldFlat)은 코어 공급량이 아니라 **자기 내구도 위**에 얹힌다
   // (data/defenseUnits.ts 의 stat 정의 그대로 — "파괴 전까지 내구도 위에 얹힌다").
-  p.hp = affixHp(scaleByBp(spec.hp, bp), mods);
+  // 계보 보너스(내구도 축, bp=0 이면 무연산)를 강화 3축·어픽스 위에 곱한다.
+  p.hp = applyDefenseBonus(affixHp(scaleByBp(spec.hp, bp), mods), defenseBonusBp);
   p.maxHp = p.hp;
   switch (spec.role) {
     case PROP_SHIELD_GENERATOR:
+      // 실드 공급량(코어 보호막)은 "내구도·피해" 축이 아니라 별도 자원이라 계보 보너스 범위
+      // 밖에 둔다(레인 지시 §②가 명시한 축은 방어체 자신의 내구도·피해뿐이다).
       p.targetX = scaleByBp(spec.shieldHp, bp);
       break;
     case PROP_GRAVITY_ANCHOR:
-      p.damage = affixDamage(scaleByBp(spec.hazardDamage, bp), mods);
+      p.damage = applyDefenseBonus(affixDamage(scaleByBp(spec.hazardDamage, bp), mods), defenseBonusBp);
       p.cooldown = affixCooldown(
         invasionFireCooldown(spec.periodTicks, affixMaintenance(maintenance, mods)),
         mods,
       );
       break;
     case PROP_FIXED_CANNON:
-      p.damage = affixDamage(scaleByBp(spec.damage, bp), mods);
+      p.damage = applyDefenseBonus(affixDamage(scaleByBp(spec.damage, bp), mods), defenseBonusBp);
       p.cooldown = affixCooldown(
         invasionFireCooldown(spec.fireCooldown, affixMaintenance(maintenance, mods)),
         mods,
@@ -289,6 +314,7 @@ export function spawnL3Prop(
       break;
     case PROP_REPAIR_PYLON:
       // `damage` 슬롯을 **펄스당 회복량**으로 재활용한다(플랫 Entity 규율 — 신규 필드 없음).
+      // 회복량은 "피해" 축이 아니므로 계보 보너스를 걸지 않는다(범위 §②와 동일 판단).
       p.damage = propHealAmount(spec, bp);
       p.cooldown = affixCooldown(
         invasionFireCooldown(spec.periodTicks, affixMaintenance(maintenance, mods)),
@@ -296,7 +322,7 @@ export function spawnL3Prop(
       );
       break;
     case PROP_MINE_SWARM:
-      p.damage = affixDamage(scaleByBp(spec.hazardDamage, bp), mods);
+      p.damage = applyDefenseBonus(affixDamage(scaleByBp(spec.hazardDamage, bp), mods), defenseBonusBp);
       p.cooldown = affixCooldown(
         invasionFireCooldown(spec.periodTicks, affixMaintenance(maintenance, mods)),
         mods,
@@ -317,7 +343,7 @@ export function spawnL3Prop(
 // ---------------------------------------------------------------------------
 
 /**
- * 코어방을 1틱 진행한다: 보스 → 기물 → 수호 → 코어 보호막 갱신.
+ * 코어방을 1틱 진행한다: 보스 → 기물 → 수호 → 코어 보호막 갱신 → 코어 증원.
  * 순서는 고정이며 각 단계가 순수·결정론이다(RNG 미소비).
  */
 export function stepCoreRoom(state: WorldState, ctx: InvasionStepContext): void {
@@ -329,7 +355,76 @@ export function stepCoreRoom(state: WorldState, ctx: InvasionStepContext): void 
   stepL3Props(state, player, ctx, trigger);
   stepInvasionGuardians(state, player, ctx);
   updateCoreShield(state, ctx);
+  stepCoreReinforcements(state, ctx);
 }
+
+/**
+ * L3 코어 증원 — 진입 시 1회 배치가 끝이던 코어방에 지속 압박을 더한다. 행성런 보스 세그먼트가
+ * `cardInterval: 200` 으로 보스전 중에도 잡몹을 계속 흘리는 것과 같은 의도다
+ * (`data/waves.ts` SEGMENTS index 6 주석 — "화력이 부족하면 몹이 쌓여 자연 사망으로 긴 꼬리가
+ * 캡된다"). 코어가 깎일수록 소환 간격이 짧아진다({@link invasionCoreAddInterval} — 막판 압박).
+ *
+ * 규율:
+ *   - RNG 미소비: `summonEnemy`(`../waves.js`)만 쓴다.
+ *   - 플레이어 좌표 비의존: 소환 위치는 **코어 위치 + 8방위 순회**(경과 틱 ÷ 간격의 정수 함수)로만
+ *     정한다.
+ *   - 상태 없는 정수 등식 트리거: 별도 카운터를 두지 않고 `elapsed % interval === 0` 으로 판정한다
+ *     (density.ts 규율 ③과 동일).
+ *   - `l3AddIntervalTicks`/`l3AddMaxAlive` 가 0 이면 정확히 끔 — 첫 줄에서 즉시 반환해
+ *     기존 런과 바이트 동일을 지킨다.
+ */
+function stepCoreReinforcements(state: WorldState, ctx: InvasionStepContext): void {
+  const density = ctx.density;
+  if (density.l3AddIntervalTicks <= 0 || density.l3AddMaxAlive <= 0) return;
+  const core = findCore(state);
+  if (core === null) return;
+  const interval = invasionCoreAddInterval(
+    density.l3AddIntervalTicks,
+    coreHpPctOf(core.hp, core.maxHp),
+  );
+  if (interval <= 0) return;
+  const elapsed = state.tick - ctx.runtime.phaseEnterTick;
+  if (elapsed <= 0 || elapsed % interval !== 0) return;
+
+  // 코어방은 전이 정리(`phase.ts` clearLayerEntities)가 페이즈 진입 시 'enemy' kind 를 전부
+  // 걷어내므로, L3 안에서 살아 있는 'enemy' 는 전부 이 증원 경로가 낸 것이다 — 별도 표식(aux0
+  // 등) 없이 kind 로만 세도 동시 생존 상한을 정확히 지킬 수 있다.
+  let alive = 0;
+  for (const e of state.entities) {
+    if (e.kind === 'enemy' && !e.dead) alive++;
+  }
+  if (alive >= density.l3AddMaxAlive) return;
+
+  // 소환 위치: 코어 중심에서 화면 밖 반지름(SPAWN_RING_RADIUS)만큼 떨어진 8방위를 경과 틱 ÷
+  // 간격의 정수 몫으로 순회한다 — 플레이어 좌표를 참조하지 않는다.
+  const dirIndex = Math.trunc(elapsed / interval) % L3_ADD_DIRECTION_COUNT;
+  const ang = (dirIndex * TWO_PI) / L3_ADD_DIRECTION_COUNT;
+  const x = core.x + Math.round(cos(ang) * SPAWN_RING_RADIUS);
+  const y = core.y + Math.round(sin(ang) * SPAWN_RING_RADIUS);
+
+  // ## 왜 GUNNER 인가 — REPAIR_DRONE 을 쓰면 **교착이 난다**(2026-08-10 실측)
+  //
+  // 처음에는 L1 기본 수비대와 같은 결로 맞추려고 `REPAIR_DRONE`(정찰 드론편대 구성원)을 썼다.
+  // 그런데 그 정의는 `movement: 'seekWounded'` / `attack: { kind: 'heal' }` 로, **플레이어를
+  // 아예 공격하지 않는 힐러**다. L1 종스크롤에서는 스쳐 지나가며 접촉 피해라도 냈지만, L3 는
+  // 고정 카메라라 위협이 0 인 채 화면에 남는다.
+  //
+  // 결과는 예외가 아니라 무내용이었다: 자동 조준이 코어 대신 드론을 계속 물어 코어가 영영 안
+  // 깎이고, 드론은 플레이어를 안 때려 HP 도 안 준다 → **L3 가 133,200틱 동안 끝나지 않고
+  // 피해 총합이 6 이었다**(정상 경로는 3,588틱 만에 승리, 피해 122).
+  //
+  // 그래서 「가장 약한 잡몹」이 아니라 **「실제로 플레이어를 때리는 가장 가벼운 적」**을 고른다.
+  // GUNNER 는 `movement: 'standoff'` 로 거리를 잡고 박격포를 쏘므로 고정 아레나에서도 압박이
+  // 성립한다. 소환 위치·시점은 여전히 플레이어 좌표와 무관하다(이동 AI 가 플레이어를 보는 것은
+  // 규율 위반이 아니다 — 규율은 스폰의 결정론이다).
+  const e = summonEnemy(state, GUNNER, x, y);
+  e.hp = applyDefenseBonus(e.hp, ctx.defenseBonusBp);
+  e.maxHp = e.hp;
+  e.damage = applyDefenseBonus(e.damage, ctx.defenseBonusBp);
+}
+
+/** 코어 증원 소환 방위 수(8방위 순회). */
+const L3_ADD_DIRECTION_COUNT = 8;
 
 /**
  * L3 접미 계기 판정 입력. 코어가 실제로 존재하는 유일한 레이어라 `coreHpLow` 가 여기서만
@@ -419,11 +514,18 @@ function stepL3Props(
     if (!set.neutral) {
       const bp = propPowerBp(ref.level, ref.ascension, ref.rarity);
       // 내구도는 **단조 상향**만(되돌리면 이미 입은 피해가 사라진다). 피해는 매 틱 덮어쓴다.
-      raiseMaxHp(p, affixHp(scaleByBp(spec.hp, bp), mods));
+      // 계보 보너스(bp=0 이면 무연산)를 스폰 경로와 같은 순서로 접는다.
+      raiseMaxHp(p, applyDefenseBonus(affixHp(scaleByBp(spec.hp, bp), mods), ctx.defenseBonusBp));
       if (p.enemyType === PROP_GRAVITY_ANCHOR || p.enemyType === PROP_MINE_SWARM) {
-        p.damage = affixDamage(scaleByBp(spec.hazardDamage, bp), mods);
+        p.damage = applyDefenseBonus(
+          affixDamage(scaleByBp(spec.hazardDamage, bp), mods),
+          ctx.defenseBonusBp,
+        );
       } else if (p.enemyType === PROP_FIXED_CANNON) {
-        p.damage = affixDamage(scaleByBp(spec.damage, bp), mods);
+        p.damage = applyDefenseBonus(
+          affixDamage(scaleByBp(spec.damage, bp), mods),
+          ctx.defenseBonusBp,
+        );
       } else if (p.enemyType === PROP_REPAIR_PYLON) {
         // 회복량은 어픽스 피해 보정을 타지 않는다(피해 어픽스가 회복을 밀어 올리면 "공격
         // 어픽스인데 왜 회복이 늘지" 라는 규칙 붕괴가 생긴다). 강화 3축만 반영한다.
@@ -583,8 +685,12 @@ function stepDefenseBosses(
     const mods = set.neutral ? NEUTRAL_AFFIX_MODS : resolveDefenseMods(set, trigger, b.x, b.y);
     if (!set.neutral) {
       // 내구도는 단조 상향(dt-lastwall = 코어 저HP 재장갑), 접촉 피해는 매 틱 재계산.
-      raiseMaxHp(b, affixHp(scaleByBp(def.hp, bp), mods));
-      b.damage = affixDamage(scaleByBp(def.contactDamage, bp), mods);
+      // 계보 보너스(bp=0 이면 무연산)를 스폰 경로와 같은 순서로 접는다.
+      raiseMaxHp(b, applyDefenseBonus(affixHp(scaleByBp(def.hp, bp), mods), ctx.defenseBonusBp));
+      b.damage = applyDefenseBonus(
+        affixDamage(scaleByBp(def.contactDamage, bp), mods),
+        ctx.defenseBonusBp,
+      );
     }
     updateDefenseBoss(state, b, player, def, bp, ctx.maintenance, mods);
   }

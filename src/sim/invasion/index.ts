@@ -7,6 +7,8 @@
  */
 
 export * from './constants.js';
+export * from './density.js';
+export * from './defenseBonus.js';
 export * from './types.js';
 export * from './normalize.js';
 export * from './scroll.js';

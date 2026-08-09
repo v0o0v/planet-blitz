@@ -22,6 +22,7 @@
 import type { GuardianSnapshot } from '../../../data/guardian.js';
 import type { WorldState } from '../world.js';
 import type { CoreModuleConfig } from '../moduleEffects.js';
+import type { InvasionDensity } from './density.js';
 
 // ---------------------------------------------------------------------------
 // 공용 Ref — 카탈로그 참조 + 강화 3축
@@ -173,6 +174,31 @@ export interface Invasion3Config {
    * 미장착이면 필드 자체를 두지 않는다(조건부 접기 → 거동·해시 바이트 불변).
    */
   modules?: CoreModuleConfig;
+  /**
+   * 밀도 축(2026-08-10). 미지정 = {@link INVASION_DENSITY_DEFAULT}.
+   *
+   * **`layers` 안이 아니라 여기**인 이유는 `modules` 와 같다 — layers 에 넣으면
+   * `normalizeInvasionLayers`/`layersEqual`/`enumerateLayerFields` 와 위조 대조 테스트,
+   * SQL `invasion_layers_valid`·`invasion_recon_layers` 까지 전부 재작성이 따라온다.
+   * 밀도는 배치물이 아니라 **판 전체의 연출 예산**이라 배치 계약 밖이 맞다.
+   */
+  density?: Partial<InvasionDensity>;
+  /**
+   * 방어측 계보 보너스(basis-point). 편대·설비·보스·기물의 내구도·피해에 일괄로 걸린다.
+   *
+   * ## 왜 생겼나
+   * 침공에서 공격측 조종사 레벨 성장(최대 ×4.69)을 살리기로 하면서
+   * (`src/run/runConfig.ts` — 구 주석이 "여는 조건은 방어측에 대응 축이 생기는 것"이라고
+   * 못박아 둔 그 조건이다) 대응 축이 필요해졌다. 계보 **수호 가지**가 그 축인데, 구 구현은
+   * 수호 슬롯 2칸에만 걸려서 **수호기를 안 놓은 기지(=기본 수비대 상태)에서는 효과가 정확히
+   * 0** 이었다. 그래서 적용 범위를 기지 전체로 넓히고 그 값을 여기로 실어 나른다.
+   *
+   * 미지정 = 0 = 배율 정확히 ×1.00(무연산 → 기존 런과 바이트 동일).
+   *
+   * ⚠️ 서버 권위 주입(`begin_invasion` 이 `lineage_guardian_level` 을 authority 에 싣는 것)은
+   * 아직 배선되지 않았다 — 현재 채워지는 경로는 하네스뿐이고, 실 PvP 침공에서는 0 이다.
+   */
+  defenseBonusBp?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +216,10 @@ export interface InvasionStepContext {
   readonly runtime: InvasionRuntime;
   /** 방어 정비도(centi-percent 0..10000, 정규화 완료값). */
   readonly maintenance: number;
+  /** 밀도 축(정규화 완료값 — 전 필드 채워져 있다). */
+  readonly density: InvasionDensity;
+  /** 방어측 계보 보너스(basis-point, 0 이상 정수). 0 = 무연산. */
+  readonly defenseBonusBp: number;
 }
 
 /** L1 편대 스폰·진행(src/sim/invasion/formation.ts — L3 레인 구현). */
@@ -212,6 +242,12 @@ export type EnterLayerFn = (state: WorldState, ctx: InvasionStepContext) => void
 export interface InvasionStepHooks {
   enterFormation?: EnterLayerFn;
   stepFormation?: StepFormationFn;
+  /**
+   * L2 배경 편대(밀도 축). `stepFacility` 와 **같은 페이즈에서 둘 다** 돈다 — 설비(고정 포탑·
+   * 해저드)와 이동 병력은 서로 다른 공급원이고, 회랑의 이동 적이 스포너 설비 하나에만 묶여
+   * 있던 것을 푸는 축이다.
+   */
+  stepCorridorFormation?: StepFormationFn;
   enterFacility?: EnterLayerFn;
   stepFacility?: StepFacilityFn;
   enterCoreRoom?: EnterLayerFn;

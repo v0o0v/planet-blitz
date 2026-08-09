@@ -495,6 +495,16 @@ export const PRESS_FACILITY_CATALOG_ID = 6;
 /** 빈 소켓 자동 충원 catalogId(결정 #22 — 속사포 lv1 노말). */
 export const GARRISON_FACILITY_CATALOG_ID = 0;
 
+/**
+ * 드론 스포너 catalogId. **L2 의 유일한 이동 적 공급원**이라 밀도 축이 직접 참조한다
+ * (`src/sim/invasion/density.ts` `l2GarrisonSpawners`).
+ *
+ * 밴드 램프의 설비 선택이 `catalogId = (i + shift) % kinds` 라 이 id 가 창에 걸릴 때만
+ * 스포너가 1기 들어온다 — 그래서 구 밸런스에서 L2 동시 이동 적이 밴드에 따라 "0 아니면 3"
+ * 이었다. 빈 소켓 충원이 이 id 를 우선 쓰는 것이 그 바닥을 메우는 축이다.
+ */
+export const SPAWNER_FACILITY_CATALOG_ID = 5;
+
 /** catalogId 로 스펙을 조회한다. 범위 밖이면 undefined(호출부가 스킵). */
 export function facilitySpecFor(catalogId: number): FacilitySpec | undefined {
   return INVASION_FACILITIES[catalogId];

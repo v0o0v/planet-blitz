@@ -64,6 +64,7 @@ import {
   GARRISON_FACILITY_CATALOG_ID,
 } from '../data/invasion/facilities.js';
 import { MAINTENANCE_FULL } from '../src/sim/invasion/guardian.js';
+import { INVASION_DENSITY_LEGACY } from '../src/sim/invasion/density.js';
 
 // ---------------------------------------------------------------------------
 // 헬퍼
@@ -83,6 +84,8 @@ function layersWith(templateId: number, sockets: (FacilityRef | null)[]): Invasi
 }
 
 function ctxOf(layers: InvasionLayers, maintenance = MAINTENANCE_FULL): InvasionStepContext {
+  // 밀도 축을 구값으로 고정한다 — 이 파일의 단언은 구 스케줄(720틱·1회 순회) 전제라,
+  // 여기서 LEGACY 를 쓰는 것이 곧 "밀도를 끄면 예전과 같은가"를 지키는 가드가 된다.
   return {
     layers,
     runtime: {
@@ -93,6 +96,8 @@ function ctxOf(layers: InvasionLayers, maintenance = MAINTENANCE_FULL): Invasion
       accelCp: INVASION_ACCEL_BASE_CP,
     },
     maintenance,
+    density: INVASION_DENSITY_LEGACY,
+    defenseBonusBp: 0,
   };
 }
 

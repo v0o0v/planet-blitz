@@ -47,7 +47,7 @@ import {
   makeInvasionContext,
   normalizeInvasionLayers,
 } from '../sim/invasion/index.js';
-import type { InvasionLayers, InvasionPhase } from '../sim/invasion/index.js';
+import type { InvasionDensity, InvasionLayers, InvasionPhase } from '../sim/invasion/index.js';
 import { MAINTENANCE_FULL } from '../sim/invasion/guardian.js';
 // 행성 모드 런타임 조회(ADR-0021, Lane2~9). 전부 순수 read-only 판정이라 스냅샷에서 불러도
 // 시뮬 상태·해시에 영향이 없다(오염도 아님). 각 모드 게이트 밖에서는 0/false 를 돌려준다.
@@ -103,6 +103,26 @@ export interface HarnessInvasionOpts {
   timeLimitTicks?: number;
   /** 시작 직후 점프할 레이어(1=L1 · 2=L2 · 3=L3). 미지정이면 L1 부터. */
   layer?: 1 | 2 | 3;
+  /**
+   * 밀도 축(부분 지정 가능). 미지정 = `INVASION_DENSITY_DEFAULT`.
+   * 침공 탭 슬라이더가 이 경로로 값을 밀어 넣는다.
+   */
+  density?: Partial<InvasionDensity>;
+  /**
+   * 방어측 계보 보너스(basis-point). 미지정 = 0(무연산).
+   *
+   * 실 PvP 에서는 서버가 `begin_invasion` 권위값으로 실어야 하는데 **아직 배선 전**이라,
+   * 현재 이 값이 0 이 아닌 경로는 하네스뿐이다. 그래서 여기가 사실상 유일한 튜닝 입구다.
+   */
+  defenseBonusBp?: number;
+  /**
+   * 공격측 조종사 레벨 강제(1..100). 미지정 = 프로필의 활성 기체 레벨 그대로.
+   *
+   * 기준선이 "만렙 기체가 기본 수비대 상태를 어느 정도 클리어하는가"라, 침공 탭에서 곧바로
+   * 레벨을 세울 수 있어야 한다. 구 동선은 런 탭에서 표준 빌드를 적용하고 침공 탭으로 건너오는
+   * 2단계였다.
+   */
+  pilotLevel?: number;
 }
 
 /** 하네스가 호스트에 넘기는, 기본값이 모두 해소된 침공 런 설정. */
@@ -111,6 +131,12 @@ export interface HarnessInvasionResolved {
   layers: InvasionLayers;
   maintenance: number;
   timeLimitTicks: number;
+  /** 밀도 축(부분 지정 — sim 이 `normalizeInvasionDensity` 로 마저 접는다). */
+  density?: Partial<InvasionDensity>;
+  /** 방어측 계보 보너스(basis-point). 0 = 무연산. */
+  defenseBonusBp?: number;
+  /** 공격측 조종사 레벨 강제. 미지정 = 프로필 값. */
+  pilotLevel?: number;
 }
 
 /** 침공 런타임 요약(스냅샷 · 치트 패널 표시용). 침공이 아니면 null. */
@@ -659,6 +685,11 @@ export function createHarness(host: HarnessHost): Harness {
         layers,
         maintenance: opts.maintenance ?? MAINTENANCE_FULL,
         timeLimitTicks: opts.timeLimitTicks ?? INVASION_TOTAL_TICKS,
+        // 밀도·계보·레벨은 **미지정이면 필드를 아예 두지 않는다**. 조건부 접기라 값을 안 건드린
+        // 호출부(기존 테스트·자동화)가 예전과 정확히 같은 config 를 만든다.
+        ...(opts.density !== undefined ? { density: opts.density } : {}),
+        ...(opts.defenseBonusBp !== undefined ? { defenseBonusBp: opts.defenseBonusBp } : {}),
+        ...(opts.pilotLevel !== undefined ? { pilotLevel: opts.pilotLevel } : {}),
       });
       prevSummary = emptyWorldEventSummary();
       // 레이어 점프는 런이 생긴 뒤에만 가능하다(무대 꾸미기 → 오염).

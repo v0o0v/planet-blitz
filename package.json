@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit",
     "bench:curve": "vite-node bench/runCurve.ts",
     "bench:invasion": "vite-node bench/invasionBands.ts",
+    "bench:density": "vite-node bench/invasionDensity.ts",
     "bench:commission": "vite-node bench/commissionBands.ts",
     "bench:nominal": "vite-node bench/nominalPower.ts",
     "bench:gearlevel": "vite-node bench/gearLevelCurve.ts",
