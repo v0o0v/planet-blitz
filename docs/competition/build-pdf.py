@@ -34,10 +34,11 @@ code { font-family: Consolas, monospace; font-size: 9.3pt; background: #f4f4f4;
 pre { background: #f4f4f4; padding: 10px 12px; border-radius: 5px; overflow: hidden;
       page-break-inside: avoid; }
 pre code { background: none; padding: 0; }
-img { max-width: 100%; border: 1px solid #d0d7e2; border-radius: 4px; display: block;
-      margin: 12px auto 2px; page-break-inside: avoid; }
+img { max-width: 62%; border: 1px solid #d0d7e2; border-radius: 4px; display: block;
+      margin: 10px auto 2px; page-break-inside: avoid; }
 img + em, p > em:only-child { display: block; text-align: center; color: #555;
-      font-size: 9.3pt; margin: 2px 0 12px; }
+      font-size: 8.8pt; margin: 2px 0 10px; max-width: 76%; margin-left: auto;
+      margin-right: auto; line-height: 1.45; }
 ul, ol { margin: 6px 0; padding-left: 22px; }
 li { margin: 3px 0; }
 hr { border: none; border-top: 1px solid #ccc; margin: 18px 0; }
