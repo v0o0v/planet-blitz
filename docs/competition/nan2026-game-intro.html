@@ -1,0 +1,212 @@
+<!doctype html><html lang='ko'><head><meta charset='utf-8'><style>
+@page { size: A4; margin: 18mm 16mm; }
+* { box-sizing: border-box; }
+body { font-family: 'Malgun Gothic', 'Noto Sans KR', sans-serif; color: #1a1a1a;
+       font-size: 10.5pt; line-height: 1.62; margin: 0; }
+h1 { font-size: 19pt; margin: 0 0 4px; line-height: 1.3; }
+h1 + p strong { color: #444; font-weight: 600; }
+h2 { font-size: 13.5pt; margin: 22px 0 8px; border-bottom: 2px solid #2b6cb0;
+     padding-bottom: 3px; color: #17365d; page-break-after: avoid; }
+h3 { font-size: 11.5pt; margin: 16px 0 6px; color: #2b6cb0; page-break-after: avoid; }
+p { margin: 6px 0; }
+blockquote { margin: 10px 0; padding: 8px 14px; background: #f2f6fb;
+             border-left: 4px solid #2b6cb0; }
+blockquote p { margin: 4px 0; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9.8pt;
+        page-break-inside: avoid; }
+th, td { border: 1px solid #c9d4e0; padding: 5px 8px; text-align: left;
+         vertical-align: top; word-break: keep-all; }
+th { background: #eef3f9; }
+code { font-family: Consolas, monospace; font-size: 9.3pt; background: #f4f4f4;
+       padding: 1px 4px; border-radius: 3px; }
+pre { background: #f4f4f4; padding: 10px 12px; border-radius: 5px; overflow: hidden;
+      page-break-inside: avoid; }
+pre code { background: none; padding: 0; }
+img { max-width: 100%; border: 1px solid #d0d7e2; border-radius: 4px; display: block;
+      margin: 12px auto 2px; page-break-inside: avoid; }
+img + em, p > em:only-child { display: block; text-align: center; color: #555;
+      font-size: 9.3pt; margin: 2px 0 12px; }
+ul, ol { margin: 6px 0; padding-left: 22px; }
+li { margin: 3px 0; }
+hr { border: none; border-top: 1px solid #ccc; margin: 18px 0; }
+</style></head><body><h1>Planet Blitz — 게임 소개 및 설명서</h1>
+<p><strong>NAN 2026 Game×AI 해커톤 사전 과제 · 개인 참가 김민석 (v0o0v2@gmail.com) · 2026-08-10</strong></p>
+<h2>1. 게임 제목 및 한 줄 소개</h2>
+<p><strong>Planet Blitz (플래닛 블리츠)</strong></p>
+<blockquote>
+<p><strong>"행성을 침략해 장비를 파밍하고, 그 힘으로 상위 랭커의 기지를 뚫어 자리를 빼앗는 탄막 슈팅."</strong></p>
+</blockquote>
+<p>탑다운 탄막 슈팅 × 디아블로식 장비 파밍 × 비동기 PvP 래더가 한 루프로 맞물린 웹 게임입니다.
+공격은 자동, 플레이어의 몫은 <strong>회피와 포지셔닝</strong> — 손은 쉽고 빌드는 깊습니다.</p>
+<blockquote>
+<p><strong>1인 · 26일 · 사람이 타이핑한 게임 코드 0줄.</strong> 1,392 커밋 · 498 PR · 자동 테스트
+8,676건 전량 통과 — 지금 브라우저에서 바로 플레이되는 <strong>실서비스 중인 온라인 게임</strong>입니다.
+AI를 어떻게 지휘해 여기까지 왔는지는 「AI 활용 기술 문서」가 증명합니다.</p>
+</blockquote>
+<h2>2. 플레이 링크</h2>
+<table>
+<thead>
+<tr>
+<th>항목</th>
+<th>링크</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>플레이 · 심사용 데모 (로그인 불필요)</strong></td>
+<td><em>(데모 빌드 링크 — 배포 후 기재)</em></td>
+</tr>
+<tr>
+<td><strong>플레이 · 정식 (계정 연동)</strong></td>
+<td>https://v0o0v.github.io/planet-blitz/</td>
+</tr>
+<tr>
+<td><strong>플레이 영상 (YouTube, 30~60초)</strong></td>
+<td><em>(영상 링크 — 업로드 후 기재)</em></td>
+</tr>
+<tr>
+<td>소스 코드 (public)</td>
+<td>https://github.com/v0o0v/planet-blitz</td>
+</tr>
+</tbody>
+</table>
+<p>정식 빌드에 구글 로그인을 필수화한 것은 <strong>래더 자리를 빼앗는 비동기 PvP가 계정 없이는
+성립하지 않기 때문</strong>입니다. 심사 편의를 위해 같은 소스에서 서버 설정만 뺀 <strong>무로그인 데모
+빌드</strong>를 함께 제공합니다 — 네트워크 계층이 설정 부재 시 자동으로 no-op이 되도록 처음부터
+설계돼 있어, 코드 분기 없이 같은 소스에서 두 빌드가 나옵니다.</p>
+<h3>3분 심사 경로 (권장)</h3>
+<ol>
+<li>데모 링크 접속 — 데스크톱 Chrome/Edge, 설치 없음, 로딩 수 초</li>
+<li>튜토리얼 런 1회 (약 2분) — <code>WASD</code> 이동, <code>Space</code> 대시만 기억하면 됩니다</li>
+<li>기지 맵에서 <strong>격납고</strong> 클릭 → 방금 주운 장비 장착 → <strong>출격</strong>으로 재출격</li>
+<li>더 보시려면: 행성 선택에서 다른 행성을 고르면 <strong>게임플레이 모드 자체가 바뀝니다</strong> (§3)</li>
+</ol>
+<h3>화면 한눈에</h3>
+<p><img alt="카르곤 — 아레나 전투" src="img/shot-kargon-arena.jpg" />
+<em>카르곤 · 아레나 서바이벌 — 처치 할당 HUD, 우상단 레이더, 하단 액티브 스킬</em></p>
+<p><img alt="보스전 — 용암 요새 전차" src="img/shot-boss.jpg" />
+<em>카르곤 보스전 — 패턴 직후 5초 "과열 창"(받는 피해 2배)이 공격 타이밍을 만든다</em></p>
+<p><img alt="톡사르 — 오염 확산 모드" src="img/shot-toxar.jpg" />
+<em>톡사르 · 오염 확산 모드 — 같은 게임인데 목표가 "구역 정화"로 바뀐다 (오염도 게이지)</em></p>
+<p><img alt="아르케 — 레이싱 모드" src="img/shot-arke-racing.jpg" />
+<em>아르케 · 강제 스크롤 레이싱 — 부스트 패드를 밟으며 전방 돌파</em></p>
+<p><img alt="격납고" src="img/shot-hangar.jpg" />
+<em>격납고 — 장비 7종 8칸, 요구 레벨 미달 장비는 잠금(빨간 Lv 표기)</em></p>
+<p><img alt="연구소 스킬 상세" src="img/shot-research.jpg" />
+<em>연구소 — 스킬마다 현재 레벨 기준 실수치와 만렙 기준을 함께 보여준다 (기체당 30종 × 7기체 = 210종)</em></p>
+<p><img alt="기지 맵" src="img/shot-base.jpg" />
+<em>기지 — 건물 7종과 출격 게이트. 미해금 건물은 잠금 연출로 진행 순서를 자연 노출</em></p>
+<p><img alt="정산 화면" src="img/shot-result.jpg" />
+<em>런 정산 — 전투 기록과 전리품(촉매 드랍 포함), "다시 출격" 루프</em></p>
+<h2>3. 게임 방법</h2>
+<h3>목표</h3>
+<ol>
+<li><strong>행성을 침략</strong>(PvE 런)해 장비·재화를 파밍한다.</li>
+<li>기지에서 <strong>영구 성장</strong>(장비 장착 · 스킬 투자)한다.</li>
+<li>더 높은 <strong>침략 단계</strong>를 뚫으며 강해진다.</li>
+<li>최종 목표 — <strong>나보다 순위가 높은 플레이어의 기지를 침공(PvP)해 래더 자리를 빼앗는다.</strong></li>
+</ol>
+<h3>조작 (마우스 + 키보드)</h3>
+<table>
+<thead>
+<tr>
+<th>조작</th>
+<th>키</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>이동</td>
+<td><code>WASD</code> 또는 방향키</td>
+</tr>
+<tr>
+<td>공격</td>
+<td><strong>자동</strong> — 주무기가 가장 가까운 적을 자동 조준·연사</td>
+</tr>
+<tr>
+<td>대시</td>
+<td><code>Space</code> (쿨다운 · 대시 중 무적)</td>
+</tr>
+<tr>
+<td>파워업 선택</td>
+<td>레벨업 시 3택 오버레이에서 마우스 클릭</td>
+</tr>
+</tbody>
+</table>
+<p><strong>판정 규칙 한 가지만 기억하세요</strong>: 실제 피격 판정은 기체 중심의 아주 작은 점뿐입니다.
+탄막이 빽빽해 보여도 틈 사이로 지나갈 수 있습니다.</p>
+<h3>런 1회 — 2분 동안 벌어지는 일</h3>
+<p>출격하면 사방에서 적 떼가 몰려오고, 주무기는 알아서 가장 가까운 적을 쏩니다. 플레이어는
+탄막 사이를 비집고 다니며 경험치 젬을 <strong>끊기지 않게</strong> 줍습니다 — 연속 수거 콤보가 배율을
+올려주기 때문입니다. 레벨업마다 3택 파워업으로 이번 런의 빌드가 점점 과격해지고, 중간에
+보급선이 지나가면 20초 안에 격추해 확정 장비를 노립니다. 웨이브는 시간이 아니라 <strong>처치
+할당</strong>으로 진행됩니다 — 할당을 못 채우면 급행 소환으로 압박이 커지므로, 강한 빌드는 런을
+짧게 끝내고 약한 빌드는 오래 버텨야 합니다. 웨이브를 다 넘기면 3페이즈 보스가 등장하고,
+보스가 큰 패턴을 쓴 직후 5초의 <strong>과열 창</strong>(받는 피해 2배)에 화력을 집중해 끝장을 봅니다.</p>
+<ul>
+<li><strong>승리 종료</strong>: 보스 격파 → 정산 화면에서 전리품 획득, "다시 출격" 가능.</li>
+<li><strong>패배 종료</strong>: 격추되면 런 종료 — 단, <strong>주운 전리품은 전량 보존</strong>됩니다. 잃는 것은 보스
+  확정 드랍 기회뿐이라 부담 없이 재도전하게 설계했습니다.</li>
+<li>PvP <strong>침공</strong>의 종료 조건은 별도입니다: 제한시간 3분 내 상대 기지 <strong>코어 파괴 시 승리</strong>,
+  시간 초과·격추 시 실패(부활 불가).</li>
+</ul>
+<h3>행성 6곳 = 게임플레이 모드 6종</h3>
+<p>행성마다 난이도만 다른 것이 아니라 <strong>런의 규칙 자체가 다릅니다.</strong> 파밍할 행성을 고르는 것이
+곧 오늘 할 게임을 고르는 것입니다.</p>
+<ul>
+<li><strong>카르곤</strong> (화산·중장갑) — <strong>아레나 서바이벌</strong>: 사방 포위 속 처치 할당 돌파, 온보딩 기준 모드</li>
+<li><strong>베르단</strong> (초원·곤충 군체) — <strong>수축 지대</strong>: 좁아지는 안전지대 안에서 물량 압박을 버티는 생존전</li>
+<li><strong>니플헤임</strong> (빙설·유령 함대) — <strong>추격전</strong>: 서리 안개 속 유령 기함을 쫓는 추격·탈출</li>
+<li><strong>아르케</strong> (고대 기계 유적) — <strong>레이싱</strong>: 좌→우 강제 스크롤 전장의 정밀 속도전</li>
+<li><strong>톡사르</strong> (오염·부식) — <strong>오염 확산</strong>: 번져 가는 산성 오염 지대의 봉쇄전</li>
+<li><strong>크라스</strong> (파괴·관통) — <strong>블록 격파</strong>: 하→상 강제 전진 + 지형 파괴 돌파전</li>
+</ul>
+<h3>그 위의 성장 축</h3>
+<table>
+<thead>
+<tr>
+<th>축</th>
+<th>내용</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>난이도</td>
+<td>행성별 독립 <strong>침략 단계</strong> 1~∞ (클리어할수록 개방)</td>
+</tr>
+<tr>
+<td>기체</td>
+<td>7종 — 기체마다 전용 스킬 30종, 총 <strong>스킬 210종</strong></td>
+</tr>
+<tr>
+<td>장비</td>
+<td>슬롯 7종 8칸 · 등급 4단계(노말~유니크) · 어픽스 잠금 리롤 크래프팅</td>
+</tr>
+<tr>
+<td>촉매</td>
+<td>출격 전 주입하는 소모품 — 난이도 페널티와 보상 부스트가 한 몸 (스택 가능)</td>
+</tr>
+<tr>
+<td>PvP</td>
+<td>비동기 침공 · 영구 래더 · 방어 배치 · 리플레이 관전</td>
+</tr>
+<tr>
+<td>공정성</td>
+<td>보상 발급·래더 변동은 서버 Edge Function 전담 — 클라이언트 위조 이득을 상한으로 유계. 시뮬은 시드 결정론(재현성 상시 게이트)</td>
+</tr>
+</tbody>
+</table>
+<h2>4. 실행 방법</h2>
+<ul>
+<li><strong>설치가 없습니다.</strong> 위 플레이 링크를 데스크톱 브라우저(Chrome/Edge 권장, 1920×1080
+  기준·레터박스 스케일)로 열면 수 초 로딩 후 바로 시작됩니다. 모바일은 미지원입니다
+  (데스크톱 전용 조작).</li>
+<li><strong>심사용 데모</strong>: 로그인 없이 즉시 플레이. 진행도는 브라우저(localStorage)에만 저장됩니다.</li>
+<li><strong>정식 빌드</strong>: 타이틀에서 구글 계정 선택 1회 → 진행도·장비·래더가 계정에 저장되고,
+  침공(PvP)·의뢰·일일 보상 등 서버 연동 콘텐츠가 열립니다. 별도 가입 절차·비용 없음.</li>
+<li>소스 저장소는 public이라 코드·커밋 이력·테스트를 자유롭게 열람하실 수 있습니다.</li>
+</ul>
+<h2>5. 플레이 영상</h2>
+<p>30~60초 실플레이 영상: <em>(YouTube 링크 — §2 표와 동일)</em></p>
+<p>영상 목차: 0:00 아레나 탄막 회피 → 0:10 행성 전환(모드가 바뀌는 순간) → 0:20 보스전 과열 창
+→ 0:32 정산·격납고 장비 장착 → 0:42 침공(PvP) 코어 파괴.</p></body></html>
