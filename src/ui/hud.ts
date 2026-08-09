@@ -988,9 +988,16 @@ export class Hud {
     this.hpBar.fill.style.width = `${hpPct}%`;
     this.hpBar.text.textContent = `${Math.ceil(s.hp)} / ${s.maxHp}`;
 
-    const xpPct = s.xpNeed > 0 ? Math.min(100, (s.xp / s.xpNeed) * 100) : 0;
-    this.xpBar.fill.style.width = `${xpPct}%`;
-    this.xpBar.text.textContent = `Lv ${s.level}  ·  ${s.xp}/${s.xpNeed}`;
+    // `xpNeed === 0` = 이 런에는 레벨업이 없다(침공 — `xpToNextForRun` 이 유일한 분기점이라
+    // HUD 는 술어를 따로 적지 않는다). 바를 통째로 숨긴다: 남겨 두면 `Lv 1 · 1234/0` 처럼
+    // 분모 0 짜리 눈금이 뜨고, 조종사 레벨(Lv100)과 런 레벨(1)이 한 화면에서 충돌한다.
+    const hasLevelUp = s.xpNeed > 0;
+    this.xpBar.root.style.display = hasLevelUp ? '' : 'none';
+    if (hasLevelUp) {
+      const xpPct = Math.min(100, (s.xp / s.xpNeed) * 100);
+      this.xpBar.fill.style.width = `${xpPct}%`;
+      this.xpBar.text.textContent = `Lv ${s.level}  ·  ${s.xp}/${s.xpNeed}`;
+    }
 
     const m = Math.floor(s.timeSec / 60);
     const sec = Math.floor(s.timeSec % 60);
