@@ -32,12 +32,13 @@
  * ## 튜닝 방법
  * 전 필드가 하네스 침공 탭 슬라이더로 노출된다(`src/harness/cheatPanel.ts`). 기준선은
  * **기본 수비대만 있는 상태**(아무것도 배치 안 한 방어)를 만렙 기체가 어느 정도 클리어하는
- * 지점이며, 사용자가 직접 플레이해 정한다. 여기 기본값은 그 출발점일 뿐이다.
+ * 지점이며, 사용자가 직접 플레이해 정한다.
  */
 
 /**
  * 밀도 파라미터 묶음. **전 필드 정수**(ADR-0005 — f64 를 sim 입력에 넣지 않는다).
- * 부분 지정이 가능하며 미지정 필드는 {@link INVASION_DENSITY_DEFAULT} 로 메워진다.
+ * 부분 지정이 가능하며 미지정 필드는 {@link INVASION_DENSITY_LEGACY}(밀도 끔)로 메워진다 —
+ * 실 침공 런의 밸런스 기본값은 런 조립 층이 싣는다(`normalizeInvasionDensity` 주석).
  */
 export interface InvasionDensity {
   /**
@@ -99,40 +100,48 @@ export const INVASION_DENSITY_LEGACY: InvasionDensity = {
 };
 
 /**
- * 현행 기본값 — 밀도 상향 출발점.
+ * 현행 기본값 — **사용자가 만렙 장비로 직접 플레이해 확정한 값** (2026-08-10).
  *
- * ## L1 값의 근거 (`pnpm bench:density` 실측, 2026-08-10 · 빈 배치 · 무입력)
+ * ## 이 숫자들은 계측이 아니라 체감이 정했다
+ * 기준선이 「만렙 기체가 기본 수비대를 어느 정도 클리어하는가」라 코드가 유도할 수 없다.
+ * 하네스 침공 탭 슬라이더(「장비 = maxed」)로 사용자가 직접 돌려 확정했다.
  *
- * | 간격 | 바퀴 | span | L1 지속 | 총 스폰 | 동시 피크 |
- * |---|---|---|---|---|---|
- * | 720 | 4 | 예산 초과 | 3455t | 25 | **5** ← 구값. "적이 없다"의 실체 |
- * | 200 | 4 | 4600 | 5344t | 120 | 6 |
- * | 100 | 8 | 4700 | 5399t | 240 | 12 |
- * | **90** | **8** | **4230** | **5190t** | **240** | **15** ← 채택 |
- * | 80 | 8 | 3760 | 5400t | 220 | 20 |
- * | 60 | 4 | 1380 | 5399t | 120 | 78 ← 절벽 |
+ * ⚠️ **봇 계측으로 이 값을 다시 유도하려 하지 마라.** 참조봇·기본 하네스 프로필은 무장 Lv1 이라
+ * 실제 만렙 빌드와 화력이 자릿수로 다르다(코어 DPS 실측 122 vs 약 19,000 — 156배). 아래
+ * 「출발점을 어떻게 잡았나」의 표는 **그 자리에서 나온 값**이라 최종값과 크게 다르다.
  *
- * 참고선은 행성런의 세그먼트별 동시 적 상한 12→44(`data/waves.ts` SEGMENTS)다. 기준선이
- * **가장 약한 방어(기본 수비대만)** 이므로 그 곡선의 아래쪽(12~20)을 겨눴고, 배치물·계보가
- * 그 위에 얹힌다.
+ * ## 출발점을 어떻게 잡았나 (`pnpm bench:density` — 참고용 이력)
+ * 무입력·빈 배치 기준으로 L1 을 스윕해 간격 90 · 8바퀴를 출발점으로 잡았었다:
  *
- * 60틱 아래의 절벽은 눈속임이 아니라 **국면 전환**이다: 적이 안 줄어들면 "구간 전멸"이 안
- * 걸려 스크롤 가속(`INVASION_ACCEL_*`)이 안 붙고, L1 이 예산 끝까지 늘어지며 적이 계속
- * 쌓인다. 그래서 90 은 그 절벽에서 충분히 떨어져 있고, span 4230 이 예산 5400 안이라
- * 마지막 바퀴가 잘리지도 않는다.
+ * | 간격 | 바퀴 | L1 지속 | 총 스폰 | 동시 피크 |
+ * |---|---|---|---|---|
+ * | 720 | 4 | 3455t | 25 | **5** ← 구 침공. "적이 없다"의 실체 |
+ * | 90 | 8 | 5190t | 240 | 15 ← 출발점 |
+ * | **40** | **8** | — | — | ~102 ← **확정값** |
  *
- * ⚠️ 이 값들은 **무입력 상한**에서 고른 출발점이다. 실제 플레이어는 적을 잡으므로 체감은
- * 이보다 옅다 — 확정은 사용자가 하네스에서 직접 플레이해 정한다(사용자 결정 2026-08-10).
- * L2·L3 값은 아직 같은 밀도의 실측을 못 거쳤다(L1 만 스윕했다).
+ * 확정값이 출발점보다 훨씬 빽빽한 이유는 명확하다 — 그 표의 "동시 피크"는 **적을 거의 못 잡는
+ * 무입력 플레이어** 기준이라 실제 만렙 빌드의 체감보다 과대평가였다. 사람이 치면 적이 계속
+ * 녹으므로 화면에 남는 수가 훨씬 적다.
+ *
+ * L1 span 은 `40 × 47 = 1880`틱으로 예산 5400 안에 넉넉히 들어온다.
+ *
+ * ## ⚠️ 밀도를 바꾸면 함께 봐야 하는 것
+ * 침공은 **런 내 레벨업이 없으므로**(`xpToNextInvasion` = `NO_LEVELUP`) 적 볼륨이 늘어도
+ * 파워업 리듬은 안 흔들린다 — PvE 에서 두 번 났던 「적 볼륨을 올렸는데 XP 계수가 낡아 레벨업이
+ * 폭주」 결함은 이쪽에 해당 없다.
+ *
+ * 대신 **메타 XP(`state.xpTotal`, 기체 영구 레벨)는 처치 수에 비례한다**(`creditKillXpDirect`).
+ * 밀도를 크게 올리면 침공 1회의 계정 성장이 같은 배수로 커진다 — 그건 어려워진 만큼의 보상이라
+ * 의도된 방향이지만, 파밍 속도를 재는 자리에서는 이 연결을 기억해야 한다.
  */
 export const INVASION_DENSITY_DEFAULT: InvasionDensity = {
-  l1IntervalTicks: 90,
+  l1IntervalTicks: 40,
   l1Repeats: 8,
-  l2FormationIntervalTicks: 300,
-  l2SpawnAliveAdd: 2,
-  l2GarrisonSpawners: 3,
-  l3AddIntervalTicks: 60,
-  l3AddMaxAlive: 24,
+  l2FormationIntervalTicks: 50,
+  l2SpawnAliveAdd: 7,
+  l2GarrisonSpawners: 7,
+  l3AddIntervalTicks: 10,
+  l3AddMaxAlive: 60,
 };
 
 // ---------------------------------------------------------------------------
@@ -149,11 +158,22 @@ function clampInt(raw: number | undefined, fallback: number, min: number, max: n
 }
 
 /**
- * 밀도 입력을 정규형으로 접는다. 미지정 = {@link INVASION_DENSITY_DEFAULT}.
+ * 밀도 입력을 정규형으로 접는다. **미지정 = {@link INVASION_DENSITY_LEGACY}(밀도 축 끔)**.
  * 상한은 성능 폭주 방지선이지 밸런스 판단이 아니다.
+ *
+ * ## ⚠️ 왜 기본이 DEFAULT 가 아니라 LEGACY 인가
+ * 밸런스 기본값을 **sim 정규화에 두면 침공 config 를 직접 만드는 테스트 전부가 그 값 위에서
+ * 돈다.** 그 테스트들은 대부분 무장 Lv1 관측자로 배선을 보는 것이라, 확정 밀도(간격 40 ·
+ * L3 증원 상한 60) 아래에서는 관찰 창 안에 진행을 못 해 「배선이 없다」와 「배선은 있는데
+ * 느리다」가 구분되지 않는다 — 실제로 `invasionE2E`·`invasionCoreRoom`·`defenseUnits` 등이
+ * 무더기로 빨개졌다.
+ *
+ * 그래서 **실 침공 런의 밀도는 런 조립 층**(`src/main.ts` 침공 진입 두 경로)이
+ * {@link INVASION_DENSITY_DEFAULT} 를 명시적으로 싣는다. 같은 규칙을 `garrisonLevel`·
+ * 방어 배율에도 쓴다(`data/invasion/garrison.ts` 의 `INVASION_*_DEFAULT` 주석).
  */
 export function normalizeInvasionDensity(raw?: Partial<InvasionDensity>): InvasionDensity {
-  const d = INVASION_DENSITY_DEFAULT;
+  const d = INVASION_DENSITY_LEGACY;
   return {
     l1IntervalTicks: clampInt(raw?.l1IntervalTicks, d.l1IntervalTicks, 30, 3600),
     l1Repeats: clampInt(raw?.l1Repeats, d.l1Repeats, 1, 32),

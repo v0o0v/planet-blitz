@@ -239,6 +239,7 @@ import {
   normalizeInvasionLayers,
 } from './sim/invasion/index.js';
 import type { Invasion3Config, InvasionDensity } from './sim/invasion/index.js';
+import { INVASION_DENSITY_DEFAULT } from './sim/invasion/index.js';
 import type { CoreModuleConfig } from './sim/moduleEffects.js';
 import type { ModuleInstance } from '../data/coreModules.js';
 // M4 Phase F: 도발 스티커(F2) + 재생 오버레이(F3 UI). 서버 침공 관전(상대 리플레이 로드)은
@@ -1446,6 +1447,8 @@ async function main(): Promise<void> {
       defenseHpBp: INVASION_DEFENSE_HP_BP_DEFAULT,
       defenseDamageBp: INVASION_DEFENSE_DAMAGE_BP_DEFAULT,
       defenseCoreHpBp: INVASION_DEFENSE_CORE_HP_BP_DEFAULT,
+      // 밀도도 밸런스 축이라 **여기서** 싣는다(sim 정규화 기본은 중립이다 — 그 주석 참조).
+      density: INVASION_DENSITY_DEFAULT,
     };
     // 예비역 소집(ADR-0024): 호출부가 고른 수호기 id 가 있으면 그 잠긴 실물 빌드로 출격한다.
     // id 가 null/undefined 이거나(활성 기체 출격) 조회 실패·build 부재(구 수호기)면 pilot 은
@@ -1539,7 +1542,8 @@ async function main(): Promise<void> {
       timeLimitTicks: opts.timeLimitTicks,
       maintenance: opts.maintenance,
       // 미지정이면 필드를 두지 않는다 — sim 이 기본값으로 접는다(조건부 접기).
-      ...(opts.density !== undefined ? { density: opts.density } : {}),
+      // 하네스는 슬라이더 값을 넘긴다. 안 넘기면 실 침공과 같은 밸런스 기본값.
+      density: opts.density ?? INVASION_DENSITY_DEFAULT,
       // 하네스는 슬라이더 값을 넘긴다. 안 넘기면 실 침공과 같은 밸런스 기본값.
       defenseHpBp: opts.defenseHpBp ?? INVASION_DEFENSE_HP_BP_DEFAULT,
       defenseDamageBp: opts.defenseDamageBp ?? INVASION_DEFENSE_DAMAGE_BP_DEFAULT,

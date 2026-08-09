@@ -119,15 +119,21 @@ function pressure(state: WorldState, ticks: number): Pressure {
 // ---------------------------------------------------------------------------
 
 describe('밀도 — 정규화', () => {
-  it('미지정은 기본값으로 메워진다', () => {
-    expect(normalizeInvasionDensity()).toEqual(INVASION_DENSITY_DEFAULT);
-    expect(normalizeInvasionDensity({})).toEqual(INVASION_DENSITY_DEFAULT);
+  // ⚠️ **미지정 기본은 LEGACY(밀도 끔)이지 DEFAULT 가 아니다**(2026-08-10).
+  // 밸런스 기본값을 sim 정규화에 두면 침공 config 를 직접 만드는 테스트 전부가 그 값 위에서
+  // 돌아, 무장 Lv1 관측자를 쓰는 배선 테스트가 무더기로 "관찰 창 안에 진행 못 함"으로 빨개진다
+  // (실제로 겪었다). 실 침공 런의 밀도는 **런 조립 층**(`src/main.ts`)이 명시적으로 싣는다.
+  it('미지정은 중립(밀도 끔)으로 메워진다 — 밸런스 기본값은 런 조립 층에 있다', () => {
+    expect(normalizeInvasionDensity()).toEqual(INVASION_DENSITY_LEGACY);
+    expect(normalizeInvasionDensity({})).toEqual(INVASION_DENSITY_LEGACY);
+    // 공허 방어 — 두 묶음이 실제로 다른 값이어야 이 단언에 의미가 있다.
+    expect(INVASION_DENSITY_DEFAULT).not.toEqual(INVASION_DENSITY_LEGACY);
   });
 
   it('부분 지정은 지정한 축만 덮는다', () => {
     const d = normalizeInvasionDensity({ l1Repeats: 7 });
     expect(d.l1Repeats).toBe(7);
-    expect(d.l1IntervalTicks).toBe(INVASION_DENSITY_DEFAULT.l1IntervalTicks);
+    expect(d.l1IntervalTicks).toBe(INVASION_DENSITY_LEGACY.l1IntervalTicks);
   });
 
   it('손상 입력은 기본값·범위로 떨어진다(sim 에 f64·NaN 이 못 들어간다)', () => {
@@ -137,7 +143,7 @@ describe('밀도 — 정규화', () => {
       l2SpawnAliveAdd: 1e9,
       l3AddIntervalTicks: 240.7,
     });
-    expect(d.l1IntervalTicks).toBe(INVASION_DENSITY_DEFAULT.l1IntervalTicks);
+    expect(d.l1IntervalTicks).toBe(INVASION_DENSITY_LEGACY.l1IntervalTicks);
     expect(d.l1Repeats).toBe(1);
     expect(d.l2SpawnAliveAdd).toBe(32);
     expect(d.l3AddIntervalTicks).toBe(240);
