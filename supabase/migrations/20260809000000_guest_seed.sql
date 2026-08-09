@@ -236,8 +236,14 @@ begin
 end;
 $$;
 
+-- ⚠️ `anon` 을 **따로** revoke 해야 한다. PUBLIC 만 걷어내면 `anon` 은 여전히 실행할 수 있다
+--    (Supabase 가 public 스키마 신규 함수에 기본 권한을 준다). 실제로 이 마이그레이션의 첫
+--    적용에서 검증 #3 이 `anon=True` 를 잡았다. 악용은 안 된다(anon JWT 는 auth.uid() 가 null
+--    이라 첫 줄에서 예외) — 그래도 "쓸 수 있는 문이 열려 있다"를 남길 이유가 없다.
+--    기존 RPC 들(20260801000000:250)과 같은 3줄 관용구를 그대로 쓴다.
 revoke all on function public.seed_guest_account() from public;
-grant execute on function public.seed_guest_account() to authenticated;
+revoke all on function public.seed_guest_account() from anon;
+grant execute on function public.seed_guest_account() to authenticated, service_role;
 
 comment on function public.seed_guest_account() is
   '게스트(익명) 계정 1회 시드 — 촉매·설계도·방어체·배치·순위·의뢰서. is_anonymous 계정만, 계정당 1회(guest_seeds PK). 획득 캡(catalyst_grants)은 소모하지 않는다. user JWT.';
