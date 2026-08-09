@@ -1,24 +1,22 @@
 /**
- * 침공 런 풀 XP 곡선 — **레벨업 빈도 대역 가드** (2026-08-10 밀도 레인).
+ * 침공 런 풀 XP — **레벨업이 일어나지 않는다** (2026-08-10, 사용자 지시).
  *
- * ## 왜 이 파일이 필요한가
- * 사용자 제기 "레벨업 카드가 너무 자주 나와"의 원인은 XP 곡선이 아니라 **적 밀도**였다.
- * `xpToNextInvasion` 의 `10 + 6L` 은 "침공은 젬 획득량이 훨씬 적다"는 전제 위에 잡힌 값인데,
- * 밀도 축이 L1 총 스폰을 25 → 240 으로 올리면서 그 전제가 무너져 런당 레벨업이
- * **3.2 → 20.8** 로 폭주했다. 그동안 단위 테스트는 전부 초록이었다 — 두 축이 코드로 이어져
- * 있지 않아 **아무것도 그 연결을 지키지 않았다**.
+ * ## 이 파일의 이력 (하루 만에 뒤집혔다 — 기록해 둔다)
+ * 어제 이 파일은 "런당 종료 레벨이 5~8 대역인가"를 지켰다. 밀도 축이 L1 총 스폰을 25 → 240 으로
+ * 올리면서 침공 XP 계수가 낡아 레벨업이 3.2 → 20.8 회로 폭주했고("레벨업 카드가 너무 자주
+ * 나와"), 계수를 `10+6L` → `10+66L` 로 다시 재 6.6 회로 맞춘 직후였다.
  *
- * 같은 사고가 PvE 에서 이미 한 번 있었다(`xpToNext` 주석: `killGoal` 합계 80 → 240 에
- * `10 + 13L` 이 남아 레벨업 14~18회). 두 번 밟았으므로 가드를 둔다.
+ * 그 다음 사용자 결정이 **"침공에서는 레벨업 카드 없앤다"** 였다. 침공은 엔드게임 PvP 라
+ * 런 안에서 강해지는 무대가 아니라 이미 강해진 것을 시험하는 무대다. 그래서 대역 가드는
+ * 지킬 대상을 잃었고, 이 파일은 **"0회인가"** 를 지키는 쪽으로 다시 쓰였다.
  *
- * ## 무엇을 지키는가 — 골든이 아니라 **대역**이다
- * "정확히 6.6회"를 박지 않는다. 밀도는 사용자가 하네스에서 계속 돌릴 축이라, 골든을 박으면
- * 슬라이더를 만질 때마다 이 파일이 깨져 튜닝 자체가 비싸진다. 대신 **사람이 판단한 대역**
- * (PvE 와 같은 5~8회)만 지킨다 — 이 대역을 벗어나면 그것은 "값이 달라졌다"가 아니라
- * "밀도를 바꿔 놓고 XP 계수를 안 쟀다"는 뜻이다.
+ * ## 왜 계수 대신 이걸 지키는가
+ * 「레벨업이 없다」는 값이 아니라 **계약**이다. 밀도·장비·시드를 아무리 돌려도 침공에서
+ * 파워업 3택이 뜨면 그것은 회귀다. 반대로 PvE 쪽은 건드리지 않았음을 함께 못 박는다 —
+ * 술어가 하나(`xpToNextForRun`)라 한쪽을 고치면 반대쪽이 조용히 딸려갈 수 있다.
  *
- * ⚠️ 여기 단언이 깨지면 `xpToNextInvasion` 을 고치기 전에 **밀도 기본값을 먼저 보라.**
- * 대개 원인은 이 파일이 아니라 `src/sim/invasion/density.ts` 쪽이다.
+ * ⚠️ 여기 단언이 깨지면 **메타 풀(`state.xpTotal`)까지 같이 죽었는지** 먼저 보라. 없앤 것은
+ * 런 풀 3택뿐이고 계정 성장은 그대로여야 한다(ADR-0036 이원화). 아래 마지막 블록이 그 축이다.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -29,6 +27,7 @@ import {
   xpToNext,
   xpToNextInvasion,
   xpToNextForRun,
+  NO_LEVELUP,
   DEFAULT_CONFIG,
   type InputFrame,
   type WorldConfig,
@@ -42,18 +41,13 @@ import {
   type InvasionDensity,
 } from '../src/sim/invasion/index.js';
 
-/** 레벨업 빈도 목표 대역(런당 종료 레벨). PvE 와 같은 5~8 회. */
-const LEVELUP_MIN = 5;
-const LEVELUP_MAX = 8;
-
-/** 대역을 재는 시드. 늘리면 해상도가 오르지만 이 파일이 느려진다. */
+/** 대역을 재는 시드. */
 const SEEDS = [4242, 48879, 4951, 7, 12345] as const;
 
-function invasionConfig(density: InvasionDensity): WorldConfig {
+function invasionConfig(density: InvasionDensity = INVASION_DENSITY_DEFAULT): WorldConfig {
   return {
     ...DEFAULT_CONFIG,
-    // 관측 대상은 **XP 유입**이지 생존이 아니다. 중간에 죽으면 남은 구간의 XP 가 통째로
-    // 빠져 레벨업 횟수를 과소평가한다.
+    // 관측 대상은 XP 유입이지 생존이 아니다 — 중간에 죽으면 남은 구간이 통째로 빠진다.
     playerHp: 100_000_000,
     invasion3: {
       layers: emptyInvasionLayers(),
@@ -65,64 +59,71 @@ function invasionConfig(density: InvasionDensity): WorldConfig {
 }
 
 /**
- * 침공 런 하나를 끝까지 돌리고 종료 레벨을 돌려준다.
+ * 침공 런 하나를 끝까지 돌린다. **오토파일럿으로 돌린다** — 무입력은 적을 거의 못 잡아
+ * XP 유입을 통째로 과소평가한다(실측: 무입력이면 밀도 차이 6.5배가 1.0 vs 3.0 으로 눌린다).
  *
- * **오토파일럿으로 돌린다.** 무입력은 적을 거의 못 잡아 XP 유입을 통째로 과소평가한다 —
- * 실제로 무입력으로 재면 구·신 밀도가 각각 1.0 / 3.0 으로 눌려 6.5배 차이가 안 보였다.
- * 레벨업이 뜨면 그 프레임에 0번을 소비한다(안 하면 월드가 정지한 채 예산만 흐른다).
+ * 레벨업이 떠 있으면 그 프레임에 0번을 소비한다. **없어야 정상이지만 소비 경로는 남긴다** —
+ * 회귀로 3택이 떠 버렸을 때 월드가 정지한 채 예산만 흘러 "레벨 1 · 통과"라는 거짓 초록이
+ * 되는 것을 막는다.
  */
-function endLevel(density: InvasionDensity, seed: number): number {
-  const s: WorldState = createWorld(seed, invasionConfig(density));
+function runInvasion(density?: InvasionDensity): { level: number; picks: number; xpTotal: number } {
+  const s: WorldState = createWorld(SEEDS[0], invasionConfig(density));
+  let picks = 0;
   for (let i = 0; i < INVASION_TOTAL_TICKS; i++) {
-    const pending = s.pendingLevelUp !== undefined && s.pendingLevelUp !== null;
+    const pending = s.pendingLevelUp === true;
+    if (pending) picks++;
     const base: InputFrame = autopilotInput(s);
     stepWorld(s, pending ? { ...base, special: packPowerupPick(0) } : base);
     if (s.gameOver || s.victory) break;
   }
-  return s.level;
+  return { level: s.level, picks, xpTotal: s.xpTotal };
 }
 
-describe('침공 XP 곡선 — 커브 분기', () => {
-  it('침공 런은 침공 커브를, PvE 런은 PvE 커브를 쓴다', () => {
-    const inv = createWorld(1, invasionConfig(INVASION_DENSITY_DEFAULT));
-    expect(xpToNextForRun(inv)).toBe(xpToNextInvasion(inv.level));
+describe('침공 — 레벨업 없음(계약)', () => {
+  it('침공 커브는 NO_LEVELUP 을 돌려준다(레벨 무관)', () => {
+    for (const lv of [0, 1, 5, 12, 99]) expect(xpToNextInvasion(lv)).toBe(NO_LEVELUP);
+    expect(NO_LEVELUP).toBe(0);
+  });
+
+  it('침공 런은 그 커브를, PvE 런은 PvE 커브를 탄다', () => {
+    const inv = createWorld(1, invasionConfig());
+    expect(xpToNextForRun(inv)).toBe(NO_LEVELUP);
 
     const pve = createWorld(1, { ...DEFAULT_CONFIG } as WorldConfig);
     expect(xpToNextForRun(pve)).toBe(xpToNext(pve.level));
+    // PvE 는 **여전히 레벨업이 있다** — 침공 쪽을 0 으로 만든 것이 반대쪽으로 새지 않았는가.
+    expect(xpToNextForRun(pve)).toBeGreaterThan(0);
   });
 
-  it('레벨 0 에서 두 커브가 같다(구간 겹침 — 분모 표시 결함이 여기서 숨었었다)', () => {
-    // 2026-07-27 에 HUD 분모만 PvE 커브로 남아 침공에서 11배 부풀어 표시된 적이 있는데,
-    // 레벨 0 에서 두 커브가 우연히 같아 발견이 늦었다. 그 겹침을 사실로 기록해 둔다.
-    expect(xpToNextInvasion(0)).toBe(xpToNext(0));
-  });
-});
-
-describe('침공 XP 곡선 — 레벨업 빈도 대역', () => {
-  it(`현행 밀도에서 런당 종료 레벨이 ${LEVELUP_MIN}~${LEVELUP_MAX} 대역이다`, () => {
-    const levels = SEEDS.map((s) => endLevel(INVASION_DENSITY_DEFAULT, s));
-    const avg = levels.reduce((a, b) => a + b, 0) / levels.length;
-    // 평균이 대역 안에 있고, 개별 시드도 대역에서 크게 벗어나지 않아야 한다.
-    expect(avg, `종료 레벨 ${levels.join(',')} (평균 ${avg})`).toBeGreaterThanOrEqual(LEVELUP_MIN);
-    expect(avg, `종료 레벨 ${levels.join(',')} (평균 ${avg})`).toBeLessThanOrEqual(LEVELUP_MAX);
-    for (const lv of levels) {
-      expect(lv, `개별 시드 이탈: ${levels.join(',')}`).toBeGreaterThanOrEqual(LEVELUP_MIN - 2);
-      expect(lv, `개별 시드 이탈: ${levels.join(',')}`).toBeLessThanOrEqual(LEVELUP_MAX + 2);
+  it('런 전체를 돌려도 3택이 한 번도 뜨지 않고 레벨이 1 그대로다', () => {
+    for (const seed of SEEDS) {
+      const s: WorldState = createWorld(seed, invasionConfig());
+      let picks = 0;
+      for (let i = 0; i < INVASION_TOTAL_TICKS; i++) {
+        if (s.pendingLevelUp === true) picks++;
+        stepWorld(s, autopilotInput(s));
+        if (s.gameOver || s.victory) break;
+      }
+      expect(picks, `seed ${seed}: 3택이 ${picks}프레임 떴다`).toBe(0);
+      expect(s.level, `seed ${seed}`).toBe(1);
     }
   });
 
-  it('밀도가 XP 유입을 실제로 움직인다(두 축이 이어져 있다는 공허 방어)', () => {
-    // 위 대역 단언이 "밀도와 무관하게 우연히 맞은 것"이 아님을 보인다.
-    //
-    // ⚠️ 대조군은 **구 밀도**여야 한다. 처음에는 "더 빽빽하게 하면 레벨이 더 오른다"로 썼다가
-    // 틀렸다 — 45틱×16바퀴로 올렸더니 오히려 7 → 5 로 **내려갔다**. 참조봇의 DPS 가 이미
-    // 포화라, 그보다 빨리 나오는 적은 처치되지 않고 화면을 지나쳐 정리된다(= XP 0).
-    // 밀도는 XP 를 단조 증가시키지 않는다. 이 사실 자체가 밀도 튜닝에서 기억할 값이다.
-    const legacy = endLevel(
-      { ...INVASION_DENSITY_DEFAULT, l1IntervalTicks: 720, l1Repeats: 1 },
-      4242,
-    );
-    const current = endLevel(INVASION_DENSITY_DEFAULT, 4242);
-    expect(current, `구밀도 ${legacy} vs 현행 ${current}`).toBeGreaterThan(legacy);
+  it('밀도를 크게 올려도 여전히 0회다(계수가 아니라 계약이라는 확인)', () => {
+    // 어제 결함의 정확한 형태가 "밀도를 올렸더니 레벨업이 폭주"였다. 그 입력을 그대로 넣어
+    // 이제는 아무 일도 안 일어나는지 본다 — 공허 검증이 아니도록 XP 는 실제로 쌓여야 한다.
+    const r = runInvasion({ ...INVASION_DENSITY_DEFAULT, l1IntervalTicks: 45, l1Repeats: 16 });
+    expect(r.picks).toBe(0);
+    expect(r.level).toBe(1);
+    expect(r.xpTotal, '젬을 하나도 안 먹었다면 이 테스트는 공허하다').toBeGreaterThan(0);
+  });
+});
+
+describe('침공 — 메타 성장은 살아 있다', () => {
+  it('런 풀 3택은 없어도 메타 풀(기체 영구 레벨)은 계속 쌓인다', () => {
+    // 없앤 것은 '카드'뿐이다. 이것까지 죽으면 침공을 돌 이유가 사라진다(ADR-0036 이원화).
+    const r = runInvasion();
+    expect(r.picks).toBe(0);
+    expect(r.xpTotal).toBeGreaterThan(0);
   });
 });

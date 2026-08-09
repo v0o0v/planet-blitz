@@ -254,13 +254,13 @@ describe('xpToNextForRun — HUD 분모와 판정 임계가 한 함수다', () =
       invasion3: { layers: emptyInvasionLayers(), timeLimitTicks: INVASION_TOTAL_TICKS },
     });
 
-  // ⚠️ **두 커브가 지금은 같은 값이다**(둘 다 `10 + 66L`, 2026-08-10 밀도 레인).
-  // 원래 침공은 `10 + 6L` 로 훨씬 완만했는데, 밀도 축이 L1 총 스폰을 25 → 240 으로 올려
-  // 처치 볼륨이 행성런 수준이 되면서 계수를 다시 재자 PvE 값으로 수렴했다.
+  // ## 2026-08-10 — 침공은 이제 **레벨업이 없다**(사용자 지시 "침공에서는 레벨업 카드 없앤다")
   //
-  // 그래서 이 블록은 **"침공이 더 완만하다"를 지키지 않는다** — 그건 값의 우연이지 계약이
-  // 아니다. 지키는 것은 *구조*다: 런 종류별로 **각자의 함수**를 타는가. 두 함수를 합치지
-  // 않았으므로 침공을 다시 튜닝하면 언제든 다시 갈라진다.
+  // 이 블록의 원래 목적은 "판정 임계와 HUD 분모가 같은 함수인가"였고, 그것을 **두 커브가
+  // 갈리는 구간**에서 쟀다. 침공 쪽이 0(`NO_LEVELUP`)이 되면서 그 구간이 사라졌으므로:
+  //   · 임계를 실제로 재는 축은 **PvE 로 옮긴다**(아래 두 번째 it — 커브가 살아 있는 쪽).
+  //   · 침공 쪽 계약("3택이 아예 안 뜬다")은 `tests/invasionXpCurve.test.ts` 가 지킨다.
+  // 여기 남는 것은 **분기 자체가 런 종류를 정확히 가르는가**뿐이다.
   it('런 종류별로 각자의 커브 함수를 탄다', () => {
     const pve = createWorld(1);
     const inv = invasionWorld();
@@ -270,26 +270,26 @@ describe('xpToNextForRun — HUD 분모와 판정 임계가 한 함수다', () =
       expect(xpToNextForRun(pve), `PvE Lv${level}`).toBe(xpToNext(level));
       expect(xpToNextForRun(inv), `침공 Lv${level}`).toBe(xpToNextInvasion(level));
     }
-    // 레벨 0 에서 두 커브가 같다(상수항 10 이 공통). 이 겹침이 옛 분모 결함을 가렸으므로
-    // 명시적으로 못 박아 둔다 — 계수가 다시 갈라져도 이 지점은 계속 같아야 한다.
+    // 두 런이 **서로 다른 값**을 낸다 — 침공 0 vs PvE 양수. 레벨 0 도 예외가 아니다(예전에는
+    // 상수항 10 이 공통이라 레벨 0 만 우연히 같았고, 그 겹침이 옛 분모 결함을 가렸다).
     pve.level = 0;
     inv.level = 0;
-    expect(xpToNextForRun(pve)).toBe(xpToNextForRun(inv));
+    expect(xpToNextForRun(inv)).toBe(0);
+    expect(xpToNextForRun(pve)).toBeGreaterThan(0);
   });
 
-  it('정규 sim 경로에서 딱 이 값에 레벨이 오른다 — 침공 Lv1→2 (분모 불일치 지점)', () => {
+  it('정규 sim 경로에서 딱 이 값에 레벨이 오른다 — PvE Lv1→2 · Lv4→5', () => {
     // 재는 것은 **HUD 분모와 판정 임계가 같은 값인가**다. 옛 결함은 판정만 침공 커브로 갈고
     // HUD 분모는 `xpToNext` 로 남아, 바가 21% 인 채로 레벨업이 나던 것이었다.
     //
-    // ⚠️ 예전에는 여기서 `need < xpToNext(level)`(두 커브가 갈리는 구간임)을 먼저 확인했다.
-    // 2026-08-10 에 침공 계수를 밀도에 맞춰 다시 재면서 두 커브가 **같은 값이 되어** 그
-    // 사전조건이 성립하지 않는다. 갈림 여부는 값의 우연이므로 단언에서 뺀다 — 임계 자체를
-    // 정확히 재는 아래 세 단언이 원래 지키려던 것이고, 커브가 같든 다르든 유효하다.
+    // 무대를 PvE 로 옮긴 이유는 위 주석 참조 — 침공에는 이제 임계 자체가 없어서 "딱 이 값에
+    // 오른다"를 잴 대상이 없다. 술어(`xpToNextForRun`)는 하나이므로 PvE 에서 임계가 정확하면
+    // 분모 불일치 결함은 양쪽 모두에서 재발할 수 없다.
     for (const level of [1, 4]) {
-      const before = invasionWorld();
+      const before = createWorld(1);
       before.level = level;
       const need = xpToNextForRun(before);
-      expect(need).toBe(xpToNextInvasion(level));
+      expect(need).toBe(xpToNext(level));
 
       // need - 1 로는 오르지 않는다.
       before.xp = need - 1;
@@ -298,7 +298,7 @@ describe('xpToNextForRun — HUD 분모와 판정 임계가 한 함수다', () =
       expect(before.pendingLevelUp).toBe(false);
 
       // need 로는 오르고, 소비된 XP 가 정확히 need 다(바가 꽉 찬 순간 = 레벨업).
-      const at = invasionWorld();
+      const at = createWorld(1);
       at.level = level;
       at.xp = need;
       stepWorld(at, emptyInput());
@@ -306,6 +306,16 @@ describe('xpToNextForRun — HUD 분모와 판정 임계가 한 함수다', () =
       expect(at.pendingLevelUp).toBe(true);
       expect(at.xp).toBe(0);
     }
+  });
+
+  it('침공 런은 XP 를 아무리 쌓아도 레벨이 오르지 않는다', () => {
+    // `need <= 0` 을 `checkLevelUp` 이 끊지 않으면 `xp >= 0` 이 항상 참이라 **매 틱** 레벨업이
+    // 터진다. 0 을 도입하며 가장 위험했던 자리라 여기서 직접 못 박는다.
+    const inv = invasionWorld();
+    inv.xp = 1_000_000;
+    stepWorld(inv, emptyInput());
+    expect(inv.level).toBe(1);
+    expect(inv.pendingLevelUp).toBe(false);
   });
 
   it('배선 — main.ts 의 xpNeed 가 xpToNextForRun 을 쓴다(xpToNext 직접 호출 없음)', () => {
