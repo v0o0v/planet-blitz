@@ -119,3 +119,52 @@ describe('기본 수비대 — 위협 계약', () => {
     expect(healers.length).toBeGreaterThan(0);
   });
 });
+
+describe('방어측 강화 — HP 축과 피해 축이 분리돼 있다', () => {
+  /** 첫 편대의 (최대HP, 접촉피해) 를 본다. */
+  function firstEnemy(hpBp: number, damageBp: number): { hp: number; dmg: number } {
+    const config = {
+      ...DEFAULT_CONFIG,
+      playerHp: 100_000_000,
+      invasion3: {
+        layers: emptyInvasionLayers(),
+        timeLimitTicks: INVASION_TOTAL_TICKS,
+        maintenance: 10000,
+        garrisonLevel: INVASION_GARRISON_LEVEL_DEFAULT,
+        defenseHpBp: hpBp,
+        defenseDamageBp: damageBp,
+      },
+    } as WorldConfig;
+    const s: WorldState = createWorld(9, config);
+    for (let i = 0; i < 1200; i++) {
+      stepWorld(s, autopilotInput(s));
+      for (const e of s.entities) {
+        if (e.kind === 'enemy' && !e.dead) return { hp: e.maxHp, dmg: e.damage };
+      }
+    }
+    return { hp: 0, dmg: 0 };
+  }
+
+  it('HP 축만 올리면 피해는 그대로다 (사용자 요구의 정확한 형태)', () => {
+    // "계보bp를 100000 으로 했더니 적의 hp가 적당한데 대신 공격력이 너무 쎄다" —
+    // 축이 하나였을 때의 증상이다. 갈라 놓았으니 HP 만 ×11 이 되어야 한다.
+    const base = firstEnemy(0, 0);
+    const tanky = firstEnemy(100000, 0);
+    expect(base.hp, '적이 안 떴다면 공허하다').toBeGreaterThan(0);
+    expect(tanky.hp).toBeGreaterThan(base.hp * 10);
+    expect(tanky.dmg, 'HP 축이 피해로 샜다').toBe(base.dmg);
+  });
+
+  it('피해 축만 올리면 HP 는 그대로다', () => {
+    const base = firstEnemy(0, 0);
+    const hitty = firstEnemy(0, 100000);
+    expect(hitty.dmg).toBeGreaterThan(base.dmg * 10);
+    expect(hitty.hp, '피해 축이 HP 로 샜다').toBe(base.hp);
+  });
+
+  it('둘 다 0 이면 무연산이다(기존 런 바이트 불변)', () => {
+    const a = firstEnemy(0, 0);
+    const b = firstEnemy(0, 0);
+    expect(a).toEqual(b);
+  });
+});

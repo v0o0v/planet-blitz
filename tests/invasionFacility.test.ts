@@ -10,6 +10,7 @@
  *   ⑥ 맵 템플릿 소켓 좌표가 상·하 벽 안쪽에 있는지 기하 검증
  */
 
+import { NEUTRAL_DEFENSE_POWER } from '../src/sim/invasion/defenseBonus.js';
 import { describe, it, expect } from 'vitest';
 import { createWorld } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
@@ -97,7 +98,7 @@ function ctxOf(layers: InvasionLayers, maintenance = MAINTENANCE_FULL): Invasion
     },
     maintenance,
     density: INVASION_DENSITY_LEGACY,
-    defenseBonusBp: 0,
+    power: NEUTRAL_DEFENSE_POWER,
     // 기본 수비대도 중립 레벨(=100cp, ×1.00)로 고정 — 위 LEGACY 밀도와 같은 이유다.
     garrisonLevel: 1,
   };

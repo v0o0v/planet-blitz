@@ -10,6 +10,7 @@
  *   5. **빈 배치 100% 기본 수비대로 런이 끝까지 돈다**(무저항 기지 방지의 최종 관문).
  */
 
+import { NEUTRAL_DEFENSE_POWER } from '../src/sim/invasion/defenseBonus.js';
 import { describe, it, expect, afterEach } from 'vitest';
 import { createWorld, stepWorld, packPowerupPick, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { InputFrame, WorldConfig, WorldState } from '../src/sim/world.js';
@@ -322,7 +323,7 @@ describe('기본 수비대 — 충원 규칙', () => {
       runtime,
       maintenance: 10000,
       density: INVASION_DENSITY_LEGACY,
-      defenseBonusBp: 0,
+      power: NEUTRAL_DEFENSE_POWER,
       // 기본 수비대도 중립 레벨(=100cp, ×1.00)로 고정 — 위 LEGACY 밀도와 같은 이유다.
       garrisonLevel: 1,
     };

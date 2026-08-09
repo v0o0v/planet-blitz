@@ -15,6 +15,7 @@
 import { garrisonLayers, normalizeGarrisonLevel } from '../../../data/invasion/garrison.js';
 import { normalizeMaintenance } from './guardian.js';
 import { normalizeInvasionDensity } from './density.js';
+import { normalizeDefensePower } from './defenseBonus.js';
 import type { WorldState } from '../world.js';
 import { PHASE_L1, PHASE_L2 } from './constants.js';
 import type { Invasion3Config, InvasionRuntime, InvasionStepContext, InvasionStepHooks } from './types.js';
@@ -77,7 +78,6 @@ export function makeInvasionContext(
   runtime: InvasionRuntime,
 ): InvasionStepContext {
   const density = normalizeInvasionDensity(config.density);
-  const bp = config.defenseBonusBp;
   const garrisonLevel = normalizeGarrisonLevel(config.garrisonLevel);
   return {
     // 빈 L2 소켓을 스포너로 채울 기수·충원 레벨이 둘 다 튜닝 축이므로 충원에 함께 넘긴다.
@@ -86,8 +86,7 @@ export function makeInvasionContext(
     runtime,
     maintenance: normalizeMaintenance(config.maintenance),
     density,
-    defenseBonusBp:
-      bp === undefined || !Number.isFinite(bp) || bp <= 0 ? 0 : Math.trunc(bp),
+    power: normalizeDefensePower(config.defenseHpBp, config.defenseDamageBp),
     garrisonLevel,
   };
 }

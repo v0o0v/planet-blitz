@@ -469,7 +469,7 @@ function refreshFormationAffixes(
     if (ref === null || ref === undefined) continue;
     const set = defenseAffixSet(CATALOG_FORMATION, ref);
     const mods = resolveDefenseMods(set, trigger, e.x, e.y);
-    e.damage = affixDamage(formationBaseDamage(state, e, ref, ctx.defenseBonusBp), mods);
+    e.damage = affixDamage(formationBaseDamage(state, e, ref, ctx.power.damageBp), mods);
   }
 }
 
@@ -518,11 +518,11 @@ function applyFormationStats(
   }
   // 방어체 어픽스 내구도(defHpPct). 미보유면 배율 1 → 입력 그대로라 비트 동일.
   // 그 위에 방어측 계보 보너스(기지 전체 축)를 얹는다 — bp 0 이면 무연산이다.
-  const hp = applyDefenseBonus(affixHp(e.maxHp, mods), ctx.defenseBonusBp);
+  const hp = applyDefenseBonus(affixHp(e.maxHp, mods), ctx.power.hpBp);
   e.hp = hp;
   e.maxHp = hp;
   // 접촉 피해: 강화 3축 → 코어 모듈 배율 → 계보 → 방어체 어픽스 순(재계산 경로와 동일).
-  e.damage = affixDamage(formationBaseDamage(state, e, ref, ctx.defenseBonusBp), mods);
+  e.damage = affixDamage(formationBaseDamage(state, e, ref, ctx.power.damageBp), mods);
   // 정비도 풍화(결정 #18): 배치된 방어체는 방치될수록 연사가 느려진다. 정수 연산 전용
   // invasionFireCooldown(편대·설비·기물·보스 공용 산식)을 쓰고, 풍화 저항 어픽스는 실효
   // 정비도를 완전 정비 쪽으로 되돌린다. 연사 어픽스는 그 위에 간격 축소로 얹힌다.

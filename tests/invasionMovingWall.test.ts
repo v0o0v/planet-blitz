@@ -14,6 +14,7 @@
  *   ⑥ PvE 경로 미오염 — broad-phase·이동 벽 분기가 PvE 를 안 건드림
  */
 
+import { NEUTRAL_DEFENSE_POWER } from '../src/sim/invasion/defenseBonus.js';
 import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldConfig, WorldState } from '../src/sim/world.js';
@@ -82,7 +83,7 @@ function ctxOf(layers: InvasionLayers): InvasionStepContext {
     },
     maintenance: MAINTENANCE_FULL,
     density: INVASION_DENSITY_LEGACY,
-    defenseBonusBp: 0,
+    power: NEUTRAL_DEFENSE_POWER,
     // 기본 수비대도 중립 레벨(=100cp, ×1.00)로 고정 — 위 LEGACY 밀도와 같은 이유다.
     garrisonLevel: 1,
   };

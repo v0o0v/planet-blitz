@@ -25,6 +25,39 @@
  * 바이트 동일하다. `pilotLevelMult` 의 `level <= 1 → return 1` 과 같은 규율이다.
  */
 
+/**
+ * 방어측 강화 배율 — **내구도와 피해를 따로 잡는다**(2026-08-10, 사용자 제기
+ * "계보bp를 100000 으로 했더니 적의 hp가 적당한데 대신 공격력이 너무 쎄다").
+ *
+ * ## 왜 갈랐나
+ * 처음에는 축이 하나(`defenseBonusBp`)라 내구도와 피해가 **한 덩어리**로 움직였다. 그런데
+ * 침공에서 필요한 배수가 두 축에서 전혀 다르다: 만렙 기체(피해 ×4.69) 앞에서 적이 버티려면
+ * 내구도는 ×10 대역이 필요한데, 같은 배수를 피해에 걸면 한 대에 죽는다.
+ *
+ * 이 분리는 **행성런이 이미 하고 있는 것**이기도 하다 — `data/waves.ts` 의 `stageHpMult`
+ * (앵커 1/16/88)는 HP 만 올리고, 적 피해는 `ENEMY_DAMAGE_STAGE_*` 라는 **별개 곡선**이다
+ * (얕은 단계에 peak, 깊어지면 1 로 물러난다). 침공만 두 축을 묶고 있던 것이 예외였다.
+ *
+ * ⚠️ 침공이 `stageHpMult` 를 못 쓰는 이유는 **단계가 1 고정**이라서다(`config.stage` 는 메타
+ * XP 배율·저단계 감쇠에도 쓰여서 침공에서 올릴 수 없다). 그래서 같은 모양의 축을 여기 둔다.
+ */
+export interface DefensePower {
+  /** 내구도 배율(basis-point). 0 = 무연산. */
+  readonly hpBp: number;
+  /** 피해 배율(basis-point). 0 = 무연산. */
+  readonly damageBp: number;
+}
+
+/** 두 축 모두 무연산. 미지정 침공 config 와 구 거동이 여기로 떨어진다. */
+export const NEUTRAL_DEFENSE_POWER: DefensePower = { hpBp: 0, damageBp: 0 };
+
+/** 손상 입력 방어 — 비유한·음수는 0 으로 접는다. */
+export function normalizeDefensePower(hpBp?: number, damageBp?: number): DefensePower {
+  const fold = (v: number | undefined): number =>
+    v === undefined || !Number.isFinite(v) || v <= 0 ? 0 : Math.trunc(v);
+  return { hpBp: fold(hpBp), damageBp: fold(damageBp) };
+}
+
 /** 계보 보너스 basis-point 상한. 곱선 자체의 점근값은 `data/lineage.ts` 가 정한다. */
 export const DEFENSE_BONUS_BP_MAX = 1000000;
 

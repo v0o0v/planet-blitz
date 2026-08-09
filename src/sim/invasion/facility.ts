@@ -88,7 +88,8 @@ import {
   resolveDefenseMods,
 } from './affix.js';
 import type { DefenseAffixMods, DefenseTriggerState } from './affix.js';
-import { applyDefenseBonus } from './defenseBonus.js';
+import { applyDefenseBonus, NEUTRAL_DEFENSE_POWER } from './defenseBonus.js';
+import type { DefensePower } from './defenseBonus.js';
 
 /** 방향 제한 방어포 kind. */
 export const FACILITY_GUN_KIND: EntityKind = 'facilityGun';
@@ -191,7 +192,7 @@ export function resolveFacilityStats(
   spec: FacilitySpec,
   ref: FacilityRef,
   maintenance: number,
-  defenseBonusBp = 0,
+  power: DefensePower = NEUTRAL_DEFENSE_POWER,
 ): FacilityStats {
   const scale = (base: number): number => scaleByRef(base, ref);
   // 거동마다 피해가 실리는 필드가 다르다. 프레스는 `pressCrushDamage` 다 — 예전에는 이 분기가
@@ -211,8 +212,8 @@ export function resolveFacilityStats(
           ? (ENEMY_BY_TYPE[spec.spawnEnemyType]?.contactDamage ?? 0)
           : spec.damage;
   return {
-    hp: applyDefenseBonus(scale(spec.hp), defenseBonusBp),
-    damage: applyDefenseBonus(scale(rawDamage), defenseBonusBp),
+    hp: applyDefenseBonus(scale(spec.hp), power.hpBp),
+    damage: applyDefenseBonus(scale(rawDamage), power.damageBp),
     fireCooldown: invasionFireCooldown(spec.fireCooldown, maintenance),
     spawnInterval: invasionFireCooldown(spec.spawnIntervalTicks, maintenance),
     droneHp:
@@ -223,7 +224,8 @@ export function resolveFacilityStats(
                 ? spec.spawnDroneHp
                 : (ENEMY_BY_TYPE[spec.spawnEnemyType]?.hp ?? 0),
             ),
-            defenseBonusBp,
+            // 스포너가 낳는 드론의 내구도 — **HP 축**이다(피해 축이 아니다).
+            power.hpBp,
           )
         : 0,
   };
@@ -297,7 +299,7 @@ export function spawnFacility(
   socketIndex: number,
   ref: FacilityRef,
   maintenance: number,
-  defenseBonusBp = 0,
+  power: DefensePower = NEUTRAL_DEFENSE_POWER,
 ): Entity | undefined {
   const spec = facilitySpecFor(ref.catalogId);
   if (spec === undefined) return undefined;
@@ -313,7 +315,7 @@ export function spawnFacility(
     if (press !== undefined) {
       const pressMods = defenseAffixSet(CATALOG_FACILITY, ref).always;
       press.damage = affixDamage(
-        resolveFacilityStats(spec, ref, affixMaintenance(maintenance, pressMods), defenseBonusBp)
+        resolveFacilityStats(spec, ref, affixMaintenance(maintenance, pressMods), power)
           .damage,
         pressMods,
       );
@@ -327,7 +329,7 @@ export function spawnFacility(
     spec,
     ref,
     affixMaintenance(maintenance, mods),
-    defenseBonusBp,
+    power,
   );
   const hp = affixHp(stats.hp, mods);
   const facing = socket.facingDeg * DEG_TO_RAD;
@@ -377,7 +379,7 @@ export function enterFacilityLayer(state: WorldState, ctx: InvasionStepContext):
   for (let i = 0; i < n; i++) {
     const ref = sockets[i];
     if (ref === null || ref === undefined) continue;
-    spawnFacility(state, template.sockets[i]!, i, ref, maintenance, ctx.defenseBonusBp);
+    spawnFacility(state, template.sockets[i]!, i, ref, maintenance, ctx.power);
   }
 }
 
@@ -430,7 +432,7 @@ export function stepFacility(state: WorldState, ctx: InvasionStepContext): void 
       ? NEUTRAL_AFFIX_MODS
       : resolveDefenseMods(set, trigger, e.x, e.y);
     if (!set.neutral && ref !== null && ref !== undefined) {
-      syncFacilityAffixStats(e, spec, ref, maintenance, mods, ctx.defenseBonusBp);
+      syncFacilityAffixStats(e, spec, ref, maintenance, mods, ctx.power);
     }
     if (e.kind === FACILITY_GUN_KIND) {
       stepTurretFacility(state, e, spec, player, maintenance, mods);
@@ -494,9 +496,9 @@ function syncFacilityAffixStats(
   ref: FacilityRef,
   maintenance: number,
   mods: DefenseAffixMods,
-  defenseBonusBp: number,
+  power: DefensePower,
 ): void {
-  const base = resolveFacilityStats(spec, ref, affixMaintenance(maintenance, mods), defenseBonusBp);
+  const base = resolveFacilityStats(spec, ref, affixMaintenance(maintenance, mods), power);
   raiseMaxHp(e, affixHp(base.hp, mods));
   e.damage = affixDamage(base.damage, mods);
 }

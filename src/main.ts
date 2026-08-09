@@ -1513,7 +1513,8 @@ async function main(): Promise<void> {
     maintenance: number;
     timeLimitTicks: number;
     density?: Partial<InvasionDensity>;
-    defenseBonusBp?: number;
+    defenseHpBp?: number;
+    defenseDamageBp?: number;
     pilotLevel?: number;
     garrisonLevel?: number;
   }): void {
@@ -1530,7 +1531,8 @@ async function main(): Promise<void> {
       maintenance: opts.maintenance,
       // 미지정이면 필드를 두지 않는다 — sim 이 기본값으로 접는다(조건부 접기).
       ...(opts.density !== undefined ? { density: opts.density } : {}),
-      ...(opts.defenseBonusBp !== undefined ? { defenseBonusBp: opts.defenseBonusBp } : {}),
+      ...(opts.defenseHpBp !== undefined ? { defenseHpBp: opts.defenseHpBp } : {}),
+      ...(opts.defenseDamageBp !== undefined ? { defenseDamageBp: opts.defenseDamageBp } : {}),
       // 하네스는 슬라이더 값을 넘긴다. 안 넘기면 실 침공과 같은 밸런스 기본값을 쓴다.
       garrisonLevel: opts.garrisonLevel ?? INVASION_GARRISON_LEVEL_DEFAULT,
     };
