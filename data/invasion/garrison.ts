@@ -11,7 +11,7 @@
  * ## 충원 규칙 (결정 #22)
  * | 빈 자리 | 충원 |
  * |---|---|
- * | L1 웨이브 슬롯 | 정찰 드론편대 lv1 노말 |
+ * | L1 웨이브 슬롯 | 요격 편대 ↔ 강습 돌격편대 순환(슬롯 인덱스), 기본 수비대 레벨 |
  * | L2 설치 소켓 | 앞쪽 `l2GarrisonSpawners` 칸은 **드론 스포너** lv1 노말, 나머지는 속사포 lv1 노말 |
  * | L3 기물 소켓 | **비움**(충원 안 함 — 코어방 과충전 방지) |
  * | L3 보스 슬롯 | 여기서 안 한다. `coreRoom.ts` 가 스폰 단계에서 이미 기본 보스로 폴백한다 |
@@ -41,14 +41,61 @@ import type {
   InvasionStepContext,
 } from '../../src/sim/invasion/types.js';
 import { INVASION_LEVEL_MAX, INVASION_LEVEL_MIN } from '../../src/sim/invasion/constants.js';
-import { FORMATION_SCOUT_DRONES } from './formations.js';
+import {
+  FORMATION_ASSAULT,
+  FORMATION_INTERCEPTORS,
+  FORMATION_SCOUT_DRONES,
+} from './formations.js';
 import { GARRISON_FACILITY_CATALOG_ID, SPAWNER_FACILITY_CATALOG_ID } from './facilities.js';
 
 // ---------------------------------------------------------------------------
 // 충원값
 // ---------------------------------------------------------------------------
 
-/** 빈 웨이브 슬롯을 채우는 편대 catalogId — 정찰 드론편대. */
+/**
+ * 빈 웨이브 슬롯을 채우는 편대 — **슬롯 인덱스로 순환**한다.
+ *
+ * ## 왜 정찰 드론편대를 뺐나 (2026-08-10, 사용자 제기 "기본 방어체가 총을 한발도 안 쏜다")
+ * 구값은 `FORMATION_SCOUT_DRONES` 하나였다. "가장 가벼운 기본 편대"라는 이유였는데, 그
+ * 편대의 구성원 5기가 전부 **수리드론**이고 그 정의가
+ * `movement: 'seekWounded'` / `attack: { kind: 'heal' }` 다 — **플레이어를 향한 공격이 아예
+ * 없다.** 실측: 기본 수비대만 있는 L1 에서 **5,399틱(90초) 동안 적탄 0발**(같은 런의 L2 는
+ * 873발, L3 는 477발). 위협은 접촉 피해 6 뿐이었고, 5기가 서로를 치유해 더 질겼다.
+ *
+ * ⚠️ **이 저장소에서 같은 결함을 두 번째로 밟았다.** L3 코어 증원도 "가장 가벼운 잡몹"을
+ * 고르다 같은 수리드론을 집어 코어방이 133,200틱 동안 안 끝났다(→ GUNNER 로 교체).
+ * 교훈은 하나다: **`data/enemies.ts` 의 `movement`·`attack` 을 안 보고 "가벼운 것"으로
+ * 고르지 마라.** `role: 'support'` 는 혼자 두면 위협이 0 이다.
+ *
+ * ## 왜 카탈로그 정의를 안 고치고 기본값만 바꿨나
+ * 정찰 드론편대는 **방어자가 직접 배치할 수도 있는** 카탈로그 항목이다. 다른 편대와 함께
+ * 깔면 치유 역할이 실제로 성립하므로(그게 role 7 '지원'의 설계다) 정의를 바꾸면 그 배치를
+ * 망친다. 바꿔야 할 것은 "아무것도 배치 안 했을 때의 바닥"뿐이다.
+ *
+ * ## 왜 한 종류가 아니라 순환인가
+ * 6칸을 같은 편대로 채우면 바닥이 단조롭다. 두 역할을 번갈아 두면 **압박의 종류가 둘**이 된다:
+ *   · `FORMATION_INTERCEPTORS` (역할 1 '기본 화력') — 박격포 6기, 거리를 잡고 예고 장판.
+ *   · `FORMATION_ASSAULT`      (역할 2 '정면 돌진') — 파쇄차 4기, 돌진하며 파편탄을 뿌린다.
+ * 선택은 **슬롯 인덱스의 순수 함수**라 결정론이 유지된다(RNG 미소비).
+ */
+export const GARRISON_FORMATION_CATALOG_IDS: readonly number[] = [
+  FORMATION_INTERCEPTORS,
+  FORMATION_ASSAULT,
+];
+
+/**
+ * 슬롯 i 를 채울 편대 catalogId. 순환이라 슬롯 수가 바뀌어도 정의가 안 깨진다.
+ */
+export function garrisonFormationIdFor(slotIndex: number): number {
+  const n = GARRISON_FORMATION_CATALOG_IDS.length;
+  const i = ((slotIndex % n) + n) % n;
+  return GARRISON_FORMATION_CATALOG_IDS[i] as number;
+}
+
+/**
+ * 구 기본 충원 편대(정찰 드론편대). **더 이상 충원에 쓰지 않는다** — 위 주석 참조.
+ * 카탈로그 항목 자체는 그대로라 방어자가 배치할 수 있고, 테스트가 구 거동을 참조한다.
+ */
 export const GARRISON_FORMATION_CATALOG_ID = FORMATION_SCOUT_DRONES;
 
 /** 빈 설치 소켓을 채우는 설비 catalogId — 속사포. */
@@ -146,16 +193,18 @@ export function normalizeGarrisonLevel(raw: number | undefined): number {
  */
 const cache = new WeakMap<InvasionLayers, Map<number, InvasionLayers>>();
 
-/** 슬롯 배열의 null 을 충원 Ref 로 채운 새 배열. 채울 게 없으면 원본 배열을 그대로 돌려준다. */
-function fillSlots(
+/**
+ * L1 웨이브 슬롯 충원 — 빈 슬롯마다 {@link garrisonFormationIdFor} 로 편대를 번갈아 채운다.
+ * 배치된 슬롯은 손대지 않는다.
+ */
+function fillWaveSlots(
   slots: readonly (InvasionRef | null)[],
-  catalogId: number,
   level: number,
 ): (InvasionRef | null)[] {
   const out: (InvasionRef | null)[] = new Array<InvasionRef | null>(slots.length);
   for (let i = 0; i < slots.length; i++) {
     const ref = slots[i];
-    out[i] = ref === null || ref === undefined ? garrisonRef(catalogId, level) : ref;
+    out[i] = ref === null || ref === undefined ? garrisonRef(garrisonFormationIdFor(i), level) : ref;
   }
   return out;
 }
@@ -216,7 +265,7 @@ export function garrisonLayers(
   const hit = byKey.get(key);
   if (hit !== undefined) return hit;
   const filled: InvasionLayers = {
-    l1: { waveSlots: fillSlots(layers.l1.waveSlots, GARRISON_FORMATION_CATALOG_ID, lv) },
+    l1: { waveSlots: fillWaveSlots(layers.l1.waveSlots, lv) },
     l2: {
       templateId: layers.l2.templateId,
       sockets: fillFacilitySlots(layers.l2.sockets, n, lv),

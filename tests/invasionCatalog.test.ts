@@ -58,13 +58,14 @@ import {
 import {
   GARRISON_FACILITY_CATALOG_ID,
   GARRISON_FORMATION_CATALOG_ID,
+  garrisonFormationIdFor,
   GARRISON_LEVEL,
   garrisonFillCount,
   garrisonLayers,
   garrisonRef,
   withGarrison,
 } from '../data/invasion/garrison.js';
-import { FORMATIONS } from '../data/invasion/formations.js';
+import { FORMATIONS, formationById } from '../data/invasion/formations.js';
 import { INVASION_FACILITIES } from '../data/invasion/facilities.js';
 import { L3_PROPS } from '../data/invasion/props.js';
 import { DEFENSE_BOSSES } from '../data/invasion/defenseBosses.js';
@@ -247,13 +248,17 @@ describe('기본 수비대 — 충원 규칙', () => {
     expect(GARRISON_LEVEL).toBe(1);
   });
 
-  it('빈 웨이브 슬롯은 정찰 드론편대, 빈 소켓은 속사포로 채운다', () => {
+  // ⚠️ L1 충원은 **슬롯마다 편대가 다르다**(2026-08-10). 구값은 정찰 드론편대 하나였는데
+  // 그 구성원이 전부 수리드론(`attack: 'heal'`)이라 **L1 에서 90초 동안 적탄 0발**이었다
+  // ("기본 방어체가 총을 한발도 안 쏜다"). 지금은 공격형 편대 둘을 슬롯 인덱스로 순환한다.
+  // 그 계약은 `tests/invasionGarrisonThreat.test.ts` 가 부류 단위로 지킨다.
+  it('빈 웨이브 슬롯은 충원 편대 순환으로, 빈 소켓은 속사포로 채운다', () => {
     const filled = garrisonLayers(emptyInvasionLayers());
     expect(filled.l1.waveSlots.length).toBe(INVASION_WAVE_SLOTS);
-    for (const s of filled.l1.waveSlots) {
-      expect(s?.catalogId).toBe(GARRISON_FORMATION_CATALOG_ID);
+    filled.l1.waveSlots.forEach((s, i) => {
+      expect(s?.catalogId).toBe(garrisonFormationIdFor(i));
       expect(s?.level).toBe(GARRISON_LEVEL);
-    }
+    });
     expect(filled.l2.sockets.length).toBeGreaterThan(0);
     for (const s of filled.l2.sockets) expect(s?.catalogId).toBe(GARRISON_FACILITY_CATALOG_ID);
   });
@@ -265,7 +270,8 @@ describe('기본 수비대 — 충원 규칙', () => {
     });
     const filled = garrisonLayers(layers);
     expect(filled.l1.waveSlots[0]).toEqual(layers.l1.waveSlots[0]);
-    expect(filled.l1.waveSlots[1]?.catalogId).toBe(GARRISON_FORMATION_CATALOG_ID);
+    // 빈 자리는 **그 슬롯 인덱스의** 충원 편대로 채워진다(순환).
+    expect(filled.l1.waveSlots[1]?.catalogId).toBe(garrisonFormationIdFor(1));
     expect(filled.l2.sockets[0]?.catalogId).toBe(GARRISON_FACILITY_CATALOG_ID);
     expect(filled.l2.sockets[1]).toEqual(layers.l2.sockets[1]);
   });
@@ -421,11 +427,25 @@ describe('기본 수비대 — 빈 배치 런 스모크', () => {
   // 밀도를 올리자 200틱 슬롯이 t=300 시점에 살아 있는 적을 남겨 이 우연이 깨졌다. 위
   // `emptyInvasionConfig` 가 LEGACY 를 박아 원래 재던 것(구 스케줄의 스폰 타이밍)을 되살렸다.
   // 진짜 대조군이 필요하면 훅이 아니라 **충원을 안 태운 ctx** 를 직접 만들어야 한다.
-  it('구 스케줄에서는 t=300 에 살아 있는 편대가 없다(스폰 타이밍 가드)', () => {
+  it('구 스케줄에서는 t=300 까지 첫 슬롯 편대만 등장한다(스폰 타이밍 가드)', () => {
+    // ⚠️ 이 단언은 두 번 침식됐다. 원래 "t=300 에 살아 있는 적이 0"이었는데, 그 0 은
+    // **우연**이었다 — 구 스케줄에서 슬롯 0 이 tick 0 에 낸 적이 300틱 전에 화면 밖으로
+    // 빠졌을 뿐이고, 다음 슬롯은 720틱이라 아직 안 온 것이다. 밀도를 올리자 깨졌고,
+    // 충원 편대를 바꾸자(생존 시간이 다른 기체) 또 깨졌다.
+    //
+    // 재려던 것은 **스케줄**이지 생존자 수가 아니다. 그래서 「지금까지 등장한 적의 누적 수」로
+    // 잰다 — 죽든 화면을 벗어나든 값이 안 흔들리고, 충원 편대를 또 바꿔도 정의가 유지된다.
     resetInvasionStepHooks();
     const state = createWorld(5, emptyInvasionConfig());
-    for (let i = 0; i < 300; i++) stepWorld(state, IDLE);
-    expect(countKinds(state, ['enemy'])).toBe(0);
+    const seen = new Set<number>();
+    for (let i = 0; i < 300; i++) {
+      stepWorld(state, IDLE);
+      for (const e of state.entities) if (e.kind === 'enemy') seen.add(e.id);
+    }
+    // 구 밀도(720틱 간격 · 1바퀴)라 이 창에는 슬롯 0 의 편대 하나만 온다.
+    const first = formationById(garrisonFormationIdFor(0));
+    expect(first).toBeDefined();
+    expect(seen.size).toBe(first!.members.length);
   });
 
   it('빈 배치가 L1 편대·L2 설비·L3 코어방을 모두 채운 채 끝까지 돈다', () => {
