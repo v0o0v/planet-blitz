@@ -75,8 +75,31 @@ export function normalizeDefensePower(
   return { hpBp: fold(hpBp), damageBp: fold(damageBp), coreHpBp: fold(coreHpBp) };
 }
 
-/** 계보 보너스 basis-point 상한. 곱선 자체의 점근값은 `data/lineage.ts` 가 정한다. */
-export const DEFENSE_BONUS_BP_MAX = 1000000;
+/**
+ * 방어측 배율 basis-point 상한. 50,000,000 = **×5001**.
+ *
+ * ## 왜 이 값인가 — 밸런스가 아니라 **정수 정확도**가 정한다 (2026-08-10)
+ * 구값은 1,000,000(×101)이었는데 사용자가 "그 이상으로 세팅할 수 있게 해줘"라고 했다.
+ * 이 상한은 취향이 아니라 **f64 정수 정확 구간(2^53 ≈ 9.007×10¹⁵)** 에서 온다.
+ *
+ * 가장 큰 곱이 걸리는 자리는 **코어**다 — HP 축과 코어 전용 축이 연달아 곱해진다
+ * (`coreRoom.ts`: `applyDefenseBonus(applyDefenseBonus(core.hp, hpBp), coreHpBp)`).
+ * 두 축이 동시에 상한 C 일 때 두 번째 곱의 피연산자는
+ *
+ *   `core.hp × (C/10⁴) × (10⁴ + C)`  ≈  `core.hp × C² / 10⁴`
+ *
+ * 기본 코어 내구도 8000 을 넣으면 `0.8 × C² < 9.007×10¹⁵` → **C < 약 1.06×10⁸**.
+ * 그 절반을 취해 여유를 뒀다. 이 범위 안에서는 `Math.round` 이전 곱이 전부 정확 정수라
+ * Node(클라)·Deno(서버) 재현이 비트 동일하다(ADR-0005).
+ *
+ * ⚠️ **코어 내구도를 배치 데이터로 크게 올리면 이 계산이 다시 필요하다.**
+ * `normalizeCore`(`normalize.ts`)에는 상한이 없다 — `hp < 1` 만 막는다. 위 식에 실제
+ * `core.hp` 를 넣어 다시 풀어라. `tests/invasionGarrisonThreat.test.ts` 가 상한에서의
+ * 정수 정확성을 지킨다.
+ *
+ * (계보 곱선 자체의 점근값은 별개다 — `data/lineage.ts` 가 정한다.)
+ */
+export const DEFENSE_BONUS_BP_MAX = 50_000_000;
 
 /**
  * basis-point 보너스를 정수 스탯에 건다. `bp = 0` → 입력 그대로(무연산).
