@@ -64,11 +64,11 @@ import {
 
 /** SQL 헤더가 반드시 담고 있어야 하는 램프 식(문자열 그대로 대조). */
 const RAMP_SQL_LINES: readonly string[] = [
-  '-- RAMP: level = 1 + (3*(nn-1))/2',
-  '-- RAMP: rarity = nn<=4 ? 0 : nn<=8 ? 1 : nn<=14 ? 2 : 3',
+  '-- RAMP: level = 20 + (17*(nn-1))/4',
+  '-- RAMP: rarity = nn<=7 ? 0 : nn<=11 ? 1 : nn<=15 ? 2 : 3',
   '-- RAMP: ascension = nn<=7 ? 0 : 1',
   '-- RAMP: template = nn<=7 ? 0 : nn<=14 ? 2 : 1',
-  '-- RAMP: waves = min(6, 1 + (nn-1)/3)',
+  '-- RAMP: waves = 6',
   '-- RAMP: formationKinds = nn<=7 ? 12 : min(8, 1 + (nn+1)/3)',
   '-- RAMP: formationShift = nn<=7 ? [0,1,2,3,5,7,9][nn] : (nn>=17 ? 2 : 0)',
   '-- RAMP: facilities = min(socketN, 2 + (nn-1)/2)',
@@ -84,11 +84,11 @@ const RAMP_SQL_LINES: readonly string[] = [
  * 램프 정본 SQL. **최신 재시드 파일을 가리켜야 한다** — 이미 원격에 적용된 마이그레이션은
  * 본문을 고쳐도 재실행되지 않으므로, 램프를 바꿀 때마다 "덮어쓰는 신규 파일"이 새 정본이
  * 된다(이 리포의 선례: 20260721010000 → 20260723000000 → 20260727011000 → 20260727020000
- * → 20260728000000 → 20260728013000 → 20260803020000).
+ * → 20260728000000 → 20260728013000 → 20260803020000 → 20260810010000).
  * 미러는 `src/bench/invasionBands.ts` 의 {@link RAMP} 다.
  */
 const MIGRATION_PATH = fileURLToPath(
-  new URL('../supabase/migrations/20260803020000_invasion_band_restore_2.sql', import.meta.url),
+  new URL('../supabase/migrations/20260810010000_invasion_ramp_reanchor.sql', import.meta.url),
 );
 
 /**

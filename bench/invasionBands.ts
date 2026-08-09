@@ -36,7 +36,19 @@
  * 에서 나오고, 적 스폰·드랍 추첨은 승패를 사실상 흔들지 않는다. 읽을 때 쓸 수 있는 것은
  * ⓐ클리어 가능성이 살아 있는가 ⓑ밴드 순서가 뒤집히지 않았는가 둘뿐이었다.
  *
- * ## 설계 의도 밴드(참고선 — 계약이 아니다)
+ * ## ⚠️ 현행 무대에서는 승률로 아무것도 못 읽는다 — **바닥 대비로 읽어라**
+ * `--stage=live --gear=maxed`(기본값)에서 참조봇은 **빈 방어에도 L1 에서 죽는다**(1090틱).
+ * 그래서 20기지 승률·L3 도달률이 전부 0 이고, 목표선을 승률로 재정의하는 것 자체가 불가능하다.
+ * 봇과 사람의 격차는 장비가 아니라 **조작**이다(만렙 장비를 줘도 그렇다).
+ *
+ * 대신 이 CLI 는 세 줄을 찍는다:
+ *   FLOOR           빈 방어(배치 0 · 기본 수비대만)의 같은 지표. **모든 해석의 원점**이다.
+ *   progress(0-100) L1 생존 비율 → L2 도달 40 → L3 도달 80 + 코어 깎은 비율(`runProgress`).
+ *   mean run ticks  승패 무관 평균 생존틱. 바닥에서 유일하게 살아 있는 눈금.
+ * 읽는 법: **기지가 FLOOR 보다 오래 버티게 하면 그 기지의 램프는 난이도를 안 만든 것**이다
+ * (빈 슬롯이 기본 수비대 Lv75 로 채워지므로 약한 배치는 감산이다).
+ *
+ * ## 설계 의도 밴드(참고선 — 계약이 아니다. **근거를 잃었다**)
  *   하위(01~07) >= 85%  : 배치전은 PvP 해금 후 필수 5회다. 여기서 막히면 진행이 멈춘다.
  *   중하(08~14) 55~80%  : 절반 이상 이기되 배치를 신경 쓰게 만드는 구간.
  *   중위(15~20) 25~55%  : 재도전 전제의 상위권 문턱. 0% 도 100% 도 아니어야 한다.
@@ -68,7 +80,19 @@
  *          얹히자 +2.09pp 였다. 두 처방이 같은 자리(파워업 추첨 운 분포)를 통해 작동해 서로의
  *          여유를 잠식한다 — **밴드 예측을 선형 가산으로 하지 마라.**
  *
+ *  10세대 램프 재앵커(2026-08-10 밀도 레인 뒤처리) — 새 기준선(수비대 Lv75 · 방어 HP ×201 ·
+ *          피해 ×2 · 코어 HP ×3 · 밀도 기본값) 위에서 재 보니 램프가 묻힌 게 아니라 **뒤집혀**
+ *          있었다: 20기지 중 13곳(하위·중하 전부)이 **빈 방어보다 쉬웠다.** 원인 둘 다 구조적 —
+ *          ⓐ 빈 웨이브 슬롯은 기본 수비대 Lv75 충원이라 `waves` 가 난이도 **감산기**였다
+ *          ⓑ 램프 레벨 범위(1..29)가 통째로 수비대 레벨(75) 아래였다.
+ *          `waves = 6` · `level = 20 + 17(nn-1)/4`(20..100) · `rarity` 개시 nn5 → nn8 세 줄로
+ *          평균 생존틱 1802/1172/559(바닥 1090) — 밴드 순서가 처음으로 단조해졌다.
+ *          정본 `supabase/migrations/20260810010000_invasion_ramp_reanchor.sql` 헤더.
+ *
  * ## 다음 사람이 알아야 할 것 (레버 선정에서 반복 확인된 사실)
+ * - **빈 슬롯 = 기본 수비대 충원이다.** 배치 수를 줄이는 램프 축(`waves`·`facilities`)은
+ *   난이도를 **내린다**. 10세대가 이 부호를 처음 바로잡았다. `facilities` 에는 아직 남아 있다.
+ * - **레벨축은 Lv100 에서 포화한다**(실측 100·150·200 동일). 그 위를 밀려면 등급·승급이다.
  * - **단일 축으로는 중하가 움직이지 않는다.** 난이도는 보스 x 강화축의 **곱**으로만 내려간다.
  * - **레벨 램프는 밴드를 분리하지 못한다.** 중위가 5배 빠르게 반응해, 중하가 목표에 닿기 전에
  *   중위가 바닥을 친다. 분리 레버는 보통 **기물**이지만 레버의 유효성은 sim 수위에 의존한다
@@ -92,10 +116,29 @@ import {
   ROSTER_GATE_RANGE_ADD,
   escalatedWinRate,
   measureBand,
+  measureFloor,
   rosterGateRate,
   stdev,
 } from '../src/bench/invasionBands.js';
-import type { BandName } from '../src/bench/invasionBands.js';
+import type { BandName, BenchGear, BenchSetup, BenchStage } from '../src/bench/invasionBands.js';
+
+/**
+ * 무대 선택. **기본은 `live`/`maxed`** — 실 침공 런과 같은 방어 기본값 위에서 만렙 빌드로
+ * 잰다. 과거 세대 수치와 대조하려면 `--stage=legacy --gear=reference` 로 되돌린다.
+ *
+ *   pnpm bench:invasion -- --stage=legacy --gear=reference
+ */
+function resolveSetup(): BenchSetup {
+  const argv: readonly string[] = (globalThis as { process?: { argv?: readonly string[] } }).process
+    ?.argv ?? [];
+  const read = (key: string): string | undefined => {
+    const hit = argv.find((a) => a.startsWith(`--${key}=`));
+    return hit === undefined ? undefined : hit.slice(key.length + 3);
+  };
+  const stage: BenchStage = read('stage') === 'legacy' ? 'legacy' : 'live';
+  const gear: BenchGear = read('gear') === 'reference' ? 'reference' : 'maxed';
+  return { stage, gear };
+}
 
 /** `SEEDS=n` 으로 시드 수를 줄인다(배선 확인용). 미지정이면 24시드 전량. */
 function resolveSeeds(): readonly number[] {
@@ -112,6 +155,7 @@ function pct(x: number): string {
 
 function main(): void {
   const seeds = resolveSeeds();
+  const setup = resolveSetup();
   // 24시드에서 관측된 0 은 **진짜 클리어 불가와 표본에 승리가 없음을 구분하지 못한다.**
   // `ESCALATE=1` 이면 0 인 기지만 96시드로 승격해 재판정한다(첫 승리에서 끊으므로 이길 수
   // 있는 기지는 싸고, 정말 못 이기는 기지만 72런을 다 돈다).
@@ -119,26 +163,54 @@ function main(): void {
   console.log('=== invasion band measurement (ADR-0051 tool, no assertions) ===');
   console.log(`seeds: ${seeds.length} (of ${BALANCE_SEEDS.length}) -> [${seeds.join(', ')}]`);
   console.log(`escalate zero-clear bases to 96 seeds: ${escalate ? 'yes' : 'no (ESCALATE=1)'}`);
+  console.log(`stage: ${setup.stage}  gear: ${setup.gear}   (--stage=live|legacy --gear=maxed|reference)`);
+  if (setup.stage === 'live') {
+    console.log('  live = real invasion defaults: garrison Lv75, def HP x201, def dmg x2, core HP x3, density default');
+  } else {
+    console.log('  legacy = neutral sim defaults (pre-2026-08-10 stage). compare with old generations only.');
+  }
+  console.log('');
+
+  // 바닥 기준선을 **먼저** 찍는다. 기지별 수치는 이 줄과의 차이로만 뜻이 생긴다 —
+  // 배치가 바닥보다 쉬우면 그 기지의 램프는 실질적으로 작동하지 않는 것이다.
+  const floor = measureFloor(seeds, setup);
+  console.log('--- floor reference: EMPTY defense (garrison only, no placement) ---');
+  console.log(
+    `FLOOR| ${pct(floor.winRate)} | progress ${(floor.perBaseProgress[0] ?? 0).toFixed(1)}` +
+      ` | L3 reach ${(floor.perBaseL3Rate[0] ?? 0).toFixed(0)}%` +
+      ` | mean run ticks ${Math.round(floor.perBaseMeanRunTicks[0] ?? 0)}`,
+  );
+  console.log('  read: a seed base EASIER than this line means its ramp does nothing.');
   console.log('');
 
   console.log('--- band clear rates ---');
   console.log('band | rate%  | design band | per-base rates');
+  // ⚠️ 이 목표선은 **파워업 추첨이 있던 시절** 잡힌 것이라 근거를 잃었다(머리말 참조).
+  // 새 목표선이 정해지기 전까지 참고 표시로만 남긴다.
   const design: Record<BandName, string> = {
-    하위: '>=85       ',
-    중하: '55..80     ',
-    중위: '25..55     ',
+    하위: '(old)>=85  ',
+    중하: '(old)55..80',
+    중위: '(old)25..55',
   };
   const labels: Record<BandName, string> = { 하위: 'LOW ', 중하: 'MID-', 중위: 'MID+' };
   const bandNames = Object.keys(BANDS) as BandName[];
   for (const band of bandNames) {
     const orders: readonly number[] = BANDS[band];
-    const stat = measureBand(orders, seeds);
+    const stat = measureBand(orders, seeds, setup);
     const per = stat.perBaseRates.map((r, i) => `#${orders[i]}=${r.toFixed(1)}`).join(' ');
     console.log(`${labels[band]} | ${pct(stat.winRate)} | ${design[band]} | ${per}`);
     console.log(
       `     | per-base winrate sd ${stdev(stat.perBaseRates).toFixed(2)}pp` +
         ` | per-base clear-tick sd ${Math.round(stdev(stat.perBaseMeanTicks))}`,
     );
+    // 승률이 0/100 으로 포화하면 램프 계단이 안 보인다. 진행 점수(0..100)와 L3 도달률은
+    // 포화하지 않으므로 그때 읽을 눈금이 된다. 자세한 정의는 `BandStat.perBaseProgress`.
+    const prog = stat.perBaseProgress.map((p, i) => `#${orders[i]}=${p.toFixed(1)}`).join(' ');
+    const l3 = stat.perBaseL3Rate.map((p, i) => `#${orders[i]}=${p.toFixed(0)}`).join(' ');
+    const st = stat.perBaseMeanRunTicks.map((p, i) => `#${orders[i]}=${Math.round(p)}`).join(' ');
+    console.log(`     | progress(0-100) ${prog}`);
+    console.log(`     | L3 reach%       ${l3}`);
+    console.log(`     | mean run ticks  ${st}`);
     // "클리어 불가 기지"는 밴드 평균이 목표 안이어도 성립할 수 있는 별도 신호다 — 그래서
     // 평균과 따로 찍는다. 24시드 0 은 **진짜 클리어 불가와 표본에 승리가 없음을 구분하지
     // 못한다**(승률 6.25% 기지가 0 으로 보일 확률 약 21%). 판정하려면 그 기지만 96시드로
@@ -148,7 +220,7 @@ function main(): void {
       console.log(`     | WARNING zero-clear bases: ${zero.map((nn) => `#${nn}`).join(' ')}`);
       if (escalate) {
         for (const nn of zero) {
-          const w = escalatedWinRate(nn);
+          const w = escalatedWinRate(nn, setup);
           console.log(
             `     |   #${nn} escalated to 96 seeds: ${w > 0 ? 'WINNABLE' : 'NO WIN FOUND'}`,
           );
@@ -165,7 +237,7 @@ function main(): void {
   const gateBases = BANDS.중위;
   console.log(`base | ${NON_STRIKER_SHIP_TYPES.map((s) => `ship${s}`.padStart(6)).join(' ')}`);
   for (const nn of gateBases) {
-    const rates = NON_STRIKER_SHIP_TYPES.map((s) => rosterGateRate(s, nn, seeds));
+    const rates = NON_STRIKER_SHIP_TYPES.map((s) => rosterGateRate(s, nn, seeds, setup));
     const lo = Math.min(...rates);
     const hi = Math.max(...rates);
     console.log(
