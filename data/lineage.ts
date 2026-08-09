@@ -19,14 +19,42 @@
 /** 가지 식별자. */
 export type LineageBranch = 'ship' | 'guardian';
 
-/** 보너스 점근 상한(basis-point) = +50%(ADR-0007 R4 📝 점근형). 어떤 레벨에서도 초과 불가. */
+/**
+ * 기체 가지 보너스 점근 상한(basis-point) = +50%(ADR-0007 R4 📝 점근형). 어떤 레벨에서도 초과
+ * 불가. ⚠️ 공격측 밸런스 축이라 이번 레인(2026-08-10, 침공 레벨 게이트 개방)에서 건드리지
+ * 않는다 — 수호 가지 전용 상한은 {@link GUARDIAN_BONUS_CAP_BP}.
+ */
 export const LINEAGE_BONUS_CAP_BP = 5000;
 
 /**
- * 점근 곡선 반감 레벨 K: 이 레벨에서 보너스가 상한의 절반(+25%)에 도달한다(로그형 감소수익).
- * 곡선 = CAP × L / (L + K). L→∞ 에서 CAP 에 점근(도달하지 않음), L=K 에서 CAP/2. 튜닝 대상(§5).
+ * 기체 가지 점근 곡선 반감 레벨 K: 이 레벨에서 보너스가 상한의 절반(+25%)에 도달한다(로그형
+ * 감소수익). 곡선 = CAP × L / (L + K). L→∞ 에서 CAP 에 점근(도달하지 않음), L=K 에서 CAP/2.
+ * 튜닝 대상(§5). 수호 가지는 별도 상수({@link GUARDIAN_HALF_LEVEL})를 쓴다.
  */
 export const LINEAGE_HALF_LEVEL = 20;
+
+/**
+ * 수호 가지 보너스 점근 상한(basis-point). 2026-08-10(사용자 결정) — 침공 레벨 게이트를 열며
+ * 기체 가지와 **분리**했다(과거엔 {@link LINEAGE_BONUS_CAP_BP} 를 공용했다 — 상한을 올리면
+ * 공격측 `shipBonusBp` 까지 같이 올라가는 문제가 있었다).
+ *
+ * 목표: 공격측 조종사 레벨 Lv100 배율(`pilotLevelMult(100)` ≈ ×4.69,
+ * `src/items/loadout.ts` `PILOT_LEVEL_GROWTH_PER_LEVEL`=1.0164)에 **닿을 수 있는** 폭.
+ * +370%(=37000bp) → ×4.70 로 근접 상한을 잡았다.
+ *
+ * ⚠️ 이 값은 **출발점**이다 — 정확한 수치는 사용자가 하네스에서 직접 정한다(침공 밴드 재계측
+ * 필요, `src/bench/invasionBands.ts`). 소비처(`data/guardian.ts` `normalizeLineageBonus`,
+ * SQL `inject_guardian_authority`)가 각자 [0,5000] 하드코딩 클램프를 갖고 있어 이 상한을
+ * 올려도 **아직 그대로 반영되지 않는다** — 별도 레인의 몫(이 레인 범위 밖).
+ */
+export const GUARDIAN_BONUS_CAP_BP = 37000;
+
+/**
+ * 수호 가지 점근 곡선 반감 레벨 K. 기체 가지와 같은 K=20 을 유지한다 — 상한만 올리고 도달
+ * 속도(레벨당 체감 곡선 모양)는 바꾸지 않는 편이 튜닝 변수를 하나로 줄여 사용자가 하네스에서
+ * 상한만 조정하며 재는 것을 단순화한다. 필요하면 사용자가 직접 조정.
+ */
+export const GUARDIAN_HALF_LEVEL = 20;
 
 /** 퇴역 시 기본 지급 계보 포인트(ADR-0007 R6 · 스펙 §Constraints). */
 export const RETIRE_LINEAGE_GRANT = 50;
@@ -84,22 +112,30 @@ export function derivedSpent(shipLevel: number, guardianLevel: number): number {
 /**
  * 누적 투자 레벨 → 보너스(basis-point, 로그형 점근). CAP × L / (L + K), 결정론 정수(내림 —
  * 상한 근처에서 오버슈트 방지). L=0 → 0, L=K → CAP/2, L→∞ → CAP 에 점근(초과 없음).
+ *
+ * 가지별 상한·반감 레벨을 인자로 받는다(2026-08-10 — 기체·수호 가지 곱선 분리, 위
+ * {@link GUARDIAN_BONUS_CAP_BP} 주석). 기본값은 기체 가지 상수라 기존 호출부(내부 전용)와
+ * 바이트 호환.
  */
-export function branchBonusBp(level: number): number {
+export function branchBonusBp(
+  level: number,
+  capBp: number = LINEAGE_BONUS_CAP_BP,
+  halfLevel: number = LINEAGE_HALF_LEVEL,
+): number {
   const l = level < 0 ? 0 : Math.trunc(level);
   if (l === 0) return 0;
-  const bp = Math.floor((LINEAGE_BONUS_CAP_BP * l) / (l + LINEAGE_HALF_LEVEL));
-  return bp > LINEAGE_BONUS_CAP_BP ? LINEAGE_BONUS_CAP_BP : bp;
+  const bp = Math.floor((capBp * l) / (l + halfLevel));
+  return bp > capBp ? capBp : bp;
 }
 
-/** 수호 가지 현재 보너스(모든 수호 기체에 적용 — 방어전 config 가 소비). */
+/** 수호 가지 현재 보너스(모든 수호 기체에 적용 — 방어전 config 가 소비). 전용 곱선(위 상수). */
 export function guardianBonusBp(state: LineageState): number {
-  return branchBonusBp(state.guardianLevel);
+  return branchBonusBp(state.guardianLevel, GUARDIAN_BONUS_CAP_BP, GUARDIAN_HALF_LEVEL);
 }
 
-/** 기체 가지 현재 보너스(내 현역 기체 강화 — 로드아웃 빌드 시 외부 적용). */
+/** 기체 가지 현재 보너스(내 현역 기체 강화 — 로드아웃 빌드 시 외부 적용). 곱선 불변(이번 범위 밖). */
 export function shipBonusBp(state: LineageState): number {
-  return branchBonusBp(state.shipLevel);
+  return branchBonusBp(state.shipLevel, LINEAGE_BONUS_CAP_BP, LINEAGE_HALF_LEVEL);
 }
 
 // ---------------------------------------------------------------------------

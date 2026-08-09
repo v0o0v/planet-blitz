@@ -32,7 +32,14 @@ import {
   INVASION_LEVEL_MIN,
   INVASION_RARITY_COUNT,
   INVASION_TOTAL_TICKS,
+  INVASION_L1_TICKS,
+  INVASION_WAVE_SLOTS,
+  INVASION_DENSITY_DEFAULT,
+  INVASION_DENSITY_LEGACY,
+  invasionL1ScheduleSpan,
+  invasionL1WaveCount,
 } from '../sim/invasion/index.js';
+import type { InvasionDensity } from '../sim/invasion/index.js';
 import { catalogSizeFor, clearSlot, fillAll, listSlots, setSlot } from './invasionEdit.js';
 import type { EntitySnapshot } from '../sim/snapshot.js';
 import { xpToNext } from '../sim/world.js';
@@ -430,6 +437,16 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   let invasionMaintCP: number = MAINTENANCE_FULL;
   /** 침공 시작 시 걸 총 제한 시간(틱). 기본값은 sim 정본 상수. */
   let invasionTimeLimit: number = INVASION_TOTAL_TICKS;
+  /**
+   * 밀도 축 현재값(침공 탭 슬라이더). 기본값에서 출발해 사용자가 직접 돌린다 —
+   * 「기본 수비대 상태를 만렙 기체가 어느 정도 클리어하는가」를 기준선으로 잡는 것이 목적이라,
+   * 최종값은 코드가 아니라 플레이가 정한다.
+   */
+  let invasionDensity: InvasionDensity = { ...INVASION_DENSITY_DEFAULT };
+  /** 방어측 계보 보너스(basis-point). 0 = 무연산. */
+  let invasionDefenseBonusBp = 0;
+  /** 공격측 조종사 레벨 강제(침공 탭). 기준선이 만렙이라 100 에서 출발한다. */
+  let invasionPilotLevel = 100;
   /** 리플레이 붙여넣기 상자의 내용(250ms 자동 재렌더를 넘어 보존). */
   let replayPaste = '';
   // 배치 슬롯 편집기 상태(250ms 자동 재렌더를 넘어 보존). 인덱스는 `listSlots()` 순서다.
@@ -575,6 +592,12 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
    * (프리셋을 런 중에 걸면 harness.preset 이 오염시킨다 — 시작 전에 거는 것이 규율).
    * 레이어를 2·3 으로 지정하면 그 점프만 오염이다.
    */
+  /**
+   * 마지막으로 시작한 침공 레이어. 「같은 조건 재시작」 버튼이 이 값을 되쓴다 — 튜닝은
+   * "값 하나 바꾸고 같은 판 다시"의 반복이라, 그 왕복이 두 번 클릭이면 리듬이 끊긴다.
+   */
+  let lastInvasionLayer: 1 | 2 | 3 = 1;
+
   function sceneInvasion(layer: 1 | 2 | 3): void {
     const seed = readSeedOpt();
     // 라이브 런 중에 고른 프리셋이 있으면 여기서 반영한다. 이 시점의 오염은 무해하다 —
@@ -586,16 +609,21 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     // 배치는 **예약된 것**(`harness.invasionLayers()`)을 쓴다 — 프리셋은 셀렉트를 바꾼 순간
     // 이미 예약에 반영됐고, 그 위에 슬롯 편집기가 한 칸씩 얹기 때문이다. 여기서 다시
     // `preset` 을 넘기면 슬롯 편집이 매 시작마다 조용히 되돌려진다.
+    lastInvasionLayer = layer;
     harness.startInvasion({
       maintenance: invasionMaintCP,
       timeLimitTicks: invasionTimeLimit,
       layer,
+      density: invasionDensity,
+      defenseBonusBp: invasionDefenseBonusBp,
+      pilotLevel: invasionPilotLevel,
       ...(seed !== undefined ? { seed } : {}),
     });
     handOver();
     const tail = layer === 1 ? '비오염' : `L${layer} 점프 · 오염`;
     setHint(
-      `침공 ${invasionPreset}(+편집) · 정비도 ${invasionMaintCP / 100}% · ` +
+      `침공 ${invasionPreset}(+편집) · Lv${invasionPilotLevel} · 계보 ${invasionDefenseBonusBp}bp · ` +
+        `정비도 ${invasionMaintCP / 100}% · L1 ${invasionDensity.l1IntervalTicks}틱×${invasionDensity.l1Repeats}바퀴 · ` +
         `${Math.round(invasionTimeLimit / 60)}초 (${tail})`,
     );
   }
@@ -1309,6 +1337,8 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       cfgRow.append(seedIn, presetSel, maintLbl, maintIn, limitLbl, limitIn);
       s.appendChild(cfgRow);
 
+      appendDifficultyKnobs(s);
+
       s.appendChild(subLabel('띄우기 (클릭 → 직접 조작)'));
       const playRow = document.createElement('div');
       playRow.className = 'pb-c-row';
@@ -1316,6 +1346,11 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         btn('▶ 침공 시작 (L1)', () => sceneInvasion(1), '선택한 배치로 3레이어 침공 시작(비오염)', 'play'),
         btn('L2 회랑부터', () => sceneInvasion(2), 'L2 회랑 돌파로 점프해 시작(오염)'),
         btn('L3 코어방부터', () => sceneInvasion(3), 'L3 코어방으로 점프해 시작(오염)'),
+        btn(
+          '⟳ 같은 조건 재시작',
+          () => sceneInvasion(lastInvasionLayer),
+          '방금과 같은 시드·배치·밀도·레벨로 다시 시작합니다. 시드를 핀하지 않았다면 시드만 새로 뽑힙니다.',
+        ),
       );
       s.appendChild(playRow);
 
@@ -1350,6 +1385,216 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       appendReplaySection(s);
       appendCombatCheats(s);
       appendLiveStatusLine(s);
+    }
+
+    /**
+     * 난이도 노브(침공 탭) — 밀도 7축 + 공격측 레벨 + 방어측 계보.
+     *
+     * ## 왜 슬라이더인가
+     * 침공 난이도의 기준선은 「**기본 수비대만 있는 상태**를 만렙 기체가 어느 정도 클리어하는
+     * 지점」이고, 그 지점은 계산이 아니라 **플레이가 정한다**(사용자 결정 2026-08-10). 그래서
+     * 코드가 정하는 것은 출발점뿐이고, 확정은 여기서 값을 돌려 보며 이뤄진다.
+     *
+     * 기존 계측기(`pnpm bench:invasion`)로는 이 축을 못 잰다 — 그 벤치 머리말이 스스로 적어
+     * 뒀듯 시드 간 승률 분산이 통째로 `powerupRng` 에서 나와서, 밴드 승률은 배치 난이도가
+     * 아니라 **파워업 추첨 운의 분포**다.
+     *
+     * ## 반영 시점
+     * 값 변경은 **다음 런 시작 때** 반영된다(라이브 런에 밀어 넣으면 그 런이 결정론적으로
+     * 재현 불가능해진다 — sim 입력이 런 도중 바뀌기 때문이다). 그래서 「⟳ 같은 조건 재시작」이
+     * 바로 옆에 있다.
+     */
+    function appendDifficultyKnobs(s: HTMLElement): void {
+      s.appendChild(subLabel('난이도 노브 (다음 런부터 반영)'));
+
+      /** 정수 노브 한 칸. 라벨 + 숫자 입력 + 즉시 클램프. */
+      function knob(
+        row: HTMLElement,
+        label: string,
+        get: () => number,
+        set: (v: number) => void,
+        min: number,
+        max: number,
+        title: string,
+      ): void {
+        const lbl = document.createElement('span');
+        lbl.className = 'pb-c-lbl';
+        lbl.textContent = label;
+        lbl.title = title;
+        const input = numInput(get(), 64);
+        input.min = String(min);
+        input.max = String(max);
+        input.title = title;
+        input.addEventListener('input', () => {
+          const raw = Number(input.value);
+          if (!Number.isFinite(raw)) return;
+          const v = Math.trunc(raw);
+          set(v < min ? min : v > max ? max : v);
+        });
+        row.append(lbl, input);
+      }
+
+      // ── 공격측 · 방어측 성장 축 ────────────────────────────────────────────
+      const growRow = document.createElement('div');
+      growRow.className = 'pb-c-row';
+      knob(
+        growRow,
+        '기체Lv',
+        () => invasionPilotLevel,
+        (v) => {
+          invasionPilotLevel = v;
+        },
+        1,
+        LEVEL_CAP,
+        `공격측 조종사 레벨(1..${LEVEL_CAP}). 피해·최대HP 두 축에 배율로 걸린다(Lv100 ≈ ×4.69).\n` +
+          '구 침공은 이 값을 강제로 1 로 눌러 레벨이 아무 의미가 없었다 — 2026-08-10 에 봉인을 풀었다.',
+      );
+      knob(
+        growRow,
+        '방어계보bp',
+        () => invasionDefenseBonusBp,
+        (v) => {
+          invasionDefenseBonusBp = v;
+        },
+        0,
+        200000,
+        '방어측 계보(수호 가지) 보너스, basis-point. 10000bp = ×2.00.\n' +
+          '편대·설비·보스·기물의 내구도와 피해에 일괄로 걸린다(발사 간격·사거리에는 안 걸린다).\n' +
+          '⚠️ 실 PvP 에서는 서버가 이 값을 실어야 하는데 아직 배선 전이라, 지금은 하네스에서만 0 이 아니다.',
+      );
+      s.appendChild(growRow);
+
+      // ── L1 대기권 ─────────────────────────────────────────────────────────
+      const l1Row = document.createElement('div');
+      l1Row.className = 'pb-c-row';
+      knob(
+        l1Row,
+        'L1 간격틱',
+        () => invasionDensity.l1IntervalTicks,
+        (v) => {
+          invasionDensity = { ...invasionDensity, l1IntervalTicks: v };
+        },
+        30,
+        3600,
+        '편대 슬롯 간 간격(틱, 60틱=1초). 구값 720(12초) → 행성런 카드 간격은 150~220틱.',
+      );
+      knob(
+        l1Row,
+        'L1 바퀴',
+        () => invasionDensity.l1Repeats,
+        (v) => {
+          invasionDensity = { ...invasionDensity, l1Repeats: v };
+        },
+        1,
+        32,
+        '편성 6칸을 몇 바퀴 도는가. 1 = 구 거동(한 바퀴).\n' +
+          '⚠️ 간격 × (6×바퀴 − 1) 이 L1 예산 5400틱을 넘으면 뒤쪽 바퀴가 강제 전이에 잘린다.',
+      );
+      const spanLbl = document.createElement('span');
+      spanLbl.className = 'pb-c-lbl';
+      {
+        const span = invasionL1ScheduleSpan(invasionDensity, INVASION_WAVE_SLOTS);
+        const over = span > INVASION_L1_TICKS;
+        spanLbl.textContent = `= ${invasionL1WaveCount(invasionDensity, INVASION_WAVE_SLOTS)}웨이브 / ${span}틱${over ? ' ⚠️예산초과' : ''}`;
+        spanLbl.title = over
+          ? `마지막 웨이브 트리거(${span}틱)가 L1 예산(${INVASION_L1_TICKS}틱)을 넘어 뒤쪽이 잘린다.`
+          : `L1 예산 ${INVASION_L1_TICKS}틱 안에 전부 등장한다.`;
+      }
+      l1Row.appendChild(spanLbl);
+      s.appendChild(l1Row);
+
+      // ── L2 회랑 ───────────────────────────────────────────────────────────
+      const l2Row = document.createElement('div');
+      l2Row.className = 'pb-c-row';
+      knob(
+        l2Row,
+        'L2 편대틱',
+        () => invasionDensity.l2FormationIntervalTicks,
+        (v) => {
+          invasionDensity = { ...invasionDensity, l2FormationIntervalTicks: v };
+        },
+        0,
+        3600,
+        '회랑 배경 편대 간격(틱). 0 = 끔(구 거동).\n' +
+          'L2 의 이동 적은 원래 스포너 설비 하나뿐이었고 밴드에 따라 0마리였다 — 이 축이 그 바닥을 메운다.',
+      );
+      knob(
+        l2Row,
+        '스포너+',
+        () => invasionDensity.l2SpawnAliveAdd,
+        (v) => {
+          invasionDensity = { ...invasionDensity, l2SpawnAliveAdd: v };
+        },
+        0,
+        32,
+        '스포너 1기당 동시 생존 상한 가산분(카탈로그 기본 3에 더해진다).',
+      );
+      knob(
+        l2Row,
+        '충원스포너',
+        () => invasionDensity.l2GarrisonSpawners,
+        (v) => {
+          invasionDensity = { ...invasionDensity, l2GarrisonSpawners: v };
+        },
+        0,
+        12,
+        '빈 소켓을 기본 수비대가 채울 때 스포너로 채울 기수(나머지는 속사포).\n' +
+          '⚠️ 배치된 소켓은 안 건드린다 — def3-maxed 처럼 전 슬롯을 채운 배치에는 이 축이 안 먹는다.',
+      );
+      s.appendChild(l2Row);
+
+      // ── L3 코어방 ─────────────────────────────────────────────────────────
+      const l3Row = document.createElement('div');
+      l3Row.className = 'pb-c-row';
+      knob(
+        l3Row,
+        'L3 증원틱',
+        () => invasionDensity.l3AddIntervalTicks,
+        (v) => {
+          invasionDensity = { ...invasionDensity, l3AddIntervalTicks: v };
+        },
+        0,
+        3600,
+        '코어가 증원을 부르는 간격(틱). 0 = 끔(구 거동 — 코어방 120초 동안 추가 스폰 0).\n' +
+          '코어 HP 가 낮을수록 짧아진다(40% 이하에서 0.4배).',
+      );
+      knob(
+        l3Row,
+        'L3 증원상한',
+        () => invasionDensity.l3AddMaxAlive,
+        (v) => {
+          invasionDensity = { ...invasionDensity, l3AddMaxAlive: v };
+        },
+        0,
+        64,
+        '코어 증원의 동시 생존 상한. 0 = 끔.',
+      );
+      s.appendChild(l3Row);
+
+      // ── 프리셋 ────────────────────────────────────────────────────────────
+      const presetRow = document.createElement('div');
+      presetRow.className = 'pb-c-row';
+      presetRow.append(
+        btn(
+          '밀도 기본값',
+          () => {
+            invasionDensity = { ...INVASION_DENSITY_DEFAULT };
+            render();
+            setHint('밀도를 현행 기본값으로 되돌렸습니다');
+          },
+          '코드가 잡아 둔 출발점으로 되돌린다',
+        ),
+        btn(
+          '밀도 구값(끔)',
+          () => {
+            invasionDensity = { ...INVASION_DENSITY_LEGACY };
+            render();
+            setHint('밀도를 구값으로 되돌렸습니다 — 밀도 레인 이전과 같은 스폰');
+          },
+          '밀도 축을 전부 끈다. 밀도 레인 이전과 스폰이 같아야 하므로 A/B 대조의 기준점이다.',
+        ),
+      );
+      s.appendChild(presetRow);
     }
 
     /**

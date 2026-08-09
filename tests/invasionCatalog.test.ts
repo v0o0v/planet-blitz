@@ -69,6 +69,7 @@ import { L3_PROPS } from '../data/invasion/props.js';
 import { DEFENSE_BOSSES } from '../data/invasion/defenseBosses.js';
 import { INVASION_MAP_TEMPLATES } from '../data/invasion/mapTemplates.js';
 import { EN, KO } from '../src/i18n/catalog.js';
+import { INVASION_DENSITY_LEGACY } from '../src/sim/invasion/density.js';
 
 const IDLE: InputFrame = { moveX: 0, moveY: 0, aim: 0, dash: false, special: 0 };
 
@@ -297,7 +298,15 @@ describe('기본 수비대 — 충원 규칙', () => {
       scrollY: 0,
       accelCp: 100,
     };
-    const ctx = { layers: emptyInvasionLayers(), runtime, maintenance: 10000 };
+    // 밀도 축을 구값으로 고정한다 — 이 파일의 단언은 구 스케줄(720틱·1회 순회) 전제라,
+    // 여기서 LEGACY 를 쓰는 것이 곧 "밀도를 끄면 예전과 같은가"를 지키는 가드가 된다.
+    const ctx = {
+      layers: emptyInvasionLayers(),
+      runtime,
+      maintenance: 10000,
+      density: INVASION_DENSITY_LEGACY,
+      defenseBonusBp: 0,
+    };
     const wrapped = withGarrison(ctx);
     expect(wrapped.runtime).toBe(runtime);
     expect(wrapped.maintenance).toBe(10000);
@@ -317,6 +326,10 @@ function emptyInvasionConfig(playerHp?: number): WorldConfig {
       layers: emptyInvasionLayers(),
       timeLimitTicks: INVASION_TOTAL_TICKS,
       maintenance: 10000,
+      // 밀도 축을 구값으로 고정한다 — 이 파일의 스모크는 구 스케줄(슬롯 간격 720틱·1바퀴)에서
+      // 쓰인 틱 창을 그대로 쓰므로, 여기서 LEGACY 를 박는 것이 곧 "밀도를 끄면 예전과 같은가"를
+      // 지키는 가드가 된다.
+      density: INVASION_DENSITY_LEGACY,
     },
   } as WorldConfig;
 }
@@ -384,7 +397,18 @@ describe('기본 수비대 — 직렬화·해시 무오염', () => {
 // ---------------------------------------------------------------------------
 
 describe('기본 수비대 — 빈 배치 런 스모크', () => {
-  it('충원 없이는 빈 배치가 무저항 기지가 된다(대조군)', () => {
+  // ⚠️ **이 대조군은 이름만큼 강하지 않다**(2026-08-10 밀도 레인에서 발견).
+  //
+  // 충원은 훅이 아니라 `makeInvasionContext`(`src/sim/invasion/step.ts`)가 넣는다 —
+  // `resetInvasionStepHooks()` 로 정본 훅을 되돌려도 **충원은 그대로 적용된다**. 그래서
+  // "충원 없이"라는 전제가 성립한 적이 없고, 이 단언이 0 이었던 진짜 이유는 구 스케줄에서
+  // t=300 에 살아 있는 적이 우연히 없었기 때문이다(슬롯 0 이 tick 0 에 5기를 내고, 그것들이
+  // 300틱 전에 화면 밖으로 빠져 정리됐다. 다음 슬롯은 720틱이라 아직 안 왔다).
+  //
+  // 밀도를 올리자 200틱 슬롯이 t=300 시점에 살아 있는 적을 남겨 이 우연이 깨졌다. 위
+  // `emptyInvasionConfig` 가 LEGACY 를 박아 원래 재던 것(구 스케줄의 스폰 타이밍)을 되살렸다.
+  // 진짜 대조군이 필요하면 훅이 아니라 **충원을 안 태운 ctx** 를 직접 만들어야 한다.
+  it('구 스케줄에서는 t=300 에 살아 있는 편대가 없다(스폰 타이밍 가드)', () => {
     resetInvasionStepHooks();
     const state = createWorld(5, emptyInvasionConfig());
     for (let i = 0; i < 300; i++) stepWorld(state, IDLE);

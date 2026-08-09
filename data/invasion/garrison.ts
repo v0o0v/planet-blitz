@@ -12,7 +12,7 @@
  * | 빈 자리 | 충원 |
  * |---|---|
  * | L1 웨이브 슬롯 | 정찰 드론편대 lv1 노말 |
- * | L2 설치 소켓 | 속사포 lv1 노말 |
+ * | L2 설치 소켓 | 앞쪽 `l2GarrisonSpawners` 칸은 **드론 스포너** lv1 노말, 나머지는 속사포 lv1 노말 |
  * | L3 기물 소켓 | **비움**(충원 안 함 — 코어방 과충전 방지) |
  * | L3 보스 슬롯 | 여기서 안 한다. `coreRoom.ts` 가 스폰 단계에서 이미 기본 보스로 폴백한다 |
  * | L3 수호 슬롯 | 충원 안 함(수호는 퇴역 기체 자산이라 합성이 성립하지 않는다) |
@@ -41,7 +41,7 @@ import type {
   InvasionStepContext,
 } from '../../src/sim/invasion/types.js';
 import { FORMATION_SCOUT_DRONES } from './formations.js';
-import { GARRISON_FACILITY_CATALOG_ID } from './facilities.js';
+import { GARRISON_FACILITY_CATALOG_ID, SPAWNER_FACILITY_CATALOG_ID } from './facilities.js';
 
 // ---------------------------------------------------------------------------
 // 충원값
@@ -80,8 +80,15 @@ export function garrisonRef(catalogId: number): InvasionRef {
 // 충원 적용
 // ---------------------------------------------------------------------------
 
-/** 파생 사본 캐시. 키 = 원본 layers 객체 신원. 순수 함수의 메모이즈라 재현성에 영향 없다. */
-const cache = new WeakMap<InvasionLayers, InvasionLayers>();
+/**
+ * 파생 사본 캐시. 키 = (원본 layers 객체 신원 → 스포너 기수). 순수 함수의 메모이즈라
+ * 재현성에 영향이 없다.
+ *
+ * 2단인 이유: 충원 결과가 이제 `layers` 만의 함수가 아니라 **밀도 축의 `l2GarrisonSpawners`
+ * 에도 의존**한다. 1단 WeakMap 으로 두면 하네스에서 슬라이더를 돌려도 첫 값으로 만든 사본이
+ * 계속 반환돼 "노브가 안 먹는다"가 된다.
+ */
+const cache = new WeakMap<InvasionLayers, Map<number, InvasionLayers>>();
 
 /** 슬롯 배열의 null 을 충원 Ref 로 채운 새 배열. 채울 게 없으면 원본 배열을 그대로 돌려준다. */
 function fillSlots(
@@ -97,24 +104,61 @@ function fillSlots(
 }
 
 /**
+ * L2 소켓 충원 — **앞쪽 빈 소켓 `spawners` 칸을 드론 스포너로**, 나머지 빈 소켓은 종전대로
+ * 속사포로 채운다. 배치된 소켓은 손대지 않는다(유저가 꽂은 설비를 런타임이 바꾸면 배치
+ * 계약이 깨진다).
+ *
+ * 순서가 「앞쪽부터」인 이유는 결정론이다 — 어느 빈 소켓이 스포너가 되는지가 배열 순서의
+ * 순수 함수여야 리플레이가 재현된다. 스포너를 뒤쪽에 몰면 스크롤 진행상 늦게 활성화돼
+ * (스포너는 `range` 2600 안에 플레이어가 있어야 사출한다) 밀도가 회랑 후반에 쏠린다.
+ */
+function fillFacilitySlots(
+  slots: readonly (InvasionRef | null)[],
+  spawners: number,
+): (InvasionRef | null)[] {
+  const out: (InvasionRef | null)[] = new Array<InvasionRef | null>(slots.length);
+  let remaining = spawners;
+  for (let i = 0; i < slots.length; i++) {
+    const ref = slots[i];
+    if (ref !== null && ref !== undefined) {
+      out[i] = ref;
+      continue;
+    }
+    if (remaining > 0) {
+      out[i] = garrisonRef(SPAWNER_FACILITY_CATALOG_ID);
+      remaining--;
+    } else {
+      out[i] = garrisonRef(GARRISON_FACILITY_CATALOG_ID);
+    }
+  }
+  return out;
+}
+
+/**
  * 빈 슬롯이 기본 수비대로 채워진 **파생 사본**을 돌려준다. 원본은 절대 변형하지 않는다.
  *
  * L3(기물·수호·보스·코어 모듈)는 손대지 않으므로 `l3` 는 원본 객체를 그대로 공유한다 —
  * 사본을 만들 이유가 없고, 공유해야 코어 HP 같은 런타임 참조가 원본과 갈리지 않는다.
  */
-export function garrisonLayers(layers: InvasionLayers): InvasionLayers {
-  const hit = cache.get(layers);
+export function garrisonLayers(layers: InvasionLayers, spawners = 0): InvasionLayers {
+  const n = Number.isFinite(spawners) && spawners > 0 ? Math.trunc(spawners) : 0;
+  let byCount = cache.get(layers);
+  if (byCount === undefined) {
+    byCount = new Map<number, InvasionLayers>();
+    cache.set(layers, byCount);
+  }
+  const hit = byCount.get(n);
   if (hit !== undefined) return hit;
   const filled: InvasionLayers = {
     l1: { waveSlots: fillSlots(layers.l1.waveSlots, GARRISON_FORMATION_CATALOG_ID) },
     l2: {
       templateId: layers.l2.templateId,
-      sockets: fillSlots(layers.l2.sockets, GARRISON_FACILITY_CATALOG_ID),
+      sockets: fillFacilitySlots(layers.l2.sockets, n),
     },
     // L3 는 충원 대상이 아니다(기물=비움 / 보스=coreRoom 폴백 / 수호·모듈=자산).
     l3: layers.l3,
   };
-  cache.set(layers, filled);
+  byCount.set(n, filled);
   return filled;
 }
 
@@ -126,9 +170,9 @@ export function garrisonLayers(layers: InvasionLayers): InvasionLayers {
  * `runtime` 은 **참조로** 넘겨 페이즈 머신이 갱신하는 같은 객체를 계속 보게 한다.
  */
 export function withGarrison(ctx: InvasionStepContext): InvasionStepContext {
-  const filled = garrisonLayers(ctx.layers);
+  const filled = garrisonLayers(ctx.layers, ctx.density.l2GarrisonSpawners);
   if (filled === ctx.layers) return ctx;
-  return { layers: filled, runtime: ctx.runtime, maintenance: ctx.maintenance };
+  return { ...ctx, layers: filled };
 }
 
 /**

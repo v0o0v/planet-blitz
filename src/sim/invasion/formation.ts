@@ -12,10 +12,15 @@
  * ② **플레이어 좌표 비의존.** 스폰 좌표는 `runtime.scrollX/scrollY`(sim 권위 스크롤 창)의 순수
  *    함수다. 플레이어가 어디 있든 편대는 같은 자리에 등장한다 — 강제 스크롤에서 "웨이브 슬롯 =
  *    진행 위치의 고정 등장 지점"이라는 기획 의미를 코드로 못박는다.
- * ③ **트리거는 상태 없는 정수 등식.** 슬롯 i 는 페이즈 진입 후 정확히
- *    `i * FORMATION_SLOT_INTERVAL_TICKS + member.delayTicks` 틱에 한 번 스폰한다. 등식(`===`)
+ * ③ **트리거는 상태 없는 정수 등식.** 반복 차수 k · 슬롯 i 는 페이즈 진입 후 정확히
+ *    `(k * slots + i) * interval + member.delayTicks` 틱에 한 번 스폰한다. 등식(`===`)
  *    이라 "이미 스폰했는지" 를 기억할 필요가 없다 — sim 에 스폰 진행 상태를 추가하지 않아
  *    hashWorld 침공 블록도 넓힐 필요가 없고, 리플레이 재실행이 자동으로 재현된다.
+ *
+ *    ⚠️ 이 규율이 밀도 설계를 좁혔다. "동시 적 수가 상한 아래일 때만 다음 편대를 당긴다"는
+ *    피드백 게이트는 살아있는 적 수를 읽어야 하는데, 그러면 {@link formationSpawnedCount}
+ *    (접미 어픽스 `alliesDestroyed` 의 입력)가 **스케줄의 순수 함수**라는 전제가 깨진다.
+ *    그래서 밀도는 간격 압축 + 반복 순회로만 민다(`src/sim/invasion/density.ts`).
  *
  * ## 좌표 규약 (L2-scroll-phase 와의 계약)
  * `runtime.scrollX/scrollY` 는 **스크롤 창의 중심** 월드 좌표(정수)다. L1 은 진행 방향이 -Y 이므로
@@ -53,14 +58,24 @@ import {
   resolveDefenseMods,
 } from './affix.js';
 import type { DefenseAffixMods, DefenseTriggerState } from './affix.js';
+import { invasionL1RepeatOffsetX } from './density.js';
+import { applyDefenseBonus } from './defenseBonus.js';
 
 // ---------------------------------------------------------------------------
 // 튜닝 상수 (전부 정수)
 // ---------------------------------------------------------------------------
 
 /**
- * 웨이브 슬롯 간 간격(틱). 6슬롯 × 720 = 4320틱(72초)로 L1 예산 5400틱(90초) 안에 마지막
- * 슬롯까지 전부 등장하고, 뒤에 18초의 정리 여유가 남는다.
+ * 웨이브 슬롯 간 간격(틱)의 **구 고정값**. 6슬롯 × 720 = 4320틱(72초)로 L1 예산 5400틱(90초)
+ * 안에 마지막 슬롯까지 전부 등장하고, 뒤에 18초의 정리 여유가 남는다.
+ *
+ * ⚠️ **현행 정본이 아니다.** 실효 간격은 밀도 축의 `l1IntervalTicks`
+ * (`src/sim/invasion/density.ts`)이며 하네스에서 돌릴 수 있다. 이 상수는 (a) 밀도 인자를 안
+ * 넘기는 순수 함수 호출의 기본값, (b) `INVASION_DENSITY_LEGACY` 가 재현하는 구 거동의
+ * 기준점으로 남는다.
+ *
+ * 720 이 문제였던 이유: 편대가 **12초에 한 번**만 나와 90초 예산 중 대부분이 빈 화면이었다
+ * (행성런은 카드가 150~220틱 = 2.5~3.7초마다 나온다).
  */
 export const FORMATION_SLOT_INTERVAL_TICKS = 720;
 
@@ -101,9 +116,33 @@ export const FORMATION_DRIFT_SPEED_VY = 80;
 // 트리거·좌표 — 순수 함수(테스트가 직접 검증한다)
 // ---------------------------------------------------------------------------
 
-/** 슬롯 i 의 편대 트리거 틱(페이즈 진입 기준 상대). */
-export function formationSlotTriggerTick(slotIndex: number): number {
-  return slotIndex * FORMATION_SLOT_INTERVAL_TICKS;
+/**
+ * 슬롯 i 의 편대 트리거 틱(페이즈 진입 기준 상대).
+ *
+ * `intervalTicks` 를 안 넘기면 구 고정 간격을 쓴다 — 이 함수의 계약("슬롯 인덱스 × 간격")은
+ * 반복 순회가 들어와도 그대로다. 반복 차수는 {@link formationWaveTriggerTick} 이 다룬다.
+ */
+export function formationSlotTriggerTick(
+  slotIndex: number,
+  intervalTicks: number = FORMATION_SLOT_INTERVAL_TICKS,
+): number {
+  return slotIndex * intervalTicks;
+}
+
+/**
+ * 반복 차수 k · 슬롯 i 의 트리거 틱. 웨이브 인덱스는 `k * slots + i` 라 **여전히 상태 없는
+ * 정수 등식**이다(파일 머리말 규율 ③) — "이미 스폰했는지"를 sim 상태로 기억하지 않는다.
+ *
+ * 슬롯을 늘리는 대신 같은 6칸을 여러 바퀴 도는 설계라, 관제탑 UI·DB 제약·밴드 램프 SQL 이
+ * 함께 보는 `INVASION_WAVE_SLOTS` 편성 계약이 한 글자도 안 바뀐다.
+ */
+export function formationWaveTriggerTick(
+  repeatIndex: number,
+  slotIndex: number,
+  slots: number,
+  intervalTicks: number,
+): number {
+  return (repeatIndex * slots + slotIndex) * intervalTicks;
 }
 
 /**
@@ -119,8 +158,24 @@ export function formationMemberSpawnTick(
   slotIndex: number,
   delayTicks: number,
   mods: DefenseAffixMods,
+  intervalTicks: number = FORMATION_SLOT_INTERVAL_TICKS,
 ): number {
-  return affixEntryTick(formationSlotTriggerTick(slotIndex) + delayTicks, mods);
+  return affixEntryTick(formationSlotTriggerTick(slotIndex, intervalTicks) + delayTicks, mods);
+}
+
+/** 반복 차수까지 반영한 구성원 1기의 실제 등장 틱. {@link formationMemberSpawnTick} 의 확장. */
+export function formationWaveMemberSpawnTick(
+  repeatIndex: number,
+  slotIndex: number,
+  slots: number,
+  delayTicks: number,
+  mods: DefenseAffixMods,
+  intervalTicks: number,
+): number {
+  return affixEntryTick(
+    formationWaveTriggerTick(repeatIndex, slotIndex, slots, intervalTicks) + delayTicks,
+    mods,
+  );
 }
 
 /** 마지막 슬롯의 마지막 구성원까지 전부 등장하는 데 걸리는 틱(진단·테스트용). */
@@ -219,34 +274,113 @@ export function stepInvasionFormation(state: WorldState, ctx: InvasionStepContex
 
   const slots = ctx.layers.l1.waveSlots;
   const n = slots.length < INVASION_WAVE_SLOTS ? slots.length : INVASION_WAVE_SLOTS;
+  const interval = ctx.density.l1IntervalTicks;
+  const repeats = ctx.density.l1Repeats;
   // 접미(조건부) 어픽스 판정 입력을 이 틱에 한 번 만들어 슬롯 전체가 공유한다.
   const trigger = formationTriggerState(state, ctx, elapsed);
-  for (let i = 0; i < n; i++) {
-    const ref = slots[i];
-    // 빈 슬롯의 기본 수비대 충원은 L9-garrison-catalog 레인이 스폰 단계에서 주입한다.
-    // 이 모듈은 명시 배치만 다루므로 null 은 조용히 건너뛴다(스폰 0).
-    if (ref === null || ref === undefined) continue;
-    const def = formationById(ref.catalogId);
-    if (def === undefined) continue;
-    const set = defenseAffixSet(CATALOG_FORMATION, ref);
-    for (let j = 0; j < def.members.length; j++) {
-      const m = def.members[j];
-      if (m === undefined) continue;
-      // 등식이라 매 구성원이 정확히 한 번만 스폰된다(상태 불요).
-      if (elapsed !== formationMemberSpawnTick(i, m.delayTicks, set.always)) continue;
-      const mods = resolveDefenseMods(set, trigger, ctx.runtime.scrollX, ctx.runtime.scrollY);
-      const e = spawnFormationMember(state, ctx, def, j, ref, mods);
-      // 접미 **또는 유니크**를 가진 편대만 슬롯을 표식으로 남긴다 — 둘 다 미보유면 aux0 이 0
-      // 그대로라 해시 폴드가 늘지 않고(replay.ts ENTITY_HASH_OPTIONAL_TAIL) 기존 런과 바이트
-      // 동일하다. 유니크를 조건에 넣지 않으면 **접두만 붙은 유니크 편대**가 표식을 못 받아
-      // `refreshFormationAffixes` 를 통째로 건너뛰고, `vengeanceEngine`·`proximityReactor`
-      // 같은 매 틱 재계산이 필요한 동적 유니크가 조용히 죽는다(M7c 통합 게이트 수정분).
-      if (e !== undefined && (set.conditional.length > 0 || (set.unique ?? null) !== null)) {
-        e.aux0 = i + 1;
+  // 반복 순회(밀도 축). k=0 한 바퀴면 구 거동과 같다 — 바깥 루프가 한 번만 돌기 때문이지
+  // 분기 때문이 아니라, 밀도 이전/이후 경로가 하나로 유지된다.
+  for (let k = 0; k < repeats; k++) {
+    for (let i = 0; i < n; i++) {
+      const ref = slots[i];
+      // 빈 슬롯의 기본 수비대 충원은 L9-garrison-catalog 레인이 스폰 단계에서 주입한다.
+      // 이 모듈은 명시 배치만 다루므로 null 은 조용히 건너뛴다(스폰 0).
+      if (ref === null || ref === undefined) continue;
+      const def = formationById(ref.catalogId);
+      if (def === undefined) continue;
+      const set = defenseAffixSet(CATALOG_FORMATION, ref);
+      for (let j = 0; j < def.members.length; j++) {
+        const m = def.members[j];
+        if (m === undefined) continue;
+        // 등식이라 매 구성원이 정확히 한 번만 스폰된다(상태 불요).
+        if (
+          elapsed !==
+          formationWaveMemberSpawnTick(k, i, n, m.delayTicks, set.always, interval)
+        ) {
+          continue;
+        }
+        const mods = resolveDefenseMods(set, trigger, ctx.runtime.scrollX, ctx.runtime.scrollY);
+        const e = spawnFormationMember(state, ctx, def, j, ref, mods, k);
+        // 접미 **또는 유니크**를 가진 편대만 슬롯을 표식으로 남긴다 — 둘 다 미보유면 aux0 이 0
+        // 그대로라 해시 폴드가 늘지 않고(replay.ts ENTITY_HASH_OPTIONAL_TAIL) 기존 런과 바이트
+        // 동일하다. 유니크를 조건에 넣지 않으면 **접두만 붙은 유니크 편대**가 표식을 못 받아
+        // `refreshFormationAffixes` 를 통째로 건너뛰고, `vengeanceEngine`·`proximityReactor`
+        // 같은 매 틱 재계산이 필요한 동적 유니크가 조용히 죽는다(M7c 통합 게이트 수정분).
+        //
+        // 표식은 **슬롯 인덱스**다(반복 차수 k 가 아니라) — `refreshFormationAffixes` 가
+        // `slots[aux0-1]` 로 되짚어야 하므로 반복 차수를 섞으면 어픽스 집합을 못 찾는다.
+        if (e !== undefined && (set.conditional.length > 0 || (set.unique ?? null) !== null)) {
+          e.aux0 = i + 1;
+        }
       }
     }
   }
   refreshFormationAffixes(state, ctx, trigger);
+}
+
+// ---------------------------------------------------------------------------
+// L2 배경 편대 — 회랑에도 이동 병력을 흘린다
+// ---------------------------------------------------------------------------
+
+/** L2 배경 편대가 등장하는 지점의 창 중심 대비 전방(+X) 거리. */
+export const CORRIDOR_SPAWN_AHEAD = 1500;
+
+/**
+ * L2(회랑, 횡스크롤 +X) 배경 편대 스텝.
+ *
+ * ## 왜 필요한가 — L2 는 이동 적이 사실상 0마리였다
+ * L2 의 유일한 이동 적 공급원은 드론 스포너 설비인데, 밴드 램프의 설비 선택이
+ * `catalogId = (i + shift) % kinds` 라 17종 중 스포너(id 5)가 창에 걸릴 때만 1기 들어온다.
+ * 그래서 **어느 밴드에서도 스포너는 최대 1기**였고, `spawnMaxAlive` 3 을 곱해도 동시 이동 적이
+ * "0 아니면 3"이었다(7개 밴드는 0). 나머지는 전부 고정 포탑·해저드였다.
+ *
+ * 스포너를 런타임이 늘릴 수는 없다 — **유저가 꽂은 설비**라 바꾸면 배치 계약이 깨지고, 빈
+ * 소켓 충원(`garrison.ts`)은 배치를 다 채운 기지에는 닿지 않는다. 그래서 설비와 **독립적으로**
+ * L1 편성을 재사용해 회랑에 병력을 흘려보낸다.
+ *
+ * ## 좌표 — L1 을 90° 돌린다
+ * L1 은 진행 방향이 -Y 라 편대가 `scrollY - AHEAD` 에 서고 구성원 오프셋이 `(dx, dy)` 다.
+ * L2 는 진행 방향이 +X 이므로 **깊이축 `dy` 가 x 로, 폭축 `dx` 가 y 로** 간다. 편대의 대형
+ * (쐐기·횡대·종대)이 회전만 되고 뭉개지지 않는다.
+ *
+ * 규율은 L1 과 동일하다 — RNG 미소비(`summonEnemy`), 플레이어 좌표 비의존, 상태 없는 등식 트리거.
+ */
+export function stepInvasionCorridorFormation(state: WorldState, ctx: InvasionStepContext): void {
+  const interval = ctx.density.l2FormationIntervalTicks;
+  if (interval <= 0) return;
+  const elapsed = state.tick - ctx.runtime.phaseEnterTick;
+  if (elapsed < 0 || elapsed % interval !== 0) return;
+
+  const slots = ctx.layers.l1.waveSlots;
+  const n = slots.length < INVASION_WAVE_SLOTS ? slots.length : INVASION_WAVE_SLOTS;
+  if (n <= 0) return;
+  // 어느 슬롯을 쓸지는 경과 틱의 순수 함수다(RNG 미소비). 순회하며 편성 전체를 돌려 쓴다.
+  const wave = Math.trunc(elapsed / interval);
+  const i = wave % n;
+  const ref = slots[i];
+  if (ref === null || ref === undefined) return;
+  const def = formationById(ref.catalogId);
+  if (def === undefined) return;
+
+  const set = defenseAffixSet(CATALOG_FORMATION, ref);
+  const trigger = formationTriggerState(state, ctx, elapsed);
+  for (let j = 0; j < def.members.length; j++) {
+    const m = def.members[j];
+    if (m === undefined) continue;
+    const enemyDef = ENEMY_BY_TYPE[m.enemyTypeIndex];
+    if (enemyDef === undefined) continue;
+    const mods = resolveDefenseMods(set, trigger, ctx.runtime.scrollX, ctx.runtime.scrollY);
+    // 깊이(dy) → +X 전방, 폭(dx) → y. 반복 차수 변주는 웨이브 번호로 준다.
+    const x = ctx.runtime.scrollX + CORRIDOR_SPAWN_AHEAD - m.dy;
+    const y = ctx.runtime.scrollY + m.dx + invasionL1RepeatOffsetX(wave);
+    const adj = avoidWalls(state.activeWalls, x, y, enemyDef.radius);
+    const e = summonEnemy(state, enemyDef, adj.x, adj.y);
+    applyFormationStats(state, ctx, e, ref, mods);
+    // 회랑을 거슬러 온다(-X). 세로 성분은 0 — 대형이 유지된 채 플레이어 쪽으로 밀려온다.
+    e.vx = -FORMATION_ENTRY_SPEED;
+    e.vy = 0;
+    if (set.conditional.length > 0 || (set.unique ?? null) !== null) e.aux0 = i + 1;
+  }
 }
 
 /**
@@ -288,15 +422,26 @@ function formationTriggerState(
 export function formationSpawnedCount(ctx: InvasionStepContext, elapsed: number): number {
   const slots = ctx.layers.l1.waveSlots;
   const n = slots.length < INVASION_WAVE_SLOTS ? slots.length : INVASION_WAVE_SLOTS;
+  const interval = ctx.density.l1IntervalTicks;
+  const repeats = ctx.density.l1Repeats;
   let count = 0;
-  for (let i = 0; i < n; i++) {
-    const ref = slots[i];
-    if (ref === null || ref === undefined) continue;
-    const def = formationById(ref.catalogId);
-    if (def === undefined) continue;
-    const set = defenseAffixSet(CATALOG_FORMATION, ref);
-    for (const m of def.members) {
-      if (formationMemberSpawnTick(i, m.delayTicks, set.always) < elapsed) count++;
+  // 스폰 루프와 **같은 이중 순회**여야 한다. 반복 차수를 여기서 빠뜨리면 `alliesDestroyed` 가
+  // 실제보다 작게 나와 접미 어픽스(`dt-vengeance` 등)가 늦게 발동하거나 영영 안 붙는다 —
+  // 스폰은 늘었는데 계산기만 옛 스케줄을 보는 「조용한 미발현」의 정확한 형태다.
+  for (let k = 0; k < repeats; k++) {
+    for (let i = 0; i < n; i++) {
+      const ref = slots[i];
+      if (ref === null || ref === undefined) continue;
+      const def = formationById(ref.catalogId);
+      if (def === undefined) continue;
+      const set = defenseAffixSet(CATALOG_FORMATION, ref);
+      for (const m of def.members) {
+        if (
+          formationWaveMemberSpawnTick(k, i, n, m.delayTicks, set.always, interval) < elapsed
+        ) {
+          count++;
+        }
+      }
     }
   }
   return count;
@@ -324,7 +469,7 @@ function refreshFormationAffixes(
     if (ref === null || ref === undefined) continue;
     const set = defenseAffixSet(CATALOG_FORMATION, ref);
     const mods = resolveDefenseMods(set, trigger, e.x, e.y);
-    e.damage = affixDamage(formationBaseDamage(state, e, ref), mods);
+    e.damage = affixDamage(formationBaseDamage(state, e, ref, ctx.defenseBonusBp), mods);
   }
 }
 
@@ -332,7 +477,12 @@ function refreshFormationAffixes(
  * 편대원의 **어픽스 이전** 접촉 피해(카탈로그 → 강화 3축 → 코어 모듈 배율). 스폰 경로와 같은
  * 순서로 접어야 매 틱 재계산이 스폰 시점 값과 이어진다 — 그래서 두 경로가 이 함수 하나를 쓴다.
  */
-function formationBaseDamage(state: WorldState, e: Entity, ref: InvasionRef): number {
+function formationBaseDamage(
+  state: WorldState,
+  e: Entity,
+  ref: InvasionRef,
+  defenseBonusBp: number,
+): number {
   const enemyDef = ENEMY_BY_TYPE[e.enemyType];
   let damage = enemyDef === undefined ? e.damage : enemyDef.contactDamage;
   const cp = formationPowerCp(ref.level, ref.ascension, ref.rarity);
@@ -341,7 +491,45 @@ function formationBaseDamage(state: WorldState, e: Entity, ref: InvasionRef): nu
   if (mr !== undefined && mr.formationDamageMult !== 1) {
     damage = Math.round(damage * mr.formationDamageMult);
   }
-  return damage;
+  // 방어측 계보 보너스는 **여기**에 접는다 — 스폰 경로와 매 틱 재계산 경로가 이 함수 하나를
+  // 공유하므로, 바깥에서 따로 곱하면 재계산이 도는 순간(접미 어픽스 보유 편대) 보너스가
+  // 조용히 벗겨진다.
+  return applyDefenseBonus(damage, defenseBonusBp);
+}
+
+/**
+ * 소환된 편대원 1기에 스탯을 접는다 — L1 편대와 L2 배경 편대가 **이 함수 하나**를 공유한다.
+ * 접기 순서(강화 3축 → 어픽스 → 계보 → 정비도)가 두 경로에서 갈리면 같은 편성이 레이어에
+ * 따라 다른 스탯을 갖게 되므로, 순서를 여기 한 곳에만 적는다.
+ */
+function applyFormationStats(
+  state: WorldState,
+  ctx: InvasionStepContext,
+  e: Entity,
+  ref: InvasionRef,
+  mods: DefenseAffixMods,
+): void {
+  // 강화 3축 → 내구도 정수 스케일. Math.round(a*cp/100) 관용구로 f64 누적을 피한다.
+  const cp = formationPowerCp(ref.level, ref.ascension, ref.rarity);
+  if (cp !== 100) {
+    const scaled = Math.round((e.maxHp * cp) / 100);
+    e.hp = scaled;
+    e.maxHp = scaled;
+  }
+  // 방어체 어픽스 내구도(defHpPct). 미보유면 배율 1 → 입력 그대로라 비트 동일.
+  // 그 위에 방어측 계보 보너스(기지 전체 축)를 얹는다 — bp 0 이면 무연산이다.
+  const hp = applyDefenseBonus(affixHp(e.maxHp, mods), ctx.defenseBonusBp);
+  e.hp = hp;
+  e.maxHp = hp;
+  // 접촉 피해: 강화 3축 → 코어 모듈 배율 → 계보 → 방어체 어픽스 순(재계산 경로와 동일).
+  e.damage = affixDamage(formationBaseDamage(state, e, ref, ctx.defenseBonusBp), mods);
+  // 정비도 풍화(결정 #18): 배치된 방어체는 방치될수록 연사가 느려진다. 정수 연산 전용
+  // invasionFireCooldown(편대·설비·기물·보스 공용 산식)을 쓰고, 풍화 저항 어픽스는 실효
+  // 정비도를 완전 정비 쪽으로 되돌린다. 연사 어픽스는 그 위에 간격 축소로 얹힌다.
+  e.cooldown = affixCooldown(
+    invasionFireCooldown(e.cooldown, affixMaintenance(ctx.maintenance, mods)),
+    mods,
+  );
 }
 
 /** 편대 구성원 1기를 실제로 전장에 올린다. RNG 미소비. */
@@ -352,6 +540,7 @@ function spawnFormationMember(
   memberIndex: number,
   ref: InvasionRef,
   mods: DefenseAffixMods,
+  repeatIndex = 0,
 ): Entity | undefined {
   const m = def.members[memberIndex];
   if (m === undefined) return undefined;
@@ -359,30 +548,13 @@ function spawnFormationMember(
   if (enemyDef === undefined) return undefined;
 
   const pos = formationMemberSpawnPos(def, memberIndex, ctx.runtime.scrollX, ctx.runtime.scrollY);
+  // 반복 차수 변주 — 같은 편대가 매 바퀴 똑같은 자리에 겹쳐 나오는 단조로움을 막는다.
+  // k 의 순수 정수 함수라 RNG 미소비·플레이어 좌표 비의존 규율이 그대로 유지된다.
+  const spawnX = pos.x + invasionL1RepeatOffsetX(repeatIndex);
   // 활성 벽에 끼인 채 등장하지 않도록 결정론적으로 밀어낸다(waves.ts:189, RNG 미소비).
-  const adj = avoidWalls(state.activeWalls, pos.x, pos.y, enemyDef.radius);
+  const adj = avoidWalls(state.activeWalls, spawnX, pos.y, enemyDef.radius);
   const e = summonEnemy(state, enemyDef, adj.x, adj.y);
-
-  // 강화 3축 → 내구도 정수 스케일. Math.round(a*cp/100) 관용구로 f64 누적을 피한다.
-  const cp = formationPowerCp(ref.level, ref.ascension, ref.rarity);
-  if (cp !== 100) {
-    const hp = Math.round((e.maxHp * cp) / 100);
-    e.hp = hp;
-    e.maxHp = hp;
-  }
-  // 방어체 어픽스 내구도(defHpPct). 미보유면 배율 1 → 입력 그대로라 비트 동일.
-  const hp = affixHp(e.maxHp, mods);
-  e.hp = hp;
-  e.maxHp = hp;
-  // 접촉 피해: 강화 3축 → 코어 모듈 배율 → 방어체 어픽스 순(재계산 경로와 동일한 접기 순서).
-  e.damage = affixDamage(formationBaseDamage(state, e, ref), mods);
-  // 정비도 풍화(결정 #18): 배치된 방어체는 방치될수록 연사가 느려진다. 정수 연산 전용
-  // invasionFireCooldown(편대·설비·기물·보스 공용 산식)을 쓰고, 풍화 저항 어픽스는 실효
-  // 정비도를 완전 정비 쪽으로 되돌린다. 연사 어픽스는 그 위에 간격 축소로 얹힌다.
-  e.cooldown = affixCooldown(
-    invasionFireCooldown(e.cooldown, affixMaintenance(ctx.maintenance, mods)),
-    mods,
-  );
+  applyFormationStats(state, ctx, e, ref, mods);
 
   const vel = formationMemberEntryVelocity(def, memberIndex);
   e.vx = vel.vx;

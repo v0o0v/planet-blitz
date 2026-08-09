@@ -42,7 +42,10 @@ import {
   makeInvasionContext,
   normalizeInvasionLayers,
   stepInvasionFormation,
-  formationSlotTriggerTick,
+  formationWaveTriggerTick,
+  INVASION_WAVE_SLOTS,
+  INVASION_DENSITY_LEGACY,
+  type InvasionStepContext,
   type InvasionLayers,
   type InvasionPhase,
 } from '../sim/invasion/index.js';
@@ -341,14 +344,38 @@ function spawnPreviewFormation(world: WorldState, slotIndex: number): void {
   const runtime = world.invasion3;
   if (cfg === undefined || runtime === undefined) return;
   // 기본 수비대 충원까지 반영된 배치(공격자가 실제로 만나는 것)를 본다.
-  const ctx = makeInvasionContext(cfg, runtime);
-  const slots = ctx.layers.l1.waveSlots;
+  const full = makeInvasionContext(cfg, runtime);
+  const slots = full.layers.l1.waveSlots;
   const ref = slots[slotIndex];
   if (ref === null || ref === undefined) return;
   const def = formationById(ref.catalogId);
   if (def === undefined) return;
 
-  const base = runtime.phaseEnterTick + formationSlotTriggerTick(slotIndex);
+  // ## 프리뷰는 **선택 슬롯만** 격리하고, 넓은 간격으로 스폰한다
+  //
+  // 트리거가 정수 등식이라, 간격이 구성원 지연보다 짧아지면 **다른 슬롯·다른 바퀴의 트리거와
+  // 겹친다**. 실제로 밀도 기본값을 90틱으로 내리자 슬롯0 프리뷰에 이웃 슬롯 편대까지 섞여
+  // 5기여야 할 그림이 7기가 됐다(`tests/defensePreviewFrame.test.ts` 가 잡았다).
+  //
+  // 프리뷰는 "이 편대가 자기 자리에 선 정지 화면"이라 밀도와 무관하다. 그래서
+  //   ① 선택 슬롯 외 전부 null(격리) ② 구 고정 간격(720)
+  // 둘을 **함께** 건다 — 하나만 걸면 충돌 조건이 「지연 ≥ 6×간격」 또는 「지연 ≥ 720」으로
+  // 남지만, 둘이면 「지연 ≥ 4320」이라 카탈로그 어떤 편대도 닿지 않는다.
+  const isolated: (typeof slots)[number][] = slots.map((s, i) => (i === slotIndex ? s : null));
+  const ctx: InvasionStepContext = {
+    ...full,
+    layers: { ...full.layers, l1: { waveSlots: isolated } },
+    density: INVASION_DENSITY_LEGACY,
+  };
+
+  const base =
+    runtime.phaseEnterTick +
+    formationWaveTriggerTick(
+      0,
+      slotIndex,
+      INVASION_WAVE_SLOTS,
+      INVASION_DENSITY_LEGACY.l1IntervalTicks,
+    );
   const delays = new Set<number>();
   for (const m of def.members) delays.add(m.delayTicks);
   const savedTick = world.tick;

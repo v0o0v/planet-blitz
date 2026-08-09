@@ -14,10 +14,11 @@
 
 import { garrisonLayers } from '../../../data/invasion/garrison.js';
 import { normalizeMaintenance } from './guardian.js';
+import { normalizeInvasionDensity } from './density.js';
 import type { WorldState } from '../world.js';
 import { PHASE_L1, PHASE_L2 } from './constants.js';
 import type { Invasion3Config, InvasionRuntime, InvasionStepContext, InvasionStepHooks } from './types.js';
-import { stepInvasionFormation } from './formation.js';
+import { stepInvasionFormation, stepInvasionCorridorFormation } from './formation.js';
 import { enterFacilityLayer, stepFacility } from './facility.js';
 import { enterCoreRoom, stepCoreRoom } from './coreRoom.js';
 import { applyModuleSpawnEffects } from '../moduleEffects.js';
@@ -31,6 +32,7 @@ import { applyModuleSpawnEffects } from '../moduleEffects.js';
  */
 const DEFAULT_HOOKS: InvasionStepHooks = {
   stepFormation: stepInvasionFormation,
+  stepCorridorFormation: stepInvasionCorridorFormation,
   enterFacility: enterFacilityLayer,
   stepFacility,
   enterCoreRoom,
@@ -74,10 +76,17 @@ export function makeInvasionContext(
   config: Invasion3Config,
   runtime: InvasionRuntime,
 ): InvasionStepContext {
+  const density = normalizeInvasionDensity(config.density);
+  const bp = config.defenseBonusBp;
   return {
-    layers: garrisonLayers(config.layers),
+    // 빈 L2 소켓을 스포너로 채울 기수가 밀도 축에 있으므로 충원에 함께 넘긴다. 메모는
+    // (layers 신원 × 기수) 조합 기준이라 밀도를 바꿔도 이전 충원 사본이 새지 않는다.
+    layers: garrisonLayers(config.layers, density.l2GarrisonSpawners),
     runtime,
     maintenance: normalizeMaintenance(config.maintenance),
+    density,
+    defenseBonusBp:
+      bp === undefined || !Number.isFinite(bp) || bp <= 0 ? 0 : Math.trunc(bp),
   };
 }
 
@@ -97,6 +106,10 @@ export function enterInvasionLayer(state: WorldState, ctx: InvasionStepContext):
 export function stepInvasionLayer(state: WorldState, ctx: InvasionStepContext): void {
   const phase = ctx.runtime.phase;
   if (phase === PHASE_L1) registered.stepFormation?.(state, ctx);
-  else if (phase === PHASE_L2) registered.stepFacility?.(state, ctx);
-  else registered.stepCoreRoom?.(state, ctx);
+  else if (phase === PHASE_L2) {
+    registered.stepFacility?.(state, ctx);
+    // L2 배경 편대(밀도 축). 설비 훅과 **별개**로 돈다 — 회랑의 이동 적 공급원이 스포너
+    // 설비뿐이라 밴드에 따라 동시 이동 적이 0마리였던 것을 메운다. 간격 0 이면 즉시 반환.
+    registered.stepCorridorFormation?.(state, ctx);
+  } else registered.stepCoreRoom?.(state, ctx);
 }

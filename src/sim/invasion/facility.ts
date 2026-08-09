@@ -88,6 +88,7 @@ import {
   resolveDefenseMods,
 } from './affix.js';
 import type { DefenseAffixMods, DefenseTriggerState } from './affix.js';
+import { applyDefenseBonus } from './defenseBonus.js';
 
 /** 방향 제한 방어포 kind. */
 export const FACILITY_GUN_KIND: EntityKind = 'facilityGun';
@@ -179,11 +180,18 @@ function scaleByRef(base: number, ref: FacilityRef): number {
  *
  * 정비도 풍화(ADR-0006, 결정 #18)는 구 포탑과 동일하게 **발사/생산 간격**에만 적용한다
  * (`invasionFireCooldown`) — 피해를 건드리면 충돌 판정 f64 산술에 오차가 섞인다.
+ *
+ * 방어측 계보 보너스(`defenseBonusBp`, defenseBonus.ts)는 **내구도·피해 두 축에만** 곱한다 —
+ * 공격측 `applyPilotLevelScaling` 과 대칭이고, 발사/생산 간격은 정비도·어픽스 담당이라 겹치면
+ * 서로 가린다. `droneHp` 도 이 함수가 단일 파생 지점이라 여기서 접는다 — 그래야
+ * `stepSpawnerFacility` 가 나르는 드론 내구도·접촉피해(= `damage` 필드 재사용)에 **이중 적용
+ * 없이** 자연히 실린다. bp 0 이면 `applyDefenseBonus` 가 무연산이라 비트 동일.
  */
 export function resolveFacilityStats(
   spec: FacilitySpec,
   ref: FacilityRef,
   maintenance: number,
+  defenseBonusBp = 0,
 ): FacilityStats {
   const scale = (base: number): number => scaleByRef(base, ref);
   // 거동마다 피해가 실리는 필드가 다르다. 프레스는 `pressCrushDamage` 다 — 예전에는 이 분기가
@@ -203,16 +211,19 @@ export function resolveFacilityStats(
           ? (ENEMY_BY_TYPE[spec.spawnEnemyType]?.contactDamage ?? 0)
           : spec.damage;
   return {
-    hp: scale(spec.hp),
-    damage: scale(rawDamage),
+    hp: applyDefenseBonus(scale(spec.hp), defenseBonusBp),
+    damage: applyDefenseBonus(scale(rawDamage), defenseBonusBp),
     fireCooldown: invasionFireCooldown(spec.fireCooldown, maintenance),
     spawnInterval: invasionFireCooldown(spec.spawnIntervalTicks, maintenance),
     droneHp:
       spec.behavior === FACILITY_BEHAVIOR_SPAWNER
-        ? scale(
-            spec.spawnDroneHp > 0
-              ? spec.spawnDroneHp
-              : (ENEMY_BY_TYPE[spec.spawnEnemyType]?.hp ?? 0),
+        ? applyDefenseBonus(
+            scale(
+              spec.spawnDroneHp > 0
+                ? spec.spawnDroneHp
+                : (ENEMY_BY_TYPE[spec.spawnEnemyType]?.hp ?? 0),
+            ),
+            defenseBonusBp,
           )
         : 0,
   };
@@ -286,6 +297,7 @@ export function spawnFacility(
   socketIndex: number,
   ref: FacilityRef,
   maintenance: number,
+  defenseBonusBp = 0,
 ): Entity | undefined {
   const spec = facilitySpecFor(ref.catalogId);
   if (spec === undefined) return undefined;
@@ -301,7 +313,8 @@ export function spawnFacility(
     if (press !== undefined) {
       const pressMods = defenseAffixSet(CATALOG_FACILITY, ref).always;
       press.damage = affixDamage(
-        resolveFacilityStats(spec, ref, affixMaintenance(maintenance, pressMods)).damage,
+        resolveFacilityStats(spec, ref, affixMaintenance(maintenance, pressMods), defenseBonusBp)
+          .damage,
         pressMods,
       );
     }
@@ -310,7 +323,12 @@ export function spawnFacility(
   // 방어체 어픽스는 **접두(상시)만** 스폰 시점에 싣는다. 접미(조건부)는 스텝이 매 틱 얹는다
   // (src/sim/invasion/affix.ts 머리말 "적용 시점 규율"). 어픽스 미보유면 배율 1 → 비트 동일.
   const mods = defenseAffixSet(CATALOG_FACILITY, ref).always;
-  const stats = resolveFacilityStats(spec, ref, affixMaintenance(maintenance, mods));
+  const stats = resolveFacilityStats(
+    spec,
+    ref,
+    affixMaintenance(maintenance, mods),
+    defenseBonusBp,
+  );
   const hp = affixHp(stats.hp, mods);
   const facing = socket.facingDeg * DEG_TO_RAD;
   const e = blankEntity(kindForBehavior(spec.behavior));
@@ -359,7 +377,7 @@ export function enterFacilityLayer(state: WorldState, ctx: InvasionStepContext):
   for (let i = 0; i < n; i++) {
     const ref = sockets[i];
     if (ref === null || ref === undefined) continue;
-    spawnFacility(state, template.sockets[i]!, i, ref, maintenance);
+    spawnFacility(state, template.sockets[i]!, i, ref, maintenance, ctx.defenseBonusBp);
   }
 }
 
@@ -412,7 +430,7 @@ export function stepFacility(state: WorldState, ctx: InvasionStepContext): void 
       ? NEUTRAL_AFFIX_MODS
       : resolveDefenseMods(set, trigger, e.x, e.y);
     if (!set.neutral && ref !== null && ref !== undefined) {
-      syncFacilityAffixStats(e, spec, ref, maintenance, mods);
+      syncFacilityAffixStats(e, spec, ref, maintenance, mods, ctx.defenseBonusBp);
     }
     if (e.kind === FACILITY_GUN_KIND) {
       stepTurretFacility(state, e, spec, player, maintenance, mods);
@@ -476,8 +494,9 @@ function syncFacilityAffixStats(
   ref: FacilityRef,
   maintenance: number,
   mods: DefenseAffixMods,
+  defenseBonusBp: number,
 ): void {
-  const base = resolveFacilityStats(spec, ref, affixMaintenance(maintenance, mods));
+  const base = resolveFacilityStats(spec, ref, affixMaintenance(maintenance, mods), defenseBonusBp);
   raiseMaxHp(e, affixHp(base.hp, mods));
   e.damage = affixDamage(base.damage, mods);
 }
@@ -1018,8 +1037,10 @@ function stepSpawnerFacility(
   for (const other of state.entities) {
     if (other.kind === 'enemy' && !other.dead && other.aux1 === e.id) alive++;
   }
-  // 방어체 어픽스 `defSpawnCapFlat` — 동시 생존 상한을 절대량으로 늘린다(미보유면 스펙 그대로).
-  if (alive >= affixSpawnCap(spec.spawnMaxAlive, mods)) {
+  // 방어체 어픽스 `defSpawnCapFlat` 과 밀도 `l2SpawnAliveAdd` 는 **같은 가산 축**이다 — 어픽스가
+  // 절대량 가산이라 밀도도 나란히 더해 자연스럽게 합쳐지게 한다(density.ts 필드 주석).
+  // 기본값 0 이면 `+0` 이라 비트 동일.
+  if (alive >= affixSpawnCap(spec.spawnMaxAlive, mods) + ctx.density.l2SpawnAliveAdd) {
     e.aux1 = SPAWNER_RETRY_TICKS;
     return;
   }

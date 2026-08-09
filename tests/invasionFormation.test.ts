@@ -58,6 +58,7 @@ import {
   ENTRY_PATTERN_COUNT,
 } from '../data/invasion/formations.js';
 import { ENEMY_BY_TYPE } from '../data/enemies.js';
+import { INVASION_DENSITY_LEGACY } from '../src/sim/invasion/density.js';
 
 // ---------------------------------------------------------------------------
 // 헬퍼
@@ -88,7 +89,15 @@ function runtime(overrides: Partial<InvasionRuntime> = {}): InvasionRuntime {
 }
 
 function ctxOf(layers: InvasionLayers, rt: InvasionRuntime, maintenance = MAINTENANCE_FULL) {
-  const ctx: InvasionStepContext = { layers, runtime: rt, maintenance };
+  // 밀도 축을 구값으로 고정한다 — 이 파일의 단언은 구 스케줄(720틱·1회 순회) 전제라,
+  // 여기서 LEGACY 를 쓰는 것이 곧 "밀도를 끄면 예전과 같은가"를 지키는 가드가 된다.
+  const ctx: InvasionStepContext = {
+    layers,
+    runtime: rt,
+    maintenance,
+    density: INVASION_DENSITY_LEGACY,
+    defenseBonusBp: 0,
+  };
   return ctx;
 }
 

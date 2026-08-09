@@ -49,13 +49,18 @@ function filledLayers() {
   });
 }
 
-function makeInvasionWorld(seed = 7, maintenance = 10000, coreHp?: number): WorldState {
+function makeInvasionWorld(
+  seed = 7,
+  maintenance = 10000,
+  coreHp?: number,
+  timeLimitTicks = INVASION_TOTAL_TICKS,
+): WorldState {
   const config = { ...DEFAULT_CONFIG } as WorldConfig;
   const layers = filledLayers();
   if (coreHp !== undefined) layers.l3.core.hp = coreHp;
   config.invasion3 = {
     layers,
-    timeLimitTicks: INVASION_TOTAL_TICKS,
+    timeLimitTicks,
     maintenance,
   };
   return createWorld(seed, config);
@@ -271,6 +276,13 @@ describe('침공 3레이어 통합 — 런 수명', () => {
     // L1·L2 는 이 단언의 관측 대상이 아니다 — 거기서 죽으면 코어방을 아예 못 재므로
     // `runUntilPhase` 가 가는 길에서만 HP 를 채워 데려온다(`sustainPlayer` 주석). **L3 진입
     // 이후로는 한 번도 채우지 않으므로** 아래 피해량은 코어방이 실제로 낸 값 그대로다.
+    // ⚠️ 2026-08-10 밀도 레인에서 이 단언이 41 → 24 로 빨개졌고, 그 빨간불이 **진짜 결함을
+    // 잡아냈다**: L3 코어 증원이 `REPAIR_DRONE`(`movement: 'seekWounded'` / `attack: 'heal'`)을
+    // 소환하고 있었다. 플레이어를 아예 안 때리는 힐러라 코어방이 무해해졌고, 자동 조준까지
+    // 코어에서 빼앗아 **L3 가 133,200틱 동안 안 끝났다**(정상은 3,588틱). 증원을 GUNNER
+    // (`standoff` + 박격포)로 바꾸자 L3 체류 3,808틱 · 피해 163 으로 돌아왔다.
+    //
+    // 그래서 이 테스트는 완화하지 않는다 — 완화했으면 그 결함이 그대로 머지됐다.
     const state = makeInvasionWorld();
     runUntilPhase(state, PHASE_L3, INVASION_TOTAL_TICKS);
     expect(state.invasion3?.phase).toBe(PHASE_L3);

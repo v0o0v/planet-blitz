@@ -22,6 +22,7 @@ import {
 import { normalizeInvasionLayers } from '../src/sim/invasion/normalize.js';
 import { createInvasionRuntime } from '../src/sim/invasion/scroll.js';
 import type { InvasionStepContext, InvasionGuardianPlacement } from '../src/sim/invasion/types.js';
+import { INVASION_DENSITY_LEGACY } from '../src/sim/invasion/density.js';
 import { BK_NONE, BK_HOMING, BK_ACCEL } from '../src/sim/bullets.js';
 import {
   mapLoadoutToGuardianSnapshot,
@@ -209,10 +210,14 @@ function firedBullets(snapshot: GuardianSnapshot, ticks = 120): Entity[] {
   player.x = 250;
   player.y = 0;
   player.dead = false;
+  // 밀도 축을 구값으로 고정한다 — 이 파일의 단언은 구 스케줄(720틱·1회 순회) 전제라,
+  // 여기서 LEGACY 를 쓰는 것이 곧 "밀도를 끄면 예전과 같은가"를 지키는 가드가 된다.
   const ctx: InvasionStepContext = {
     layers,
     runtime: createInvasionRuntime(),
     maintenance: MAINTENANCE_FULL,
+    density: INVASION_DENSITY_LEGACY,
+    defenseBonusBp: 0,
   };
   for (let t = 0; t < ticks; t++) stepInvasionGuardians(state, player, ctx);
   return state.entities.filter((e) => e.kind === 'enemyBullet' && !e.dead);

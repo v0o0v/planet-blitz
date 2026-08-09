@@ -256,19 +256,35 @@ export function buildRunConfig(profile: Profile, opts: RunConfigOpts): WorldConf
     pilot !== undefined ? pilot.equipped : equippedItems(profile, opts.commission?.constraints?.equipRules);
   // 조종사 레벨 성장(§R51 — `loadout.ts` `PILOT_LEVEL_GROWTH_PER_LEVEL` 이 정본).
   //
-  // ## ⚠️ 침공·예비역 소집은 **레벨 1**(= 무연산)이다 — 의도적 제외
-  // 이 배율은 PvE 축이다. 침공에 걸면 **한쪽에만 걸린다**: 방어측 수호는
+  // ## 침공 레벨 게이트 — 2026-08-10(사용자 결정) 개방
+  // ⚠️ 예비역 소집(`pilot !== undefined`)은 여전히 **레벨 1**(= 무연산)로 봉인돼 있다 — 이번
+  // 결정 범위 밖이다. 아래는 **침공(`opts.invasion3`) 게이트가 왜 봉인됐다가 왜 풀렸는지**의
+  // 기록이다.
+  //
+  // ### 봉인 이력(2026-08-XX ~ 2026-08-09)
+  // 이 배율은 원래 PvE 축이다. 침공에 걸면 **한쪽에만 걸렸다**: 방어측 수호는
   // `retirementPayload`(`src/save/guardianLifecycle.ts`)가 레벨을 안 넘기고 넘길 수도 없다
   // (`GuardianBuild` 에 레벨 칸이 없고, 넣으면 저장된 수호 행 전량의 재파생 + 서버 데이터
-  // 변경이 따라붙는다). 즉 공격측만 최대 ×4.69 를 받는 **비대칭 주입**이 된다.
+  // 변경이 따라붙는다). 즉 공격측만 최대 ×4.69 를 받는 **비대칭 주입**이 됐다.
   //
-  // 침공 밴드는 바로 어제(PR#397) 중위 54.9 / 상한 55 로 맞춰진 상태다 — 여유가 0.1pp 미만이라
-  // 이 축을 흘리면 그 자체로 회귀다. 그리고 계측기(`src/bench/invasionBands.ts`)는 레벨 1
+  // 침공 밴드는 PR#397 로 중위 54.9 / 상한 55 로 맞춰진 상태였다 — 여유가 0.1pp 미만이라
+  // 이 축을 흘리면 그 자체로 회귀였다. 그리고 계측기(`src/bench/invasionBands.ts`)는 레벨 1
   // 프로필과 리터럴 `GEAR_REFERENCE` 로 재므로 **밴드 테스트가 이 누출을 못 잡는다** — 이
-  // 저장소가 반복해 온 「조용한 미발현」의 정확한 형태라, 게이트가 아니라 여기서 막는다.
+  // 저장소가 반복해 온 「조용한 미발현」의 정확한 형태라, 게이트가 아니라 여기서 막았다.
   //
-  // ⭐ 여는 조건은 「침공에도 레벨을 넘기는 것」이 아니라 **방어측에 대응 축이 생기는 것**이다.
-  const pilotLevel = opts.invasion3 !== undefined || pilot !== undefined ? 1 : activeShip(profile).level;
+  // ### 해제 근거(2026-08-10)
+  // ⭐ 여는 조건은 「침공에도 레벨을 넘기는 것」이 아니라 **방어측에 대응 축이 생기는 것**이었다
+  // — 그 축이 이제 생겼다: `Invasion3Config.defenseBonusBp`(`src/sim/invasion/defenseBonus.ts`)가
+  // 계보 수호 가지 보너스를 기지 전체로 확장했다. 사용자 결정: 침공에서도 조종사 레벨 배율을
+  // 살리고, 대응 축은 계보 수호 가지로 맞춘다(곱선 상한을 공격측 Lv100 ×4.69 에 대응하도록
+  // 상향 — `data/lineage.ts` `GUARDIAN_BONUS_CAP_BP`).
+  //
+  // ⚠️ **미완**: `defenseBonusBp` 는 아직 서버 권위 주입 경로가 없다 — 현재 채워지는 경로는
+  // 하네스(`src/harness/**`)뿐이다. 위 문단이 지적한 두 사실(밴드 여유 0.1pp 미만 · 계측기가
+  // 이 누출을 못 잡는다)은 여전히 참이다 — 다만 지금은 **밸런스를 사용자가 하네스로 직접
+  // 재정의하는 중**이라 그 리스크를 감수하고 연다. 서버 권위 주입이 붙기 전까지 이 게이트는
+  // 하네스 밖 실제 서비스에서는 방어측 보정 없이 공격측만 강화된 채로 나갈 수 있다.
+  const pilotLevel = pilot !== undefined ? 1 : activeShip(profile).level;
   const { loadout } = computeLoadoutStats(
     equippedForLoadout,
     shipBonusBp(profile.lineage),
