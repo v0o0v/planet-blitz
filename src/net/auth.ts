@@ -32,6 +32,12 @@ import { readHarnessFlag, readSupabaseConfig } from './config.js';
 export interface SignedInUser {
   id: string;
   email: string | null;
+  /**
+   * 게스트(Supabase 익명) 계정인가. 권한은 구글 계정과 **동일**하다 — 이 플래그는 오직
+   * 표시용이다(설정 '계정' 행이 이메일 대신 "게스트"라고 적고, 진행이 이어지지 않는다는
+   * 경고를 붙인다). 서버는 이 값을 안 본다.
+   */
+  isGuest: boolean;
 }
 
 /** 로그인 실패 사유(화면에 그대로 띄우지 않고 i18n 키로 옮긴다). */
@@ -95,18 +101,19 @@ export async function getSignedInUser(): Promise<SignedInUser | null> {
     const user = data.session?.user;
     if (user === undefined) return null;
 
-    // **익명 세션은 로그인이 아니다.** `signInAnonymously()` 호출을 코드에서 걷어내도, 그 전에
-    // 만들어진 익명 세션은 localStorage 에 남아 자동 갱신된다(만료되지 않는다). 그대로 두면
-    // 이 레인 이전에 한 번이라도 플레이한 사람은 **전원이 게이트를 그냥 통과한다** — 로그인
-    // 필수 정책이 신규 사용자에게만 적용되는 셈이다. 실제로 개발 중 이 상태가 재현됐다.
+    // **익명 세션도 로그인이다**(2026-08-09, 게스트 로그인 도입). 그 전에는 여기서 익명
+    // 세션을 강제 `signOut()` 시켰다 — 로그인을 필수로 돌리던 시점에, 이미 만들어진 익명
+    // 세션이 localStorage 에서 자동 갱신되며 살아남아 **기존 플레이어 전원이 게이트를 그냥
+    // 통과하는** 상태가 실제로 재현됐기 때문이다.
     //
-    // 되돌리는 김에 세션 자체도 끊는다. 남겨 두면 UI 는 "로그인 안 됨"인데 게이트웨이는 그
-    // 익명 uid 로 서버를 호출하는 두 얼굴이 된다.
-    if (user.is_anonymous === true) {
-      await client.auth.signOut();
-      return null;
-    }
-    return { id: user.id, email: typeof user.email === 'string' ? user.email : null };
+    // 지금은 게스트가 정책적으로 허용되므로 그 방어의 전제가 사라졌다. 다만 "UI 는 미로그인인데
+    // 게이트웨이는 익명 uid 로 서버를 부르는 두 얼굴" 을 막으려던 부분은 유효하므로, 끊는 대신
+    // **정상 로그인으로 인정하고 게스트임을 플래그로 들고 다닌다** — 두 얼굴이 아니라 한 얼굴이다.
+    return {
+      id: user.id,
+      email: typeof user.email === 'string' ? user.email : null,
+      isGuest: user.is_anonymous === true,
+    };
   } catch {
     // 네트워크·저장소 오류 — 미로그인으로 취급한다(게이트가 로그인을 다시 요구할 뿐).
     return null;
@@ -125,6 +132,23 @@ export async function signInWithGoogle(): Promise<SignInFailure | null> {
     provider: 'google',
     options: { redirectTo: loginRedirectTarget() },
   });
+  return error === null ? null : 'provider-error';
+}
+
+/**
+ * 게스트 로그인(Supabase 익명 계정). 구글과 달리 **리다이렉트가 없다** — 세션이 그 자리에서
+ * 생기므로 호출부가 부팅을 다시 돌려야 한다.
+ *
+ * 권한은 구글 계정과 동일하다. 서버는 `auth.uid()` 만 보고 provider 를 안 보므로 RLS·RPC 를
+ * 손댈 필요가 없다(`supabase/tests/**` 의 검증 픽스처가 애초에 `is_anonymous = true` 유저로
+ * 전 경로를 통과시킨다).
+ *
+ * 대시보드에서 Anonymous sign-ins 가 꺼져 있으면 `provider-error` 로 떨어진다.
+ */
+export async function signInAsGuest(): Promise<SignInFailure | null> {
+  const client = await resolveClient();
+  if (client === null) return 'not-configured';
+  const { error } = await client.auth.signInAnonymously();
   return error === null ? null : 'provider-error';
 }
 

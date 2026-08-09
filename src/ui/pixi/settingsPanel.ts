@@ -151,7 +151,7 @@ export function settingsPanelGeometry(contentH: number): SettingsPanelGeometry {
  * 없으면, 게이트가 꺼진 상황(DEV·세션 끊김 강등)에서 다시 로그인할 방법이 사라진다.
  */
 export type AccountPanelState =
-  | { signedIn: true; email: string | null; onSignOut: () => void }
+  | { signedIn: true; email: string | null; isGuest?: boolean; onSignOut: () => void }
   | { signedIn: false; onSignIn: () => void };
 
 export class SettingsScreen {
@@ -539,13 +539,24 @@ export class SettingsScreen {
 
       // 이메일이 없을 수도 있다(provider 가 안 주는 경우). 그때도 "로그인됨"은 보여야 하므로
       // 대체 문구를 쓴다 — 빈 줄을 남기면 아래 버튼이 무엇에 대한 것인지 사라진다.
+      // 게스트는 이메일이 없다. 그 자리에 "로그인됨"만 뜨면 계정이 있는 것처럼 읽히므로
+      // 게스트라고 분명히 적고, 진행이 이 브라우저에만 남는다는 경고를 한 줄 덧붙인다.
       const who = account.signedIn
-        ? (account.email ?? t('settings.accountSignedIn'))
+        ? account.isGuest === true
+          ? t('settings.accountGuest')
+          : (account.email ?? t('settings.accountSignedIn'))
         : t('settings.notSignedIn');
       const whoLabel = label(who, ROW_LABEL, account.signedIn ? COLOR.gold : COLOR.muted);
       whoLabel.position.set(0, y);
       content.addChild(whoLabel);
       y += 36;
+
+      if (account.signedIn && account.isGuest === true) {
+        const warn = label(t('title.guestNote'), ROW_LABEL, COLOR.muted);
+        warn.position.set(0, y);
+        content.addChild(warn);
+        y += 34;
+      }
 
       if (account.signedIn) {
         const signOut = new PixiButton({
