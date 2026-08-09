@@ -3177,17 +3177,31 @@ async function main(): Promise<void> {
         debt: mercantileDebtOf(w),
       });
 
-      const seg = w.wave.segmentIndex + 1;
-      // 처치 할당 진행(ADR-0011): 세그먼트는 시간이 아니라 처치 수로 넘어간다. 보스
-      // 세그먼트는 보스 처치로 끝나므로 할당 대신 [BOSS]만 표시.
-      const quotaTag = w.wave.boss
-        ? '  [BOSS]'
-        : `  kills ${Math.min(w.kills - w.wave.segmentBaseKills, w.wave.segmentKillGoal)}/${w.wave.segmentKillGoal}`;
-      hud.set(
-        `Planet Blitz — M2  ·  seed ${currentSeed}  tick ${w.tick}  seg ${seg}/6${quotaTag}\n` +
-          `enemies ${enemyN}  bullets ${bulletN}/${w.bulletCap}  entities ${w.entities.length}\n` +
-          `hash ${hashWorld(w).toString(16).padStart(8, '0')}  FPS ${f.toFixed(1)}`,
-      );
+      // 디버그 텔레메트리(우하단 보라색 monospace — `#hud`) 는 **하네스에서만** 그린다
+      // (사용자 지시 2026-08-09). 이 줄은 Phase 1 부터 있었는데 DEV 게이트가 없어 **배포본에서도
+      // 플레이어에게 그대로 보이고 있었다** — seed·tick·엔티티 수·상태 해시·FPS 가 게임 화면에
+      // 얹힌다.
+      //
+      // 지우지 않고 하네스 뒤로 옮기는 이유: 이 정보(특히 `hash`)는 결정론 디버깅에 실제로
+      // 쓰인다. 같은 시드로 두 번 돌렸을 때 어느 틱에서 해시가 갈리는지를 눈으로 보는 유일한
+      // 자리다. 그래서 리포의 "지금은 테스트 중" 스위치인 `?harness=1` 뒤에 둔다 — 치트 패널·
+      // 프로필 격리와 같은 문이다.
+      //
+      // `hashWorld(w)` 를 게이트 **안에서** 부르는 것도 의도다. 매 프레임 월드 전체를 접는
+      // 연산이라 표시하지도 않을 값을 위해 돌릴 이유가 없다.
+      if (harnessActive) {
+        const seg = w.wave.segmentIndex + 1;
+        // 처치 할당 진행(ADR-0011): 세그먼트는 시간이 아니라 처치 수로 넘어간다. 보스
+        // 세그먼트는 보스 처치로 끝나므로 할당 대신 [BOSS]만 표시.
+        const quotaTag = w.wave.boss
+          ? '  [BOSS]'
+          : `  kills ${Math.min(w.kills - w.wave.segmentBaseKills, w.wave.segmentKillGoal)}/${w.wave.segmentKillGoal}`;
+        hud.set(
+          `Planet Blitz — M2  ·  seed ${currentSeed}  tick ${w.tick}  seg ${seg}/6${quotaTag}\n` +
+            `enemies ${enemyN}  bullets ${bulletN}/${w.bulletCap}  entities ${w.entities.length}\n` +
+            `hash ${hashWorld(w).toString(16).padStart(8, '0')}  FPS ${f.toFixed(1)}`,
+        );
+      }
     } else {
       hud.set('');
     }
