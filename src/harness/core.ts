@@ -117,6 +117,8 @@ export interface HarnessInvasionOpts {
   defenseHpBp?: number;
   /** 방어측 **피해** 배율(basis-point). 미지정 = 0. HP 축과 따로 돌린다. */
   defenseDamageBp?: number;
+  /** 코어 전용 추가 내구도 배율(basis-point). HP 축 위에 한 번 더 곱한다. */
+  defenseCoreHpBp?: number;
   /**
    * 공격측 조종사 레벨 강제(1..100). 미지정 = 프로필의 활성 기체 레벨 그대로.
    *
@@ -141,6 +143,8 @@ export interface HarnessInvasionResolved {
   defenseHpBp?: number;
   /** 방어측 피해 배율(basis-point). 0 = 무연산. */
   defenseDamageBp?: number;
+  /** 코어 전용 추가 내구도 배율(basis-point). */
+  defenseCoreHpBp?: number;
   /** 공격측 조종사 레벨 강제. 미지정 = 프로필 값. */
   pilotLevel?: number;
   /** 기본 수비대 레벨. 미지정 = 1. */
@@ -698,6 +702,7 @@ export function createHarness(host: HarnessHost): Harness {
         ...(opts.density !== undefined ? { density: opts.density } : {}),
         ...(opts.defenseHpBp !== undefined ? { defenseHpBp: opts.defenseHpBp } : {}),
         ...(opts.defenseDamageBp !== undefined ? { defenseDamageBp: opts.defenseDamageBp } : {}),
+        ...(opts.defenseCoreHpBp !== undefined ? { defenseCoreHpBp: opts.defenseCoreHpBp } : {}),
         ...(opts.pilotLevel !== undefined ? { pilotLevel: opts.pilotLevel } : {}),
         ...(opts.garrisonLevel !== undefined ? { garrisonLevel: opts.garrisonLevel } : {}),
       });

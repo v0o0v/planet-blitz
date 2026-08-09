@@ -46,16 +46,33 @@ export interface DefensePower {
   readonly hpBp: number;
   /** 피해 배율(basis-point). 0 = 무연산. */
   readonly damageBp: number;
+  /**
+   * **코어 전용 추가 내구도 배율**(basis-point). `hpBp` 위에 한 번 더 곱한다. 0 = 무연산.
+   *
+   * ## 왜 코어만 따로인가 (2026-08-10 실측)
+   * 코어는 5분 원정의 마지막 관문인데, 만렙 장비 기준 실측 **DPS 약 19,000** 에 코어 실효
+   * 내구도가 64,000 이라 **3초 만에 부서졌다**(사용자 제기 "코어의 hp도 너무 낮다").
+   * 잡몹과 같은 배수로는 못 맞춘다 — 잡몹은 그 배수에서 이미 적당했다.
+   *
+   * ⚠️ 기지 데이터의 `l3.core.hp` 를 올리는 방법도 있었지만 **시드 기지가 8000 을 하드코딩**한다
+   * (`src/bench/invasionBands.ts` `seedBaseLayers` + 램프 SQL). 기본 상수만 올리면 NPC 기지만
+   * 옛 값에 남아 갈린다. 배율은 스폰 시점에 걸리므로 모든 기지에 균일하다.
+   */
+  readonly coreHpBp: number;
 }
 
 /** 두 축 모두 무연산. 미지정 침공 config 와 구 거동이 여기로 떨어진다. */
-export const NEUTRAL_DEFENSE_POWER: DefensePower = { hpBp: 0, damageBp: 0 };
+export const NEUTRAL_DEFENSE_POWER: DefensePower = { hpBp: 0, damageBp: 0, coreHpBp: 0 };
 
 /** 손상 입력 방어 — 비유한·음수는 0 으로 접는다. */
-export function normalizeDefensePower(hpBp?: number, damageBp?: number): DefensePower {
+export function normalizeDefensePower(
+  hpBp?: number,
+  damageBp?: number,
+  coreHpBp?: number,
+): DefensePower {
   const fold = (v: number | undefined): number =>
     v === undefined || !Number.isFinite(v) || v <= 0 ? 0 : Math.trunc(v);
-  return { hpBp: fold(hpBp), damageBp: fold(damageBp) };
+  return { hpBp: fold(hpBp), damageBp: fold(damageBp), coreHpBp: fold(coreHpBp) };
 }
 
 /** 계보 보너스 basis-point 상한. 곱선 자체의 점근값은 `data/lineage.ts` 가 정한다. */

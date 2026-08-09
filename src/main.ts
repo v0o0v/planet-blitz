@@ -134,7 +134,12 @@ import { buildRunConfig } from './run/runConfig.js';
 import { buildCallupPilot } from './run/callupPilot.js';
 import { loadProfile, saveProfile, activeShip, newPlayerProfile } from './save/profile.js';
 import type { Profile } from './save/profile.js';
-import { INVASION_GARRISON_LEVEL_DEFAULT } from '../data/invasion/garrison.js';
+import {
+  INVASION_DEFENSE_CORE_HP_BP_DEFAULT,
+  INVASION_DEFENSE_DAMAGE_BP_DEFAULT,
+  INVASION_DEFENSE_HP_BP_DEFAULT,
+  INVASION_GARRISON_LEVEL_DEFAULT,
+} from '../data/invasion/garrison.js';
 // 게스트 첫 부팅의 출발점(중반 진행 프리셋). 구글 계정은 이 경로를 타지 않는다.
 import { guestPresetProfile } from './save/guestPreset.js';
 // 서버가 정본인 축(촉매·설계도·방어체·배치·순위·의뢰서)의 게스트 시드. 서버가 1회성을 지킨다.
@@ -1438,6 +1443,9 @@ async function main(): Promise<void> {
       // ⚠️ 하네스 경로(`startHarnessInvasionRun`)에도 같은 기본값이 있다. 두 침공 진입점이
       // 다른 바닥을 쓰면 "하네스에서는 되는데 실제 런에서는 안 된다"가 된다.
       garrisonLevel: INVASION_GARRISON_LEVEL_DEFAULT,
+      defenseHpBp: INVASION_DEFENSE_HP_BP_DEFAULT,
+      defenseDamageBp: INVASION_DEFENSE_DAMAGE_BP_DEFAULT,
+      defenseCoreHpBp: INVASION_DEFENSE_CORE_HP_BP_DEFAULT,
     };
     // 예비역 소집(ADR-0024): 호출부가 고른 수호기 id 가 있으면 그 잠긴 실물 빌드로 출격한다.
     // id 가 null/undefined 이거나(활성 기체 출격) 조회 실패·build 부재(구 수호기)면 pilot 은
@@ -1515,6 +1523,7 @@ async function main(): Promise<void> {
     density?: Partial<InvasionDensity>;
     defenseHpBp?: number;
     defenseDamageBp?: number;
+    defenseCoreHpBp?: number;
     pilotLevel?: number;
     garrisonLevel?: number;
   }): void {
@@ -1531,8 +1540,10 @@ async function main(): Promise<void> {
       maintenance: opts.maintenance,
       // 미지정이면 필드를 두지 않는다 — sim 이 기본값으로 접는다(조건부 접기).
       ...(opts.density !== undefined ? { density: opts.density } : {}),
-      ...(opts.defenseHpBp !== undefined ? { defenseHpBp: opts.defenseHpBp } : {}),
-      ...(opts.defenseDamageBp !== undefined ? { defenseDamageBp: opts.defenseDamageBp } : {}),
+      // 하네스는 슬라이더 값을 넘긴다. 안 넘기면 실 침공과 같은 밸런스 기본값.
+      defenseHpBp: opts.defenseHpBp ?? INVASION_DEFENSE_HP_BP_DEFAULT,
+      defenseDamageBp: opts.defenseDamageBp ?? INVASION_DEFENSE_DAMAGE_BP_DEFAULT,
+      defenseCoreHpBp: opts.defenseCoreHpBp ?? INVASION_DEFENSE_CORE_HP_BP_DEFAULT,
       // 하네스는 슬라이더 값을 넘긴다. 안 넘기면 실 침공과 같은 밸런스 기본값을 쓴다.
       garrisonLevel: opts.garrisonLevel ?? INVASION_GARRISON_LEVEL_DEFAULT,
     };

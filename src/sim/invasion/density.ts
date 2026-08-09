@@ -131,8 +131,8 @@ export const INVASION_DENSITY_DEFAULT: InvasionDensity = {
   l2FormationIntervalTicks: 300,
   l2SpawnAliveAdd: 2,
   l2GarrisonSpawners: 3,
-  l3AddIntervalTicks: 240,
-  l3AddMaxAlive: 12,
+  l3AddIntervalTicks: 60,
+  l3AddMaxAlive: 24,
 };
 
 // ---------------------------------------------------------------------------

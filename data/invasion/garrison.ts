@@ -141,6 +141,39 @@ export const GARRISON_LEVEL = 1;
  */
 export const INVASION_GARRISON_LEVEL_DEFAULT = 75;
 
+/**
+ * **실 침공 런의 방어측 내구도 배율**(basis-point). 70000 = ×8.00.
+ *
+ * 사용자가 하네스에서 직접 플레이해 확정한 값이다(2026-08-10). 만렙 기체(피해 ×4.69) 앞에서
+ * 기본 수비대가 버티려면 이 대역이 필요하다 — `수비대Lv` 축은 상한 99 에서도 ×5.90 이라
+ * (`100+(lv-1)*5`) 여기까지 못 온다.
+ */
+export const INVASION_DEFENSE_HP_BP_DEFAULT = 70000;
+
+/**
+ * **실 침공 런의 방어측 피해 배율**(basis-point). 300 = ×1.03.
+ *
+ * HP 축과 **같은 값이 아니다** — 사용자 실측에서 HP 배수를 피해에 그대로 걸면 "공격력이 너무
+ * 쎄다"가 됐다. 피해는 이미 `수비대Lv`(×4.70)가 올려 놓았고, 여기서는 아주 얇게만 얹는다.
+ * 두 축을 왜 갈랐는지는 `src/sim/invasion/defenseBonus.ts` 의 `DefensePower` 참조.
+ */
+export const INVASION_DEFENSE_DAMAGE_BP_DEFAULT = 300;
+
+/**
+ * **실 침공 런의 코어 전용 추가 내구도 배율**(basis-point). 90000 = ×10.00.
+ *
+ * `INVASION_DEFENSE_HP_BP_DEFAULT`(×8.00) 위에 한 번 더 곱하므로 코어 실효 내구도는
+ * 기본 배치값 8000 → **약 640,000** 이 된다.
+ *
+ * ## 근거 (2026-08-10 하네스 실측)
+ * 만렙 장비(`preset('maxed')`) 기준 **코어 DPS 약 19,000** 이었고, 그때 코어 실효 내구도가
+ * 64,000 이라 **3초 만에 부서졌다**(사용자 제기 "코어의 hp도 너무 낮다"). ×10 을 얹으면
+ * 대략 **30~35초**짜리 최종 관문이 된다 — L3 예산 120초 안에서 코어전이 3분의 1을 차지한다.
+ *
+ * ⚠️ 사용자 빌드는 `maxed` 프리셋과 다를 수 있다. 확정은 하네스 「코어HPbp」 슬라이더로 한다.
+ */
+export const INVASION_DEFENSE_CORE_HP_BP_DEFAULT = 90000;
+
 /** 충원 방어체 승급 단계. */
 export const GARRISON_ASCENSION = 0;
 /** 충원 방어체 등급 코드(0 = normal). */

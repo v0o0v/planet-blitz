@@ -206,6 +206,11 @@ export interface Invasion3Config {
    */
   defenseDamageBp?: number;
   /**
+   * 코어 **전용** 추가 내구도 배율(basis-point). {@link defenseHpBp} 위에 한 번 더 곱한다.
+   * 왜 코어만 따로인지는 `defenseBonus.ts` 의 `DefensePower.coreHpBp` 참조.
+   */
+  defenseCoreHpBp?: number;
+  /**
    * **기본 수비대 레벨** — 빈 슬롯을 자동 충원하는 방어체(`data/invasion/garrison.ts`)와
    * L3 보스 폴백·코어 증원이 쓰는 레벨. 미지정 = {@link GARRISON_LEVEL}(1, 구 거동).
    *
