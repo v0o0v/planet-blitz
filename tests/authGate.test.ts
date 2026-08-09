@@ -64,18 +64,22 @@ describe('② 익명 폴백이 부활하지 않는다', () => {
     }
   }
 
-  it('src 어디에서도 signInAnonymously 를 호출하지 않는다', () => {
+  /**
+   * 게스트 로그인이 생겼어도(2026-08-09) **위험했던 것은 익명 로그인 자체가 아니라 자동
+   * 폴백**이었다 — 게이트웨이 7곳이 각자 "세션 없으면 만들어 준다"를 복제하고 있었고, 그러면
+   * 사용자가 아무것도 고르지 않았는데 계정이 생긴다. 그래서 호출을 **명시적 진입점 한 곳으로
+   * 가둔다**: 타이틀에서 사용자가 [게스트로 시작]을 눌렀을 때만 도는 `net/auth.ts`.
+   */
+  it('signInAnonymously 는 net/auth.ts 한 곳에서만 호출된다', () => {
     const files: string[] = [];
     scanTs(SRC, files);
-    // `.auth.` 를 붙여 **실제 호출**만 잡는다. 이 레인이 왜 익명을 걷어냈는지 설명하는 주석에
-    // 이름 자체는 남아 있어야 하고(같은 실수의 재발을 막는 기록이다), 그것까지 잡으면 과탐지다.
-    const offenders = files.filter((f) =>
-      /\.auth\.signInAnonymously\s*\(/.test(readFileSync(f, 'utf8')),
-    );
+    const callers = files
+      .filter((f) => /\.auth\.signInAnonymously\s*\(/.test(readFileSync(f, 'utf8')))
+      .map((f) => f.slice(SRC.length + 1).replace(/\\/g, '/'));
     expect(
-      offenders.map((f) => f.slice(SRC.length + 1)),
-      '익명 로그인은 로그인 게이트를 우회시킨다 — 로그인 안 한 사용자에게 서버가 계정을 만들어 준다',
-    ).toEqual([]);
+      callers,
+      '게이트웨이가 세션 없을 때 스스로 계정을 만들면, 사용자가 고르지 않은 계정이 생긴다',
+    ).toEqual(['net/auth.ts']);
   });
 
   it('requireUserId 는 세션이 없으면 throw 한다(조용히 만들어 주지 않는다)', () => {
@@ -85,20 +89,21 @@ describe('② 익명 폴백이 부활하지 않는다', () => {
   });
 
   /**
-   * 호출을 지우는 것만으로는 부족했다. **이미 발급된 익명 세션은 localStorage 에 남아 자동
-   * 갱신되므로 만료되지 않는다** — 그대로 두면 이 레인 이전에 한 번이라도 플레이한 사람은
-   * 전원이 게이트를 그냥 통과한다(로그인 필수가 신규 사용자에게만 적용된다). 개발 중 실제로
-   * 재현됐고, 그때까지 어떤 테스트도 빨갛지 않았다.
+   * 게스트는 **완전한 계정**이다(사용자 결정, 2026-08-09 — 기능 제한 없음). 그래서 서버 경로가
+   * 익명 uid 를 거부하면 안 된다. 거부가 남아 있으면 게스트는 로그인은 되는데 촉매·의뢰·침공이
+   * 전부 조용히 실패하는, 가장 진단하기 어려운 형태가 된다.
    */
-  it('익명 세션은 로그인으로 치지 않는다 — 부팅 검사와 requireUserId 양쪽에서', () => {
-    expect(read('net/auth.ts')).toMatch(/user\.is_anonymous === true/);
-    expect(read('net/supabaseClient.ts')).toMatch(/user\.is_anonymous === true/);
+  it('익명 uid 를 서버 경로에서 거부하지 않는다', () => {
+    expect(read('net/supabaseClient.ts')).not.toMatch(/is_anonymous === true\) throw/);
   });
 
-  it('발견한 익명 세션은 끊는다(UI 는 미로그인인데 서버는 익명 uid 로 쓰는 두 얼굴 방지)', () => {
+  it('게스트 여부는 끊는 대신 플래그로 들고 다닌다(UI 표시용)', () => {
     const src = read('net/auth.ts');
-    const block = src.slice(src.indexOf('if (user.is_anonymous === true)'));
-    expect(block.slice(0, 200)).toContain('signOut()');
+    expect(src).toMatch(/isGuest: user\.is_anonymous === true/);
+    // 부팅 검사가 익명 세션을 끊어 버리면 [게스트로 시작]을 눌러도 곧바로 미로그인으로 돌아온다.
+    expect(src.slice(src.indexOf('export async function getSignedInUser'))).not.toMatch(
+      /is_anonymous[\s\S]{0,200}signOut\(\)/,
+    );
   });
 });
 
@@ -131,6 +136,51 @@ describe('③ 게이트·리다이렉트 배선', () => {
     const src = read('net/auth.ts');
     expect(src).not.toMatch(/^import .*from '@supabase\/supabase-js'/m);
     expect(src).toContain("await import('./supabaseClient.js')");
+  });
+});
+
+/**
+ * ④ 게스트 배선(2026-08-09).
+ *
+ * 캔버스는 검증할 수 없으므로 이 파일의 관용구대로 **소스 텍스트로 잠근다**. 여기서 지키는
+ * 것은 값이 아니라 **순서와 조건** 넷이고, 넷 다 틀려도 타입 체크와 단위 테스트는 초록이다.
+ */
+describe('④ 게스트 배선', () => {
+  it('타이틀 미로그인 화면에만 게스트 버튼이 선다', () => {
+    const src = read('ui/pixi/titleScreen.ts');
+    // `} else {` 는 파일 앞쪽에도 있다 — 반드시 분기 시작점 **이후**에서 찾아야 한다.
+    const start = src.indexOf('if (opts.needsSignIn)');
+    const branch = src.slice(start, src.indexOf('} else {', start));
+    expect(branch).toContain('onGuestSignIn()');
+    // 누르기 **전에** 보이는 경고. 모달로 옮기면 이 단언이 깨진다(의도된 마찰).
+    expect(branch).toContain("t('title.guestNote')");
+  });
+
+  it('게스트 로그인 성공은 페이지를 다시 부팅시킨다', () => {
+    // 구글은 리다이렉트라 저절로 재부팅되지만 익명 로그인은 페이지를 안 떠난다. 재부팅이
+    // 없으면 세션만 생기고 화면은 여전히 로그인 요구 상태로 남는다.
+    const src = read('main.ts');
+    const block = src.slice(src.indexOf('onGuestSignIn: () => {'));
+    expect(block.slice(0, 600)).toContain('signInAsGuest()');
+    expect(block.slice(0, 600)).toContain('location.reload()');
+  });
+
+  it('중반 프리셋은 게스트에게만 들어간다', () => {
+    // 구글 계정이 이 경로를 타면 신규 사용자에게 만렙 세이브를 주는 셈이 된다.
+    const src = read('main.ts');
+    expect(src).toContain('user.isGuest ? guestPresetProfile() : newPlayerProfile()');
+  });
+
+  it('서버 시드는 세이브 업로드 성공 뒤에만 부른다', () => {
+    // 시드 RPC 는 profiles 행이 없으면 예외다(그 테이블들이 전부 FK 로 문다). 순서가 뒤집히면
+    // 시드가 통째로 실패하는데 실패를 삼키는 자리라 **아무 말 없이 빈 계정**이 된다.
+    const src = read('main.ts');
+    const block = src.slice(src.indexOf('if (user.isGuest) {'));
+    const push = block.indexOf('pushProfileToServer');
+    const seed = block.indexOf('seedGuestAccount');
+    expect(push).toBeGreaterThanOrEqual(0);
+    expect(seed).toBeGreaterThan(push);
+    expect(block.slice(0, 400)).toContain('if (pushed)');
   });
 });
 

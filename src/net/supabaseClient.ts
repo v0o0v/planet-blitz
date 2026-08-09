@@ -71,10 +71,11 @@ export function getSupabaseClient(config: SupabaseConfig): SupabaseClient {
 /**
  * 로그인된 uid 를 돌려준다. **세션이 없으면 throw** 한다.
  *
- * ## 익명 로그인을 여기서 걷어냈다
+ * ## "세션 없으면 만들어 준다" 는 폴백은 여전히 금지다
  * 이전에는 게이트웨이 7곳이 각자 "세션 없으면 `signInAnonymously()`" 를 복제하고 있었다.
- * 로그인 필수 정책에서는 그 폴백이 곧 **게이트 우회**다 — 로그인 안 한 사용자에게 서버가
- * 계정을 만들어 주면 게이트가 UI 장식이 된다.
+ * 그 폴백이 곧 게이트 우회다 — 사용자가 아무것도 고르지 않았는데 서버가 계정을 만들어 준다.
+ * 게스트 로그인이 생긴 지금도 이 금지는 그대로다. 게스트는 **타이틀에서 사용자가 직접 누를
+ * 때만**(`net/auth.ts` 의 `signInAsGuest`) 만들어진다. 여기서 자동 생성하지 않는다.
  *
  * ## throw 가 맞는 이유
  * 호출부(`net/index.ts`·`defenseSync.ts` 등)는 이미 전부 `try/catch` 로 감싸 no-op 또는 대기
@@ -85,8 +86,7 @@ export async function requireUserId(client: SupabaseClient): Promise<string> {
   const { data } = await client.auth.getSession();
   const user = data.session?.user;
   if (user === undefined) throw new Error('로그인이 필요합니다(세션 없음)');
-  // 익명 세션 거부(이중 방어). `net/auth.ts` 의 부팅 검사가 이런 세션을 끊지만, 그 검사를
-  // 안 타는 경로(하네스 직접 호출 등)로 들어와도 익명 uid 로 서버를 쓰지 못하게 막는다.
-  if (user.is_anonymous === true) throw new Error('로그인이 필요합니다(익명 세션)');
+  // 익명(게스트) 세션도 정상 uid 다 — 2026-08-09 게스트 로그인 도입으로 거부를 걷어냈다.
+  // 서버는 provider 를 안 보고 `auth.uid()` 만 보므로 RLS·RPC 는 그대로 통한다.
   return user.id;
 }

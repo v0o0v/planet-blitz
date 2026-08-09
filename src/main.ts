@@ -133,6 +133,10 @@ import { runBench } from './bench/bench.js';
 import { buildRunConfig } from './run/runConfig.js';
 import { buildCallupPilot } from './run/callupPilot.js';
 import { loadProfile, saveProfile, activeShip, newPlayerProfile } from './save/profile.js';
+// 게스트 첫 부팅의 출발점(중반 진행 프리셋). 구글 계정은 이 경로를 타지 않는다.
+import { guestPresetProfile } from './save/guestPreset.js';
+// 서버가 정본인 축(촉매·설계도·방어체·배치·순위·의뢰서)의 게스트 시드. 서버가 1회성을 지킨다.
+import { seedGuestAccount } from './net/guestSeed.js';
 import { settleRun, grantXp } from './save/settlement.js';
 import type { SettlementOutcome } from './save/settlement.js';
 // M4 네트워크 계층(Phase B3): Supabase 미설정 시 완전 no-op, 절대 throw 안 함.
@@ -177,6 +181,7 @@ import {
   isLoginConfigured,
   getSignedInUser,
   signInWithGoogle,
+  signInAsGuest,
   signOut,
 } from './net/auth.js';
 // 계정이 바뀌면 로컬 계정 데이터를 버린다(재화 이전 경로 차단).
@@ -937,6 +942,22 @@ async function main(): Promise<void> {
           if (failure === null) return;
           titleNotice = t('title.signInFailed');
           openTitle(true);
+        });
+      },
+      /**
+       * 게스트 — 구글과 달리 **페이지를 안 떠난다.** 세션이 그 자리에서 생기므로 부팅을 다시
+       * 돌려야 하는데, `bootWithAuth()` 를 그냥 다시 부르면 이미 그려진 타이틀·프로필 객체가
+       * 남은 채 두 번째 부팅이 겹친다. 새로고침이 그 전부를 빠뜨림 없이 없앤다 —
+       * `handleSignOut` 이 같은 이유로 같은 선택을 했다.
+       */
+      onGuestSignIn: () => {
+        void signInAsGuest().then((failure) => {
+          if (failure !== null) {
+            titleNotice = t('title.guestFailed');
+            openTitle(true);
+            return;
+          }
+          if (typeof location !== 'undefined') location.reload();
         });
       },
     });
@@ -2672,12 +2693,37 @@ async function main(): Promise<void> {
       if (reconcileAccountScope(accountStore(), user.id)) {
         // 새 계정 = 세이브 없는 조종사다 → 기본 장비가 실린 신규 프로필(맨몸 스키마 기본값이
         // 아니다 — `defaultProfile` 주석의 구분 참조).
-        Object.assign(profile, newPlayerProfile());
+        //
+        // 게스트는 그 자리에 **중반 진행 프리셋**이 들어간다(사용자 결정, 2026-08-09). 계정
+        // 없이 잠깐 보는 사람에게 초반 몇 분이 게임의 전부로 보이지 않게 하려는 것이다.
+        // 아래 `pullServerProfileInto` 가 서버 행을 찾으면 그쪽이 이긴다 — 즉 **이 프리셋은
+        // 서버에 아직 아무것도 없는 첫 부팅에서만** 출발점이 되고, 이어서 하는 게스트는
+        // 자기 진행을 그대로 받는다.
+        Object.assign(profile, user.isGuest ? guestPresetProfile() : newPlayerProfile());
       }
       // 설정 팝업의 '계정' 행(이메일 + 로그아웃). 미로그인·미설정이면 행 자체가 안 그려진다.
-      settings.setAccount({ signedIn: true, email: user.email, onSignOut: handleSignOut });
+      settings.setAccount({
+        signedIn: true,
+        email: user.email,
+        isGuest: user.isGuest,
+        onSignOut: handleSignOut,
+      });
       await pullServerProfileInto(profile);
       saveProfile(profile);
+      // 게스트라면 서버가 정본인 축(촉매·설계도·방어체·배치·순위·의뢰서)을 시드한다.
+      //
+      // **순서가 계약이다**: 시드 RPC 는 `profiles` 행이 있어야 돈다(그 테이블들이 전부 FK 로
+      // 물고 있다). 그래서 세이브를 **먼저 올리고 성공을 확인한 뒤**에 부른다 — 아래
+      // `migrateLocalProfileToServer` 는 진행도 가드가 있어 이 자리에 못 쓴다(비교 대상이
+      // 없는 신규 계정에서 무엇이 올라갈지 보장하지 않는다).
+      //
+      // 실패는 삼킨다. 시드는 편의지 전제가 아니고, 서버가 1회성을 지키므로 다음 부팅에서
+      // 다시 시도해도 지급이 늘지 않는다.
+      if (user.isGuest) {
+        void pushProfileToServer(profile).then((pushed) => {
+          if (pushed) void seedGuestAccount();
+        });
+      }
       // 세션이 생긴 지금이 이관·회수의 자리다(부팅 즉시 부르면 세션이 없어 전부 no-op 이었다).
       void migrateLocalProfileToServer(profile);
       void flushPendingCommissionSubmissions();

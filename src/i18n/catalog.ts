@@ -30,6 +30,7 @@ export const EN = {
   'settings.uiVolume': 'UI Volume',
   'settings.account': 'Account',
   'settings.accountSignedIn': 'Signed in',
+  'settings.accountGuest': 'Guest (no account)',
   'settings.notSignedIn': 'Not signed in — progress stays on this device only.',
   'settings.signOut': 'Sign out',
   'settings.language': 'Language',
@@ -727,6 +728,9 @@ export const EN = {
   // Google 브랜딩 가이드라인이 규정한 문구. 임의로 바꾸지 마라(공식 번역만 허용된다).
   'title.signInGoogle': 'Sign in with Google',
   'title.signInFailed': 'Sign-in could not start. Check your connection and try again.',
+  'title.signInGuest': 'Play as guest',
+  'title.guestNote': 'Guest progress stays on this browser and does not carry over to a Google account.',
+  'title.guestFailed': 'Could not start a guest session. Check your connection and try again.',
   'title.loading': 'Loading your commander file…',
 
   // --- 튜토리얼 힌트 ---
@@ -2565,6 +2569,7 @@ export const KO: Record<MessageKey, string> = {
   'settings.uiVolume': 'UI 볼륨',
   'settings.account': '계정',
   'settings.accountSignedIn': '로그인됨',
+  'settings.accountGuest': '게스트 (계정 없음)',
   'settings.notSignedIn': '로그인되지 않음 — 진행도가 이 기기에만 남습니다.',
   'settings.signOut': '로그아웃',
   'settings.language': '언어',
@@ -3209,6 +3214,9 @@ export const KO: Record<MessageKey, string> = {
   // Google 공식 한국어 문구. 임의 의역 금지(브랜딩 가이드라인).
   'title.signInGoogle': 'Google 계정으로 로그인',
   'title.signInFailed': '로그인을 시작하지 못했습니다. 연결을 확인하고 다시 시도하세요.',
+  'title.signInGuest': '게스트로 시작',
+  'title.guestNote': '게스트 진행은 이 브라우저에만 남고, 구글 계정으로 이어지지 않습니다.',
+  'title.guestFailed': '게스트 세션을 시작하지 못했습니다. 연결을 확인하고 다시 시도하세요.',
   'title.loading': '지휘관 기록을 불러오는 중…',
 
   'tutorial.label': '튜토리얼',

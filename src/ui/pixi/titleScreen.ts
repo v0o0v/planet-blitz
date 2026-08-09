@@ -57,10 +57,10 @@ export interface TitleShowOpts {
    * true = 아직 로그인하지 않았고 로그인이 **강제**다. 같은 자리의 버튼이 시작 대신
    * "Google 로 계속하기"가 된다.
    *
-   * 버튼을 하나로 유지하는 이유: 이 화면은 y=858 에 460×86 버튼 하나가 들어가도록 짜여
-   * 있고 그 아래는 스크림 경계다. 둘로 늘리면 키아트 바닥과 겹친다. 게다가 웹 OAuth 는
-   * 페이지를 통째로 떠났다 돌아오므로 "누르기 전"과 "돌아온 후"는 애초에 같은 화면의 두
-   * 상태다 — 버튼 하나가 상태로 바뀌는 것이 흐름과도 맞는다.
+   * 원래는 이 자리에 버튼이 **하나**뿐이었다(구글 버튼이 시작 버튼을 대체). 2026-08-09 게스트
+   * 로그인이 생기면서 그 아래 {@link GUEST_Y} 에 두 번째 버튼과 경고 한 줄이 추가됐다 —
+   * 남은 세로 여백(1080 − 944 = 136)에 56 + 문구가 딱 들어간다. 로그인 실패 안내는 이제
+   * 버튼 **위**({@link NOTICE_ABOVE_Y})로 올라간다(아래는 게스트 줄이 차지한다).
    */
   needsSignIn: boolean;
   /**
@@ -73,12 +73,24 @@ export interface TitleShowOpts {
   onStart: () => void;
   /** `needsSignIn` 일 때 버튼을 누르면 호출. 성공하면 브라우저가 구글로 떠난다. */
   onSignIn: () => void;
+  /**
+   * `needsSignIn` 일 때 [게스트로 시작]을 누르면 호출. 구글과 달리 **페이지를 안 떠나므로**
+   * 호출부가 부팅을 다시 돌려야 한다(현재는 새로고침).
+   */
+  onGuestSignIn: () => void;
 }
 
 // --- 레이아웃 상수(디자인 스페이스 1920×1080) ---
 const START_W = 460;
 const START_H = 86;
 const START_Y = 858;
+/** 게스트 버튼 — 구글 버튼 바로 아래. 주 동선이 아니므로 같은 폭에 낮은 높이로 눕힌다. */
+const GUEST_H = 56;
+const GUEST_Y = START_Y + START_H + 14;
+/** 게스트 경고 한 줄. 게스트 버튼 아래 남은 여백(1080 − 1014)에 들어간다. */
+const GUEST_NOTE_Y = GUEST_Y + GUEST_H + 8;
+/** 로그인 실패 안내 — 버튼 아래가 게스트 줄에 차서 위로 올린다. */
+const NOTICE_ABOVE_Y = START_Y - 44;
 /**
  * 로고 자산은 **투명 여백이 잘려 있다**(`title-art-prep keyblack --trim`). 그래서 스프라이트
  * 박스가 곧 글자 박스이고, `LOGO_Y` 는 글자 윗변을 그대로 가리킨다. 여백이 남아 있던 판에서는
@@ -660,6 +672,39 @@ export class TitleScreen {
       });
       google.container.position.set((DESIGN_WIDTH - START_W) / 2, START_Y);
       this.root.addChild(google.container);
+
+      // 게스트 — 계정 없이 바로 들어간다. 구글 버튼과 **모양을 일부러 다르게** 둔다(게임
+      // 나무 버튼): 브랜딩 가이드라인상 구글 버튼을 흉내 낸 형제 버튼을 나란히 두면 안 되고,
+      // 시각적으로도 둘 중 무엇이 주 동선인지 한눈에 갈려야 한다.
+      const guest = new PixiButton({
+        texture: this.ui['ui_btn_yellow.png'],
+        width: START_W,
+        height: GUEST_H,
+        label: stripEmoji(t('title.signInGuest')),
+        fontSize: 24,
+        labelColor: COLOR.darkLabel,
+        onClick: () => opts.onGuestSignIn(),
+      });
+      guest.container.position.set((DESIGN_WIDTH - START_W) / 2, GUEST_Y);
+      this.root.addChild(guest.container);
+
+      // 진행이 이어지지 않는다는 경고. 누르기 **전에** 보여야 의미가 있으므로 버튼 아래 고정
+      // 문구로 둔다(모달로 물으면 심사·체험 동선에서 클릭이 하나 더 는다).
+      const guestNote = new Text({
+        text: stripEmoji(t('title.guestNote')),
+        style: {
+          fontFamily: UI_FONT,
+          fontSize: 18,
+          fill: COLOR.cream,
+          align: 'center',
+          dropShadow: TEXT_SHADOW,
+          wordWrap: true,
+          wordWrapWidth: 900,
+        },
+      });
+      guestNote.anchor.set(0.5, 0);
+      guestNote.position.set(DESIGN_WIDTH / 2, GUEST_NOTE_Y);
+      this.root.addChild(guestNote);
     } else {
       const start = new PixiButton({
         texture: this.ui['ui_btn_yellow.png'],
@@ -691,8 +736,13 @@ export class TitleScreen {
           wordWrapWidth: 900,
         },
       });
-      notice.anchor.set(0.5, 0);
-      notice.position.set(DESIGN_WIDTH / 2, START_Y + START_H + 16);
+      // 미로그인 화면은 버튼 아래가 게스트 줄로 차 있다 — 그때만 위로 올린다. 로그인된
+      // 화면(시작 버튼 하나)은 아래가 비어 있으므로 종전 자리를 그대로 쓴다.
+      notice.anchor.set(0.5, opts.needsSignIn ? 1 : 0);
+      notice.position.set(
+        DESIGN_WIDTH / 2,
+        opts.needsSignIn ? NOTICE_ABOVE_Y : START_Y + START_H + 16,
+      );
       this.root.addChild(notice);
     }
   }
