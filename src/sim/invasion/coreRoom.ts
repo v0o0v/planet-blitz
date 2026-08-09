@@ -36,7 +36,8 @@ import { DT, VIEW_HEIGHT, HAZARD_LINE_SPAN, SPAWN_RING_RADIUS } from '../constan
 import { summonEnemy } from '../waves.js';
 import { GUNNER } from '../../../data/enemies.js';
 import { formationPowerCp } from '../../../data/invasion/formations.js';
-import { applyDefenseBonus } from './defenseBonus.js';
+import { applyDefenseBonus, NEUTRAL_DEFENSE_POWER } from './defenseBonus.js';
+import type { DefensePower } from './defenseBonus.js';
 import { invasionCoreAddInterval } from './density.js';
 import {
   DEFENSE_BOSS_OVERHEAT_TICKS,
@@ -169,7 +170,7 @@ export function enterCoreRoom(state: WorldState, ctx: InvasionStepContext): void
     state,
     l3.core.x,
     l3.core.y,
-    applyDefenseBonus(l3.core.hp, ctx.defenseBonusBp),
+    applyDefenseBonus(l3.core.hp, ctx.power.hpBp),
   );
 
   // 보스: 빈 슬롯이면 기본 수비대(강철 골리앗)가 충원한다(결정 #22 — 스폰 단계 주입).
@@ -189,7 +190,7 @@ export function enterCoreRoom(state: WorldState, ctx: InvasionStepContext): void
     l3.core.x + DEFENSE_BOSS_SPAWN_OFFSET.x,
     l3.core.y + DEFENSE_BOSS_SPAWN_OFFSET.y,
     ctx.maintenance,
-    ctx.defenseBonusBp,
+    ctx.power,
   );
 
   // 기물: 빈 소켓은 **비운다**(결정 #22 — 과충전 방지). 소켓 인덱스가 곧 좌표다.
@@ -206,7 +207,7 @@ export function enterCoreRoom(state: WorldState, ctx: InvasionStepContext): void
       l3.core.x + off.x,
       l3.core.y + off.y,
       ctx.maintenance,
-      ctx.defenseBonusBp,
+      ctx.power,
     );
     if (p !== null && p.enemyType === PROP_SHIELD_GENERATOR) generatorShield += p.targetX;
   }
@@ -243,7 +244,7 @@ export function spawnDefenseBoss(
   x: number,
   y: number,
   maintenance: number,
-  defenseBonusBp = 0,
+  power: DefensePower = NEUTRAL_DEFENSE_POWER,
 ): Entity {
   const def = defenseBossDef(ref.catalogId);
   const bp = defenseBossPowerBp(ref.level, ref.ascension, ref.rarity);
@@ -255,9 +256,9 @@ export function spawnDefenseBoss(
   b.enemyType = ref.catalogId;
   b.radius = def.radius;
   // 계보 보너스(내구도·피해 두 축, bp=0 이면 무연산)를 강화 3축·어픽스 위에 곱한다.
-  b.hp = applyDefenseBonus(affixHp(scaleByBp(def.hp, bp), mods), defenseBonusBp);
+  b.hp = applyDefenseBonus(affixHp(scaleByBp(def.hp, bp), mods), power.hpBp);
   b.maxHp = b.hp;
-  b.damage = applyDefenseBonus(affixDamage(scaleByBp(def.contactDamage, bp), mods), defenseBonusBp);
+  b.damage = applyDefenseBonus(affixDamage(scaleByBp(def.contactDamage, bp), mods), power.damageBp);
   b.phase = 0;
   // 첫 캐스트까지의 지연도 정비도로 스케일 — 방치된 기지는 첫 공격부터 느리다(포탑 선례).
   b.cooldown = affixCooldown(
@@ -278,7 +279,7 @@ export function spawnL3Prop(
   x: number,
   y: number,
   maintenance: number,
-  defenseBonusBp = 0,
+  power: DefensePower = NEUTRAL_DEFENSE_POWER,
 ): Entity | null {
   const spec = propSpec(ref.catalogId);
   if (spec === null) return null;
@@ -294,7 +295,7 @@ export function spawnL3Prop(
   // 보호막(defShieldFlat)은 코어 공급량이 아니라 **자기 내구도 위**에 얹힌다
   // (data/defenseUnits.ts 의 stat 정의 그대로 — "파괴 전까지 내구도 위에 얹힌다").
   // 계보 보너스(내구도 축, bp=0 이면 무연산)를 강화 3축·어픽스 위에 곱한다.
-  p.hp = applyDefenseBonus(affixHp(scaleByBp(spec.hp, bp), mods), defenseBonusBp);
+  p.hp = applyDefenseBonus(affixHp(scaleByBp(spec.hp, bp), mods), power.hpBp);
   p.maxHp = p.hp;
   switch (spec.role) {
     case PROP_SHIELD_GENERATOR:
@@ -303,14 +304,14 @@ export function spawnL3Prop(
       p.targetX = scaleByBp(spec.shieldHp, bp);
       break;
     case PROP_GRAVITY_ANCHOR:
-      p.damage = applyDefenseBonus(affixDamage(scaleByBp(spec.hazardDamage, bp), mods), defenseBonusBp);
+      p.damage = applyDefenseBonus(affixDamage(scaleByBp(spec.hazardDamage, bp), mods), power.damageBp);
       p.cooldown = affixCooldown(
         invasionFireCooldown(spec.periodTicks, affixMaintenance(maintenance, mods)),
         mods,
       );
       break;
     case PROP_FIXED_CANNON:
-      p.damage = applyDefenseBonus(affixDamage(scaleByBp(spec.damage, bp), mods), defenseBonusBp);
+      p.damage = applyDefenseBonus(affixDamage(scaleByBp(spec.damage, bp), mods), power.damageBp);
       p.cooldown = affixCooldown(
         invasionFireCooldown(spec.fireCooldown, affixMaintenance(maintenance, mods)),
         mods,
@@ -326,7 +327,7 @@ export function spawnL3Prop(
       );
       break;
     case PROP_MINE_SWARM:
-      p.damage = applyDefenseBonus(affixDamage(scaleByBp(spec.hazardDamage, bp), mods), defenseBonusBp);
+      p.damage = applyDefenseBonus(affixDamage(scaleByBp(spec.hazardDamage, bp), mods), power.damageBp);
       p.cooldown = affixCooldown(
         invasionFireCooldown(spec.periodTicks, affixMaintenance(maintenance, mods)),
         mods,
@@ -426,12 +427,12 @@ function stepCoreReinforcements(state: WorldState, ctx: InvasionStepContext): vo
   // 3축이 자동으로 안 걸리므로, 편대와 같은 산식(`formationPowerCp`)을 손으로 건다 — 다른
   // 산식을 쓰면 같은 레벨인데 L1 잡몹과 L3 증원의 강도가 갈린다.
   const cp = formationPowerCp(ctx.garrisonLevel, 0, 0);
-  const hp = applyDefenseBonus(cp === 100 ? e.hp : Math.round((e.hp * cp) / 100), ctx.defenseBonusBp);
+  const hp = applyDefenseBonus(cp === 100 ? e.hp : Math.round((e.hp * cp) / 100), ctx.power.hpBp);
   e.hp = hp;
   e.maxHp = hp;
   e.damage = applyDefenseBonus(
     cp === 100 ? e.damage : Math.round((e.damage * cp) / 100),
-    ctx.defenseBonusBp,
+    ctx.power.damageBp,
   );
 }
 
@@ -527,16 +528,16 @@ function stepL3Props(
       const bp = propPowerBp(ref.level, ref.ascension, ref.rarity);
       // 내구도는 **단조 상향**만(되돌리면 이미 입은 피해가 사라진다). 피해는 매 틱 덮어쓴다.
       // 계보 보너스(bp=0 이면 무연산)를 스폰 경로와 같은 순서로 접는다.
-      raiseMaxHp(p, applyDefenseBonus(affixHp(scaleByBp(spec.hp, bp), mods), ctx.defenseBonusBp));
+      raiseMaxHp(p, applyDefenseBonus(affixHp(scaleByBp(spec.hp, bp), mods), ctx.power.hpBp));
       if (p.enemyType === PROP_GRAVITY_ANCHOR || p.enemyType === PROP_MINE_SWARM) {
         p.damage = applyDefenseBonus(
           affixDamage(scaleByBp(spec.hazardDamage, bp), mods),
-          ctx.defenseBonusBp,
+          ctx.power.damageBp,
         );
       } else if (p.enemyType === PROP_FIXED_CANNON) {
         p.damage = applyDefenseBonus(
           affixDamage(scaleByBp(spec.damage, bp), mods),
-          ctx.defenseBonusBp,
+          ctx.power.damageBp,
         );
       } else if (p.enemyType === PROP_REPAIR_PYLON) {
         // 회복량은 어픽스 피해 보정을 타지 않는다(피해 어픽스가 회복을 밀어 올리면 "공격
@@ -698,10 +699,10 @@ function stepDefenseBosses(
     if (!set.neutral) {
       // 내구도는 단조 상향(dt-lastwall = 코어 저HP 재장갑), 접촉 피해는 매 틱 재계산.
       // 계보 보너스(bp=0 이면 무연산)를 스폰 경로와 같은 순서로 접는다.
-      raiseMaxHp(b, applyDefenseBonus(affixHp(scaleByBp(def.hp, bp), mods), ctx.defenseBonusBp));
+      raiseMaxHp(b, applyDefenseBonus(affixHp(scaleByBp(def.hp, bp), mods), ctx.power.hpBp));
       b.damage = applyDefenseBonus(
         affixDamage(scaleByBp(def.contactDamage, bp), mods),
-        ctx.defenseBonusBp,
+        ctx.power.damageBp,
       );
     }
     updateDefenseBoss(state, b, player, def, bp, ctx.maintenance, mods);

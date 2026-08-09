@@ -444,8 +444,14 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
    * 최종값은 코드가 아니라 플레이가 정한다.
    */
   let invasionDensity: InvasionDensity = { ...INVASION_DENSITY_DEFAULT };
-  /** 방어측 계보 보너스(basis-point). 0 = 무연산. */
-  let invasionDefenseBonusBp = 0;
+  /**
+   * 방어측 **내구도** 배율(basis-point). 10000 = ×2.00.
+   * 피해와 갈라져 있다 — 만렙 기체 앞에서 적이 버티려면 내구도는 ×10 대역이 필요한데,
+   * 같은 배수를 피해에 걸면 플레이어가 한 대에 죽는다(사용자 실측 2026-08-10).
+   */
+  let invasionDefenseHpBp = 0;
+  /** 방어측 **피해** 배율(basis-point). 0 = 무연산. */
+  let invasionDefenseDamageBp = 0;
   /** 공격측 조종사 레벨 강제(침공 탭). 기준선이 만렙이라 100 에서 출발한다. */
   let invasionPilotLevel = 100;
   /**
@@ -621,7 +627,8 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       timeLimitTicks: invasionTimeLimit,
       layer,
       density: invasionDensity,
-      defenseBonusBp: invasionDefenseBonusBp,
+      defenseHpBp: invasionDefenseHpBp,
+      defenseDamageBp: invasionDefenseDamageBp,
       pilotLevel: invasionPilotLevel,
       garrisonLevel: invasionGarrisonLevel,
       ...(seed !== undefined ? { seed } : {}),
@@ -630,7 +637,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     const tail = layer === 1 ? '비오염' : `L${layer} 점프 · 오염`;
     setHint(
       `침공 ${invasionPreset}(+편집) · Lv${invasionPilotLevel} · 수비대Lv${invasionGarrisonLevel} · ` +
-        `계보 ${invasionDefenseBonusBp}bp · ` +
+        `방어HP ${invasionDefenseHpBp}bp · 방어피해 ${invasionDefenseDamageBp}bp · ` +
         `정비도 ${invasionMaintCP / 100}% · L1 ${invasionDensity.l1IntervalTicks}틱×${invasionDensity.l1Repeats}바퀴 · ` +
         `${Math.round(invasionTimeLimit / 60)}초 (${tail})`,
     );
@@ -1472,16 +1479,28 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       );
       knob(
         growRow,
-        '방어계보bp',
-        () => invasionDefenseBonusBp,
+        '방어HPbp',
+        () => invasionDefenseHpBp,
         (v) => {
-          invasionDefenseBonusBp = v;
+          invasionDefenseHpBp = v;
         },
         0,
-        200000,
-        '방어측 계보(수호 가지) 보너스, basis-point. 10000bp = ×2.00.\n' +
-          '편대·설비·보스·기물의 내구도와 피해에 일괄로 걸린다(발사 간격·사거리에는 안 걸린다).\n' +
-          '⚠️ 실 PvP 에서는 서버가 이 값을 실어야 하는데 아직 배선 전이라, 지금은 하네스에서만 0 이 아니다.',
+        1000000,
+        '방어측 [내구도] 배율, basis-point. 10000bp = ×2.00 · 100000bp = ×11.00.\n' +
+          '편대·설비·보스·기물·코어에 걸린다(발사 간격·사거리에는 안 걸린다).\n' +
+          '⚠️ 실 PvP 에서는 서버가 이 값을 실어야 하는데 아직 배선 전이다.',
+      );
+      knob(
+        growRow,
+        '방어피해bp',
+        () => invasionDefenseDamageBp,
+        (v) => {
+          invasionDefenseDamageBp = v;
+        },
+        0,
+        1000000,
+        '방어측 [피해] 배율, basis-point. HP 축과 **따로** 돈다.\n' +
+          '0 이면 기본 수비대 레벨(수비대Lv)이 준 피해 배율만 남는다 — HP 만 올리고 싶을 때 0 으로.',
       );
       s.appendChild(growRow);
 

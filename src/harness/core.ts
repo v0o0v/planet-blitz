@@ -114,7 +114,9 @@ export interface HarnessInvasionOpts {
    * 실 PvP 에서는 서버가 `begin_invasion` 권위값으로 실어야 하는데 **아직 배선 전**이라,
    * 현재 이 값이 0 이 아닌 경로는 하네스뿐이다. 그래서 여기가 사실상 유일한 튜닝 입구다.
    */
-  defenseBonusBp?: number;
+  defenseHpBp?: number;
+  /** 방어측 **피해** 배율(basis-point). 미지정 = 0. HP 축과 따로 돌린다. */
+  defenseDamageBp?: number;
   /**
    * 공격측 조종사 레벨 강제(1..100). 미지정 = 프로필의 활성 기체 레벨 그대로.
    *
@@ -135,8 +137,10 @@ export interface HarnessInvasionResolved {
   timeLimitTicks: number;
   /** 밀도 축(부분 지정 — sim 이 `normalizeInvasionDensity` 로 마저 접는다). */
   density?: Partial<InvasionDensity>;
-  /** 방어측 계보 보너스(basis-point). 0 = 무연산. */
-  defenseBonusBp?: number;
+  /** 방어측 내구도 배율(basis-point). 0 = 무연산. */
+  defenseHpBp?: number;
+  /** 방어측 피해 배율(basis-point). 0 = 무연산. */
+  defenseDamageBp?: number;
   /** 공격측 조종사 레벨 강제. 미지정 = 프로필 값. */
   pilotLevel?: number;
   /** 기본 수비대 레벨. 미지정 = 1. */
@@ -692,7 +696,8 @@ export function createHarness(host: HarnessHost): Harness {
         // 밀도·계보·레벨은 **미지정이면 필드를 아예 두지 않는다**. 조건부 접기라 값을 안 건드린
         // 호출부(기존 테스트·자동화)가 예전과 정확히 같은 config 를 만든다.
         ...(opts.density !== undefined ? { density: opts.density } : {}),
-        ...(opts.defenseBonusBp !== undefined ? { defenseBonusBp: opts.defenseBonusBp } : {}),
+        ...(opts.defenseHpBp !== undefined ? { defenseHpBp: opts.defenseHpBp } : {}),
+        ...(opts.defenseDamageBp !== undefined ? { defenseDamageBp: opts.defenseDamageBp } : {}),
         ...(opts.pilotLevel !== undefined ? { pilotLevel: opts.pilotLevel } : {}),
         ...(opts.garrisonLevel !== undefined ? { garrisonLevel: opts.garrisonLevel } : {}),
       });

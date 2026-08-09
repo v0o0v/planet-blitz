@@ -23,6 +23,7 @@ import type { GuardianSnapshot } from '../../../data/guardian.js';
 import type { WorldState } from '../world.js';
 import type { CoreModuleConfig } from '../moduleEffects.js';
 import type { InvasionDensity } from './density.js';
+import type { DefensePower } from './defenseBonus.js';
 
 // ---------------------------------------------------------------------------
 // 공용 Ref — 카탈로그 참조 + 강화 3축
@@ -198,7 +199,12 @@ export interface Invasion3Config {
    * ⚠️ 서버 권위 주입(`begin_invasion` 이 `lineage_guardian_level` 을 authority 에 싣는 것)은
    * 아직 배선되지 않았다 — 현재 채워지는 경로는 하네스뿐이고, 실 PvP 침공에서는 0 이다.
    */
-  defenseBonusBp?: number;
+  defenseHpBp?: number;
+  /**
+   * 방어측 **피해** 배율(basis-point). 미지정 = 0(무연산).
+   * {@link defenseHpBp} 와 갈라져 있다 — 왜 갈랐는지는 `defenseBonus.ts` 의 `DefensePower` 참조.
+   */
+  defenseDamageBp?: number;
   /**
    * **기본 수비대 레벨** — 빈 슬롯을 자동 충원하는 방어체(`data/invasion/garrison.ts`)와
    * L3 보스 폴백·코어 증원이 쓰는 레벨. 미지정 = {@link GARRISON_LEVEL}(1, 구 거동).
@@ -237,7 +243,7 @@ export interface InvasionStepContext {
   /** 밀도 축(정규화 완료값 — 전 필드 채워져 있다). */
   readonly density: InvasionDensity;
   /** 방어측 계보 보너스(basis-point, 0 이상 정수). 0 = 무연산. */
-  readonly defenseBonusBp: number;
+  readonly power: DefensePower;
   /** 기본 수비대 레벨(정규화 완료, [1, INVASION_LEVEL_MAX]). */
   readonly garrisonLevel: number;
 }

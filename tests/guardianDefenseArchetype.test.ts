@@ -11,6 +11,7 @@
  * 를 **정규 함수 호출**로 관측한다. 배선이 빠지면 모든 무기가 벌컨 단발로 수렴해 아래 단언이 깨진다.
  */
 
+import { NEUTRAL_DEFENSE_POWER } from '../src/sim/invasion/defenseBonus.js';
 import { describe, it, expect } from 'vitest';
 import { createWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { Entity } from '../src/sim/entities.js';
@@ -217,7 +218,7 @@ function firedBullets(snapshot: GuardianSnapshot, ticks = 120): Entity[] {
     runtime: createInvasionRuntime(),
     maintenance: MAINTENANCE_FULL,
     density: INVASION_DENSITY_LEGACY,
-    defenseBonusBp: 0,
+    power: NEUTRAL_DEFENSE_POWER,
     // 기본 수비대도 중립 레벨(=100cp, ×1.00)로 고정 — 위 LEGACY 밀도와 같은 이유다.
     garrisonLevel: 1,
   };

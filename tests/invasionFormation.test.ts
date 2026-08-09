@@ -10,6 +10,7 @@
  * 추가: 페이즈 게이트, 슬롯 트리거 스케줄, 강화 3축 정수 스케일, 카탈로그 계약.
  */
 
+import { NEUTRAL_DEFENSE_POWER } from '../src/sim/invasion/defenseBonus.js';
 import { describe, it, expect } from 'vitest';
 import { createWorld, stepWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldState, WorldConfig } from '../src/sim/world.js';
@@ -96,7 +97,7 @@ function ctxOf(layers: InvasionLayers, rt: InvasionRuntime, maintenance = MAINTE
     runtime: rt,
     maintenance,
     density: INVASION_DENSITY_LEGACY,
-    defenseBonusBp: 0,
+    power: NEUTRAL_DEFENSE_POWER,
     // 기본 수비대도 중립 레벨(=100cp, ×1.00)로 고정 — 위 LEGACY 밀도와 같은 이유다.
     garrisonLevel: 1,
   };

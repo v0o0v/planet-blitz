@@ -10,6 +10,7 @@
  *   ④ **결정론.** 같은 ref → 같은 보정, 매 틱 재롤 없음, 월드 RNG 미소비, 전 결과 정수.
  */
 
+import { NEUTRAL_DEFENSE_POWER } from '../src/sim/invasion/defenseBonus.js';
 import { describe, expect, it } from 'vitest';
 import { createWorld } from '../src/sim/world.js';
 import type { WorldState } from '../src/sim/world.js';
@@ -88,7 +89,7 @@ function ctxOf(layers: InvasionLayers, phase: 0 | 1 | 2): InvasionStepContext {
     runtime: { phase, phaseEnterTick: 0, scrollX: 0, scrollY: 0, accelCp: 100 },
     maintenance: MAINTENANCE_FULL,
     density: INVASION_DENSITY_LEGACY,
-    defenseBonusBp: 0,
+    power: NEUTRAL_DEFENSE_POWER,
     // 기본 수비대도 중립 레벨(=100cp, ×1.00)로 고정 — 위 LEGACY 밀도와 같은 이유다.
     garrisonLevel: 1,
   };
