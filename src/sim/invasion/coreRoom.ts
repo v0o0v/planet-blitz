@@ -170,7 +170,7 @@ export function enterCoreRoom(state: WorldState, ctx: InvasionStepContext): void
     state,
     l3.core.x,
     l3.core.y,
-    applyDefenseBonus(l3.core.hp, ctx.power.hpBp),
+    applyDefenseBonus(applyDefenseBonus(l3.core.hp, ctx.power.hpBp), ctx.power.coreHpBp),
   );
 
   // 보스: 빈 슬롯이면 기본 수비대(강철 골리앗)가 충원한다(결정 #22 — 스폰 단계 주입).

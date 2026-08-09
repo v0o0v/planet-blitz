@@ -168,3 +168,59 @@ describe('방어측 강화 — HP 축과 피해 축이 분리돼 있다', () => 
     expect(a).toEqual(b);
   });
 });
+
+describe('코어 전용 내구도 축', () => {
+  function coreMaxHp(hpBp: number, coreHpBp: number): number {
+    const config = {
+      ...DEFAULT_CONFIG,
+      playerHp: 100_000_000,
+      invasion3: {
+        layers: emptyInvasionLayers(),
+        timeLimitTicks: INVASION_TOTAL_TICKS * 4,
+        maintenance: 10000,
+        defenseHpBp: hpBp,
+        defenseCoreHpBp: coreHpBp,
+      },
+    } as WorldConfig;
+    const s: WorldState = createWorld(9, config);
+    for (let i = 0; i < INVASION_TOTAL_TICKS * 3; i++) {
+      stepWorld(s, autopilotInput(s));
+      const core = s.entities.find((e) => e.kind === 'core' && !e.dead);
+      if (core !== undefined) return core.maxHp;
+      if (s.gameOver) break;
+    }
+    return 0;
+  }
+
+  it('코어 축은 HP 축 위에 한 번 더 곱한다', () => {
+    const base = coreMaxHp(0, 0);
+    expect(base, '코어가 안 떴다면 공허하다').toBeGreaterThan(0);
+    // ×8 만 → 8배, ×8 위에 ×10 → 80배.
+    expect(coreMaxHp(70000, 0)).toBe(base * 8);
+    expect(coreMaxHp(70000, 90000)).toBe(base * 80);
+  });
+
+  it('코어 축은 잡몹에는 안 걸린다(코어 전용이라는 확인)', () => {
+    const mobHp = (coreHpBp: number): number => {
+      const config = {
+        ...DEFAULT_CONFIG,
+        playerHp: 100_000_000,
+        invasion3: {
+          layers: emptyInvasionLayers(),
+          timeLimitTicks: INVASION_TOTAL_TICKS,
+          maintenance: 10000,
+          garrisonLevel: INVASION_GARRISON_LEVEL_DEFAULT,
+          defenseCoreHpBp: coreHpBp,
+        },
+      } as WorldConfig;
+      const s: WorldState = createWorld(9, config);
+      for (let i = 0; i < 1200; i++) {
+        stepWorld(s, autopilotInput(s));
+        for (const e of s.entities) if (e.kind === 'enemy' && !e.dead) return e.maxHp;
+      }
+      return 0;
+    };
+    expect(mobHp(0)).toBeGreaterThan(0);
+    expect(mobHp(900000), '코어 축이 잡몹으로 샜다').toBe(mobHp(0));
+  });
+});

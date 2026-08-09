@@ -41,7 +41,12 @@ import {
 } from '../sim/invasion/index.js';
 import type { InvasionDensity } from '../sim/invasion/index.js';
 import { catalogSizeFor, clearSlot, fillAll, listSlots, setSlot } from './invasionEdit.js';
-import { INVASION_GARRISON_LEVEL_DEFAULT } from '../../data/invasion/garrison.js';
+import {
+  INVASION_DEFENSE_CORE_HP_BP_DEFAULT,
+  INVASION_DEFENSE_DAMAGE_BP_DEFAULT,
+  INVASION_DEFENSE_HP_BP_DEFAULT,
+  INVASION_GARRISON_LEVEL_DEFAULT,
+} from '../../data/invasion/garrison.js';
 import type { EntitySnapshot } from '../sim/snapshot.js';
 import { xpToNext } from '../sim/world.js';
 import { spawnLoot } from '../sim/entities.js';
@@ -449,9 +454,11 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
    * 피해와 갈라져 있다 — 만렙 기체 앞에서 적이 버티려면 내구도는 ×10 대역이 필요한데,
    * 같은 배수를 피해에 걸면 플레이어가 한 대에 죽는다(사용자 실측 2026-08-10).
    */
-  let invasionDefenseHpBp = 0;
+  let invasionDefenseHpBp = INVASION_DEFENSE_HP_BP_DEFAULT;
   /** 방어측 **피해** 배율(basis-point). 0 = 무연산. */
-  let invasionDefenseDamageBp = 0;
+  let invasionDefenseDamageBp = INVASION_DEFENSE_DAMAGE_BP_DEFAULT;
+  /** 코어 전용 추가 내구도 배율(basis-point). HP 축 위에 한 번 더 곱한다. */
+  let invasionCoreHpBp = INVASION_DEFENSE_CORE_HP_BP_DEFAULT;
   /** 공격측 조종사 레벨 강제(침공 탭). 기준선이 만렙이라 100 에서 출발한다. */
   let invasionPilotLevel = 100;
   /**
@@ -629,6 +636,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       density: invasionDensity,
       defenseHpBp: invasionDefenseHpBp,
       defenseDamageBp: invasionDefenseDamageBp,
+      defenseCoreHpBp: invasionCoreHpBp,
       pilotLevel: invasionPilotLevel,
       garrisonLevel: invasionGarrisonLevel,
       ...(seed !== undefined ? { seed } : {}),
@@ -1501,6 +1509,19 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         1000000,
         '방어측 [피해] 배율, basis-point. HP 축과 **따로** 돈다.\n' +
           '0 이면 기본 수비대 레벨(수비대Lv)이 준 피해 배율만 남는다 — HP 만 올리고 싶을 때 0 으로.',
+      );
+      knob(
+        growRow,
+        '코어HPbp',
+        () => invasionCoreHpBp,
+        (v) => {
+          invasionCoreHpBp = v;
+        },
+        0,
+        1000000,
+        '코어 [전용] 추가 내구도 배율. 방어HPbp 위에 한 번 더 곱한다.\n' +
+          '실측: 만렙 장비 코어 DPS 약 19,000 — 이 값이 0 이면 코어가 3초에 부서진다.\n' +
+          '90000(×10) 이면 대략 30~35초짜리 최종 관문이 된다.',
       );
       s.appendChild(growRow);
 

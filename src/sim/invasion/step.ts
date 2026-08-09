@@ -86,7 +86,7 @@ export function makeInvasionContext(
     runtime,
     maintenance: normalizeMaintenance(config.maintenance),
     density,
-    power: normalizeDefensePower(config.defenseHpBp, config.defenseDamageBp),
+    power: normalizeDefensePower(config.defenseHpBp, config.defenseDamageBp, config.defenseCoreHpBp),
     garrisonLevel,
   };
 }
