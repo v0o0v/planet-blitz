@@ -527,7 +527,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
     return b;
   }
 
-  function numInput(value: number, width = 64): HTMLInputElement {
+  function numInput(value: number, width = 88): HTMLInputElement {
     const i = document.createElement('input');
     i.type = 'number';
     i.value = String(value);
@@ -1240,7 +1240,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       s.appendChild(subLabel('① 모의 보유 원장 (서버 조회 우회)'));
       const seedRow = document.createElement('div');
       seedRow.className = 'pb-c-row';
-      const qtyIn = numInput(catalystSeedQty, 56);
+      const qtyIn = numInput(catalystSeedQty, 88);
       qtyIn.min = '1';
       qtyIn.title = '48종 각각 몇 개씩 지급할지';
       qtyIn.addEventListener('input', () => {
@@ -1346,7 +1346,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         harness.preset(v);
         render();
       });
-      const maintIn = numInput(invasionMaintCP / 100, 56);
+      const maintIn = numInput(invasionMaintCP / 100, 80);
       maintIn.title = '방어 정비도(%) — 0%면 설비 발사 간격이 2배(풍화 상한)';
       maintIn.addEventListener('input', () => {
         const pct = Number(maintIn.value);
@@ -1358,7 +1358,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       maintLbl.className = 'pb-c-lbl';
       maintLbl.textContent = '정비도%';
       const limitMaxSec = (INVASION_TOTAL_TICKS * 4) / 60;
-      const limitIn = numInput(Math.round(invasionTimeLimit / 60), 56);
+      const limitIn = numInput(Math.round(invasionTimeLimit / 60), 80);
       limitIn.min = '1';
       limitIn.max = String(limitMaxSec);
       limitIn.title =
@@ -1448,6 +1448,14 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       s.appendChild(subLabel('난이도 노브 (다음 런부터 반영)'));
 
       /** 정수 노브 한 칸. 라벨 + 숫자 입력 + 즉시 클램프. */
+      /**
+       * 정수 노브 한 칸. 라벨 + 숫자 입력 + 즉시 클램프(+ 선택적 파생 표시).
+       *
+       * `fmt` 를 주면 입력 오른쪽에 파생값을 실시간으로 띄운다. **basis-point 축에는 반드시
+       * 준다** — 사용자가 `코어HPbp` 를 10 으로 두고 "코어 HP가 안 변한다"고 보고한 적이 있다.
+       * bp 는 `10000 = ×2.00` 단위라 10 은 ×1.001 이고, 그건 화면에서 구분이 안 된다.
+       * 단위를 머릿속에서 환산하게 두지 않고 `×1.001` 을 옆에 찍어 주면 그 오해가 안 생긴다.
+       */
       function knob(
         row: HTMLElement,
         label: string,
@@ -1456,22 +1464,39 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         min: number,
         max: number,
         title: string,
+        fmt?: (v: number) => string,
       ): void {
         const lbl = document.createElement('span');
         lbl.className = 'pb-c-lbl';
         lbl.textContent = label;
         lbl.title = title;
-        const input = numInput(get(), 64);
+        // 폭 108px — 상한이 50,000,000(8자리)이라 64px 에서는 값이 잘려 보였다(사용자 보고).
+        const input = numInput(get(), 108);
         input.min = String(min);
         input.max = String(max);
         input.title = title;
+        const derived = document.createElement('span');
+        derived.className = 'pb-c-lbl';
+        derived.title = title;
+        const sync = (v: number): void => {
+          derived.textContent = fmt === undefined ? '' : fmt(v);
+        };
+        sync(get());
         input.addEventListener('input', () => {
           const raw = Number(input.value);
           if (!Number.isFinite(raw)) return;
-          const v = Math.trunc(raw);
-          set(v < min ? min : v > max ? max : v);
+          const t = Math.trunc(raw);
+          const v = t < min ? min : t > max ? max : t;
+          set(v);
+          sync(v);
         });
         row.append(lbl, input);
+        if (fmt !== undefined) row.appendChild(derived);
+      }
+
+      /** basis-point → 실효 배율 표시(`10000` = `×2.00`). */
+      function bpMult(v: number): string {
+        return `×${((10000 + v) / 10000).toFixed(v >= 100000 ? 0 : 2)}`;
       }
 
       // ── 공격측 · 방어측 성장 축 ────────────────────────────────────────────
@@ -1553,6 +1578,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         '방어측 [내구도] 배율, basis-point. 10000bp = ×2.00 · 100000bp = ×11.00.\n' +
           '편대·설비·보스·기물·코어에 걸린다(발사 간격·사거리에는 안 걸린다).\n' +
           '⚠️ 실 PvP 에서는 서버가 이 값을 실어야 하는데 아직 배선 전이다.',
+        bpMult,
       );
       knob(
         growRow,
@@ -1565,6 +1591,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         DEFENSE_BONUS_BP_MAX,
         '방어측 [피해] 배율, basis-point. HP 축과 **따로** 돈다.\n' +
           '0 이면 기본 수비대 레벨(수비대Lv)이 준 피해 배율만 남는다 — HP 만 올리고 싶을 때 0 으로.',
+        bpMult,
       );
       knob(
         growRow,
@@ -1578,6 +1605,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         '코어 [전용] 추가 내구도 배율. 방어HPbp 위에 한 번 더 곱한다.\n' +
           '실측: 만렙 장비 코어 DPS 약 19,000 — 이 값이 0 이면 코어가 3초에 부서진다.\n' +
           '90000(×10) 이면 대략 30~35초짜리 최종 관문이 된다.',
+        bpMult,
       );
       s.appendChild(growRow);
 
@@ -1782,7 +1810,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         const lbl = document.createElement('span');
         lbl.className = 'pb-c-lbl';
         lbl.textContent = label;
-        const input = numInput(value, 56);
+        const input = numInput(value, 88);
         input.min = '0';
         input.max = String(max);
         input.title = title;
@@ -1934,9 +1962,9 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       const cur = control.currency();
       const curRow = document.createElement('div');
       curRow.className = 'pb-c-row';
-      const crIn = numInput(cur.credits, 84);
-      const minIn = numInput(cur.minerals, 72);
-      const bpIn = numInput(cur.blueprints, 64);
+      const crIn = numInput(cur.credits, 104);
+      const minIn = numInput(cur.minerals, 104);
+      const bpIn = numInput(cur.blueprints, 88);
       crIn.title = '크레딧(레벨업·승급 비용)';
       minIn.title = '광물(레벨업·리롤 비용)';
       bpIn.title = '설계도(승급·등급 승급·제작 재료)';
@@ -2286,12 +2314,12 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       s.appendChild(subLabel('재화 지급 (하네스 프로필)'));
       const row2 = document.createElement('div');
       row2.className = 'pb-c-row';
-      const credIn = numInput(10000, 72);
+      const credIn = numInput(10000, 104);
       row2.append(
         credIn,
         btn('크레딧', () => grantCurrency('credits', Math.max(0, Math.floor(Number(credIn.value) || 0)))),
       );
-      const minIn = numInput(10000, 72);
+      const minIn = numInput(10000, 104);
       row2.append(
         minIn,
         btn('광물', () => grantCurrency('minerals', Math.max(0, Math.floor(Number(minIn.value) || 0)))),
@@ -2479,7 +2507,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       // 연속일 임의 세팅 — 30일차(AC-26)를 30일 기다리지 않고 만드는 유일한 수단.
       const streakRow = document.createElement('div');
       streakRow.className = 'pb-c-row';
-      const streakIn = numInput(DAILY_STREAK_CYCLE, 56);
+      const streakIn = numInput(DAILY_STREAK_CYCLE, 88);
       streakIn.min = '1';
       streakIn.max = String(DAILY_STREAK_CYCLE);
       streakRow.append(
