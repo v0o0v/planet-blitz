@@ -58,6 +58,7 @@ import {
 import {
   GARRISON_FACILITY_CATALOG_ID,
   GARRISON_FORMATION_CATALOG_ID,
+  GARRISON_LEVEL,
   garrisonFillCount,
   garrisonLayers,
   garrisonRef,
@@ -224,16 +225,26 @@ describe('침공 카탈로그 — 인덱스 계약', () => {
 // ---------------------------------------------------------------------------
 
 describe('기본 수비대 — 충원 규칙', () => {
-  it('충원 Ref 는 lv1 · 승급 0 · 노말 · 시드 0(전 필드 정수)', () => {
+  // ⚠️ **레벨은 더 이상 골든이 아니다**(2026-08-10). 충원체 레벨이 튜닝 축이 되면서
+  // 기본값이 1 → `GARRISON_LEVEL`(현재 75)로 올라갔다 — 침공에서 조종사 레벨 봉인을 풀자
+  // Lv100 공격측(피해 ×4.69) 앞에서 lv1 수비대가 종잇장이었기 때문이다.
+  //
+  // 그래서 리터럴 1 을 박지 않고 **정본 상수에서 파생**한다. 여기 숫자를 박으면 사용자가
+  // 슬라이더로 기본값을 확정할 때마다 이 테스트가 "고쳐야 할 대상"이 된다.
+  // 반면 승급·등급·시드가 중립이라는 것은 **계약**이라 그대로 박는다(어픽스 없는 최약체가
+  // 충원의 정의다).
+  it('충원 Ref 는 기본 레벨 · 승급 0 · 노말 · 시드 0(전 필드 정수)', () => {
     const r = garrisonRef(GARRISON_FORMATION_CATALOG_ID);
     expect(r).toEqual({
       catalogId: GARRISON_FORMATION_CATALOG_ID,
-      level: 1,
+      level: GARRISON_LEVEL,
       ascension: 0,
       affixSeed: 0,
       rarity: 0,
     });
     for (const v of Object.values(r)) expect(Number.isInteger(v)).toBe(true);
+    // 이 모듈의 기본값은 **중립**이다(밸런스 값은 런 조립 층의 INVASION_GARRISON_LEVEL_DEFAULT).
+    expect(GARRISON_LEVEL).toBe(1);
   });
 
   it('빈 웨이브 슬롯은 정찰 드론편대, 빈 소켓은 속사포로 채운다', () => {
@@ -241,7 +252,7 @@ describe('기본 수비대 — 충원 규칙', () => {
     expect(filled.l1.waveSlots.length).toBe(INVASION_WAVE_SLOTS);
     for (const s of filled.l1.waveSlots) {
       expect(s?.catalogId).toBe(GARRISON_FORMATION_CATALOG_ID);
-      expect(s?.level).toBe(1);
+      expect(s?.level).toBe(GARRISON_LEVEL);
     }
     expect(filled.l2.sockets.length).toBeGreaterThan(0);
     for (const s of filled.l2.sockets) expect(s?.catalogId).toBe(GARRISON_FACILITY_CATALOG_ID);
@@ -306,6 +317,8 @@ describe('기본 수비대 — 충원 규칙', () => {
       maintenance: 10000,
       density: INVASION_DENSITY_LEGACY,
       defenseBonusBp: 0,
+      // 기본 수비대도 중립 레벨(=100cp, ×1.00)로 고정 — 위 LEGACY 밀도와 같은 이유다.
+      garrisonLevel: 1,
     };
     const wrapped = withGarrison(ctx);
     expect(wrapped.runtime).toBe(runtime);

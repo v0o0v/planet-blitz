@@ -134,6 +134,7 @@ import { buildRunConfig } from './run/runConfig.js';
 import { buildCallupPilot } from './run/callupPilot.js';
 import { loadProfile, saveProfile, activeShip, newPlayerProfile } from './save/profile.js';
 import type { Profile } from './save/profile.js';
+import { INVASION_GARRISON_LEVEL_DEFAULT } from '../data/invasion/garrison.js';
 // 게스트 첫 부팅의 출발점(중반 진행 프리셋). 구글 계정은 이 경로를 타지 않는다.
 import { guestPresetProfile } from './save/guestPreset.js';
 // 서버가 정본인 축(촉매·설계도·방어체·배치·순위·의뢰서)의 게스트 시드. 서버가 1회성을 지킨다.
@@ -1430,6 +1431,13 @@ async function main(): Promise<void> {
       timeLimitTicks: INVASION_TOTAL_TICKS,
       ...(maintenance !== undefined ? { maintenance } : {}),
       ...(runModules !== null ? { modules: runModules } : {}),
+      // 기본 수비대 레벨(밸런스). **데이터 층이 아니라 여기서** 건다 — `garrisonRef` 의 기본값으로
+      // 두면 침공 config 를 직접 만드는 테스트 전부가 이 밸런스 값 위에서 돌아, Lv1 관측자를
+      // 쓰는 배선 테스트가 무더기로 "관찰 창 안에 진행 못 함"으로 빨개진다(실제로 겪었다).
+      //
+      // ⚠️ 하네스 경로(`startHarnessInvasionRun`)에도 같은 기본값이 있다. 두 침공 진입점이
+      // 다른 바닥을 쓰면 "하네스에서는 되는데 실제 런에서는 안 된다"가 된다.
+      garrisonLevel: INVASION_GARRISON_LEVEL_DEFAULT,
     };
     // 예비역 소집(ADR-0024): 호출부가 고른 수호기 id 가 있으면 그 잠긴 실물 빌드로 출격한다.
     // id 가 null/undefined 이거나(활성 기체 출격) 조회 실패·build 부재(구 수호기)면 pilot 은
@@ -1507,6 +1515,7 @@ async function main(): Promise<void> {
     density?: Partial<InvasionDensity>;
     defenseBonusBp?: number;
     pilotLevel?: number;
+    garrisonLevel?: number;
   }): void {
     // 켜져 있을 수 있는 메뉴 화면을 먼저 내린다. 하네스 경유 진입(host.startInvasion)은 이미
     // clearToMenu 를 부르고 오지만(멱등), **방어 사령부의 [시험 침공] 버튼**은 자기 화면만
@@ -1522,6 +1531,8 @@ async function main(): Promise<void> {
       // 미지정이면 필드를 두지 않는다 — sim 이 기본값으로 접는다(조건부 접기).
       ...(opts.density !== undefined ? { density: opts.density } : {}),
       ...(opts.defenseBonusBp !== undefined ? { defenseBonusBp: opts.defenseBonusBp } : {}),
+      // 하네스는 슬라이더 값을 넘긴다. 안 넘기면 실 침공과 같은 밸런스 기본값을 쓴다.
+      garrisonLevel: opts.garrisonLevel ?? INVASION_GARRISON_LEVEL_DEFAULT,
     };
     // 조종사 레벨 강제(하네스 전용). **프로필을 변형하지 않고 사본으로** 넘긴다 — 저장본을
     // 건드리면 하네스에서 슬라이더를 한 번 돌린 것이 이후 실제 런·격납고 표시까지 오염시킨다.

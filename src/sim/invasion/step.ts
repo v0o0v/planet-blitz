@@ -12,7 +12,7 @@
  * {@link resetInvasionStepHooks} 로 되돌린다.
  */
 
-import { garrisonLayers } from '../../../data/invasion/garrison.js';
+import { garrisonLayers, normalizeGarrisonLevel } from '../../../data/invasion/garrison.js';
 import { normalizeMaintenance } from './guardian.js';
 import { normalizeInvasionDensity } from './density.js';
 import type { WorldState } from '../world.js';
@@ -78,15 +78,17 @@ export function makeInvasionContext(
 ): InvasionStepContext {
   const density = normalizeInvasionDensity(config.density);
   const bp = config.defenseBonusBp;
+  const garrisonLevel = normalizeGarrisonLevel(config.garrisonLevel);
   return {
-    // 빈 L2 소켓을 스포너로 채울 기수가 밀도 축에 있으므로 충원에 함께 넘긴다. 메모는
-    // (layers 신원 × 기수) 조합 기준이라 밀도를 바꿔도 이전 충원 사본이 새지 않는다.
-    layers: garrisonLayers(config.layers, density.l2GarrisonSpawners),
+    // 빈 L2 소켓을 스포너로 채울 기수·충원 레벨이 둘 다 튜닝 축이므로 충원에 함께 넘긴다.
+    // 메모는 (layers 신원 × 기수 × 레벨) 조합 기준이라 축을 돌려도 이전 사본이 새지 않는다.
+    layers: garrisonLayers(config.layers, density.l2GarrisonSpawners, garrisonLevel),
     runtime,
     maintenance: normalizeMaintenance(config.maintenance),
     density,
     defenseBonusBp:
       bp === undefined || !Number.isFinite(bp) || bp <= 0 ? 0 : Math.trunc(bp),
+    garrisonLevel,
   };
 }
 

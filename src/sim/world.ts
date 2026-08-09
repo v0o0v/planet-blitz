@@ -5178,6 +5178,34 @@ function collectGem(state: WorldState, gem: Entity): void {
   onGemCollected(state, gem);
 }
 
+/**
+ * 젬을 거치지 않고 **메타 풀에만** 처치 XP 를 적립한다 — 침공 전용 경로(2026-08-10).
+ *
+ * ## 왜 두 번째 경로를 만들었나
+ * 침공은 레벨업 카드를 없앴고(사용자 결정), 그러자 젬은 "주워도 아무 일도 안 일어나는데
+ * 전투를 끊는 잔심부름"만 남았다. 그래서 젬 오브젝트를 지웠는데, 젬은 **두 풀에 XP 를 넣는
+ * 하나의 통로**라 그대로 지우면 계정 성장(기체 영구 레벨)까지 같이 죽는다 — 그러면 침공을
+ * 돌 이유가 사라진다. 그래서 통로를 우회한다.
+ *
+ * ## 배수는 {@link collectGem} 과 **같은 식**을 쓴다
+ * 일부러 같은 곱을 그대로 적는다. 한쪽만 손보면 "젬으로 먹은 XP 와 처치로 먹은 XP 가 다르다"가
+ * 조용히 생기고, 그 차이는 화면에 안 나타나 영영 발견되지 않는다.
+ *   · `comboMultiplier(state.combo)` — 침공은 젬이 없어 콤보가 오르지 않으므로 사실상 항상
+ *     기본값이다. **그래도 식에서 빼지 않는다** — 빼는 순간 두 경로가 갈린다.
+ *   · 촉매 축은 침공에 촉매가 붙지 않아 1 이지만 같은 이유로 남긴다.
+ *
+ * ## 런 풀(`state.xp`)에는 넣지 않는다
+ * 침공에는 소비처가 없다(레벨업이 0). 넣으면 HUD·해시에 쓰이지 않는 값만 부풀고, "XP 가
+ * 쌓이는데 레벨은 안 오른다"는 설명할 수 없는 상태가 관측된다.
+ */
+function creditKillXpDirect(state: WorldState, baseXp: number): void {
+  const mask = state.config.loadout?.uniqueMask ?? 0;
+  const xpMult = state.config.loadout?.xpMult ?? 1;
+  let gained = Math.floor(baseXp * comboMultiplier(state.combo) * xpMult * state.catalystMods.xp);
+  if (hasUnique(mask, UQ_RELIC_AMP)) gained = Math.floor(gained * RELIC_XP_MULT);
+  state.xpTotal += gained * stageMetaXpMult(state.config.stage) * state.planetMult;
+}
+
 /** Collect a loot drop: record its seed + rarity + provenance for settlement. */
 function collectLoot(state: WorldState, loot: Entity): void {
   loot.dead = true;
@@ -5459,7 +5487,15 @@ function compact(state: WorldState): void {
   // ⚠️ **파워업 3택을 따로 막지 마라.** 3택이 안 열리는 것은 젬 0 → 레벨업 0 의 자연 귀결이고,
   // 별도 차단을 두면 같은 사실에 대한 진실이 둘이 된다(commissionOrders.ts 주석).
   const noGems = commissionSuppressesGems(state);
-  if (!noGems) for (const d of drops) spawnGem(state, d.x, d.y, d.xp);
+  // 침공은 젬을 **떨어뜨리지 않는다**(2026-08-10 사용자 지시). 레벨업 카드를 없앤 뒤로 젬을
+  // 주우러 다닐 이유가 사라졌기 때문이다 — 남는 것은 전투를 끊는 잔심부름뿐이었다.
+  //
+  // ⚠️ 위 소집령(`noGems`)과 **목적이 정반대다.** 소집령은 "런 내 성장 0"이 목적이라 XP 를
+  // 통째로 죽이지만, 침공은 **계정 성장은 그대로 두는 것**이 조건이었다(그게 침공을 돌 이유다).
+  // 그래서 젬 오브젝트만 지우고 메타 XP 는 처치 즉시 적립한다.
+  const invasionNoGems = state.config.invasion3 !== undefined;
+  if (invasionNoGems) for (const d of drops) creditKillXpDirect(state, d.xp);
+  else if (!noGems) for (const d of drops) spawnGem(state, d.x, d.y, d.xp);
   if (bossKilled) {
     // 보스와 같은 tick에 죽은 엘리트 loot도 승리 tick이라 바닥에서 수거될 수 없다.
     // 보스 드랍과 동일하게 state.loot에 직접 기록해 유실을 막는다(결정론: 배열 순서 고정).
@@ -5473,7 +5509,7 @@ function compact(state: WorldState): void {
   for (const e of splitElites) spawnEliteDeathFx(state, e);
   // 보급 습격 보상 젬도 같은 규율이다(위 `noGems` 주석). 자원(`state.resources`) 보상은
   // 경제 축이라 그대로 지급된다 — 막는 것은 **런 내 성장**뿐이다.
-  for (const d of noGems ? [] : supplyDrops) {
+  for (const d of noGems || invasionNoGems ? [] : supplyDrops) {
     for (let i = 0; i < SUPPLY_REWARD_GEMS; i++) {
       const ang = (i * 6.283185307179586) / SUPPLY_REWARD_GEMS;
       spawnGem(state, d.x + cos(ang) * 40, d.y + sin(ang) * 40, SUPPLY_GEM_XP);

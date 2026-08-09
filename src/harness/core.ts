@@ -123,6 +123,8 @@ export interface HarnessInvasionOpts {
    * 2단계였다.
    */
   pilotLevel?: number;
+  /** 기본 수비대 레벨(빈 슬롯 자동 충원). 미지정 = 1(구 거동). */
+  garrisonLevel?: number;
 }
 
 /** 하네스가 호스트에 넘기는, 기본값이 모두 해소된 침공 런 설정. */
@@ -137,6 +139,8 @@ export interface HarnessInvasionResolved {
   defenseBonusBp?: number;
   /** 공격측 조종사 레벨 강제. 미지정 = 프로필 값. */
   pilotLevel?: number;
+  /** 기본 수비대 레벨. 미지정 = 1. */
+  garrisonLevel?: number;
 }
 
 /** 침공 런타임 요약(스냅샷 · 치트 패널 표시용). 침공이 아니면 null. */
@@ -690,6 +694,7 @@ export function createHarness(host: HarnessHost): Harness {
         ...(opts.density !== undefined ? { density: opts.density } : {}),
         ...(opts.defenseBonusBp !== undefined ? { defenseBonusBp: opts.defenseBonusBp } : {}),
         ...(opts.pilotLevel !== undefined ? { pilotLevel: opts.pilotLevel } : {}),
+        ...(opts.garrisonLevel !== undefined ? { garrisonLevel: opts.garrisonLevel } : {}),
       });
       prevSummary = emptyWorldEventSummary();
       // 레이어 점프는 런이 생긴 뒤에만 가능하다(무대 꾸미기 → 오염).

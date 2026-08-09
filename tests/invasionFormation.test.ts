@@ -97,6 +97,8 @@ function ctxOf(layers: InvasionLayers, rt: InvasionRuntime, maintenance = MAINTE
     maintenance,
     density: INVASION_DENSITY_LEGACY,
     defenseBonusBp: 0,
+    // 기본 수비대도 중립 레벨(=100cp, ×1.00)로 고정 — 위 LEGACY 밀도와 같은 이유다.
+    garrisonLevel: 1,
   };
   return ctx;
 }

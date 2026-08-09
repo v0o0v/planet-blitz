@@ -41,6 +41,7 @@ import {
 } from '../sim/invasion/index.js';
 import type { InvasionDensity } from '../sim/invasion/index.js';
 import { catalogSizeFor, clearSlot, fillAll, listSlots, setSlot } from './invasionEdit.js';
+import { INVASION_GARRISON_LEVEL_DEFAULT } from '../../data/invasion/garrison.js';
 import type { EntitySnapshot } from '../sim/snapshot.js';
 import { xpToNext } from '../sim/world.js';
 import { spawnLoot } from '../sim/entities.js';
@@ -447,6 +448,11 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
   let invasionDefenseBonusBp = 0;
   /** 공격측 조종사 레벨 강제(침공 탭). 기준선이 만렙이라 100 에서 출발한다. */
   let invasionPilotLevel = 100;
+  /**
+   * 기본 수비대 레벨 — 「아무것도 배치 안 한 기지」의 바닥 강도. 구값 1 은 정찰드론 HP 30 이라
+   * Lv100 기체(피해 ×4.69) 앞에서 녹는다("적의 기체 HP가 너무 낮아").
+   */
+  let invasionGarrisonLevel = INVASION_GARRISON_LEVEL_DEFAULT;
   /** 리플레이 붙여넣기 상자의 내용(250ms 자동 재렌더를 넘어 보존). */
   let replayPaste = '';
   // 배치 슬롯 편집기 상태(250ms 자동 재렌더를 넘어 보존). 인덱스는 `listSlots()` 순서다.
@@ -617,12 +623,14 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
       density: invasionDensity,
       defenseBonusBp: invasionDefenseBonusBp,
       pilotLevel: invasionPilotLevel,
+      garrisonLevel: invasionGarrisonLevel,
       ...(seed !== undefined ? { seed } : {}),
     });
     handOver();
     const tail = layer === 1 ? '비오염' : `L${layer} 점프 · 오염`;
     setHint(
-      `침공 ${invasionPreset}(+편집) · Lv${invasionPilotLevel} · 계보 ${invasionDefenseBonusBp}bp · ` +
+      `침공 ${invasionPreset}(+편집) · Lv${invasionPilotLevel} · 수비대Lv${invasionGarrisonLevel} · ` +
+        `계보 ${invasionDefenseBonusBp}bp · ` +
         `정비도 ${invasionMaintCP / 100}% · L1 ${invasionDensity.l1IntervalTicks}틱×${invasionDensity.l1Repeats}바퀴 · ` +
         `${Math.round(invasionTimeLimit / 60)}초 (${tail})`,
     );
@@ -1448,6 +1456,19 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
         LEVEL_CAP,
         `공격측 조종사 레벨(1..${LEVEL_CAP}). 피해·최대HP 두 축에 배율로 걸린다(Lv100 ≈ ×4.69).\n` +
           '구 침공은 이 값을 강제로 1 로 눌러 레벨이 아무 의미가 없었다 — 2026-08-10 에 봉인을 풀었다.',
+      );
+      knob(
+        growRow,
+        '수비대Lv',
+        () => invasionGarrisonLevel,
+        (v) => {
+          invasionGarrisonLevel = v;
+        },
+        1,
+        INVASION_LEVEL_MAX,
+        '기본 수비대(빈 슬롯 자동 충원)의 레벨. 배치된 슬롯에는 안 걸린다.\n' +
+          '편대 강화 산식이 100+(lv-1)*5 이므로 lv50 = ×3.45(내구도·접촉 피해 동시).\n' +
+          '구값 1 은 정찰드론 HP 30 — Lv100 기체 앞에서 녹는다.',
       );
       knob(
         growRow,
