@@ -34,6 +34,7 @@ import {
   INVASION_RARITY_COUNT,
   INVASION_TOTAL_TICKS,
   INVASION_L1_TICKS,
+  DEFENSE_BONUS_BP_MAX,
   INVASION_WAVE_SLOTS,
   INVASION_DENSITY_DEFAULT,
   INVASION_DENSITY_LEGACY,
@@ -1548,7 +1549,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
           invasionDefenseHpBp = v;
         },
         0,
-        1000000,
+        DEFENSE_BONUS_BP_MAX,
         '방어측 [내구도] 배율, basis-point. 10000bp = ×2.00 · 100000bp = ×11.00.\n' +
           '편대·설비·보스·기물·코어에 걸린다(발사 간격·사거리에는 안 걸린다).\n' +
           '⚠️ 실 PvP 에서는 서버가 이 값을 실어야 하는데 아직 배선 전이다.',
@@ -1561,7 +1562,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
           invasionDefenseDamageBp = v;
         },
         0,
-        1000000,
+        DEFENSE_BONUS_BP_MAX,
         '방어측 [피해] 배율, basis-point. HP 축과 **따로** 돈다.\n' +
           '0 이면 기본 수비대 레벨(수비대Lv)이 준 피해 배율만 남는다 — HP 만 올리고 싶을 때 0 으로.',
       );
@@ -1573,7 +1574,7 @@ export function createCheatPanel(host: CheatPanelHost): { destroy(): void } {
           invasionCoreHpBp = v;
         },
         0,
-        1000000,
+        DEFENSE_BONUS_BP_MAX,
         '코어 [전용] 추가 내구도 배율. 방어HPbp 위에 한 번 더 곱한다.\n' +
           '실측: 만렙 장비 코어 DPS 약 19,000 — 이 값이 0 이면 코어가 3초에 부서진다.\n' +
           '90000(×10) 이면 대략 30~35초짜리 최종 관문이 된다.',

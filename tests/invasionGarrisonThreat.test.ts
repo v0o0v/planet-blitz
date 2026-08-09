@@ -27,11 +27,16 @@ import { createWorld, stepWorld, DEFAULT_CONFIG } from '../src/sim/world.js';
 import type { WorldConfig, WorldState } from '../src/sim/world.js';
 import { autopilotInput } from '../src/sim/autopilot.js';
 import {
+  INVASION_CORE_HP,
   INVASION_TOTAL_TICKS,
   INVASION_WAVE_SLOTS,
   PHASE_L1,
   emptyInvasionLayers,
 } from '../src/sim/invasion/index.js';
+import {
+  DEFENSE_BONUS_BP_MAX,
+  applyDefenseBonus,
+} from '../src/sim/invasion/defenseBonus.js';
 import {
   GARRISON_FORMATION_CATALOG_IDS,
   INVASION_GARRISON_LEVEL_DEFAULT,
@@ -222,5 +227,33 @@ describe('코어 전용 내구도 축', () => {
     };
     expect(mobHp(0)).toBeGreaterThan(0);
     expect(mobHp(900000), '코어 축이 잡몹으로 샜다').toBe(mobHp(0));
+  });
+});
+
+describe('방어측 배율 상한 — 근거는 밸런스가 아니라 정수 정확도다', () => {
+  // `DEFENSE_BONUS_BP_MAX` 는 취향이 아니라 f64 정수 정확 구간(2^53)에서 나온 값이다.
+  // 가장 큰 곱이 걸리는 자리는 코어 — HP 축과 코어 전용 축이 연달아 곱해진다.
+  // 상한을 올릴 때 이 단언이 깨지면 곱이 정확 정수를 벗어난 것이고, 그러면 Node·Deno 재현이
+  // 비트 단위로 갈릴 수 있다(ADR-0005).
+
+  it('상한에서도 결과가 정확한 정수다(코어 이중 적용 포함)', () => {
+    const coreBase = INVASION_CORE_HP; // 8000 — 상한 유도에 쓴 기준값
+    const once = applyDefenseBonus(coreBase, DEFENSE_BONUS_BP_MAX);
+    const twice = applyDefenseBonus(once, DEFENSE_BONUS_BP_MAX);
+    for (const v of [once, twice]) {
+      expect(Number.isFinite(v)).toBe(true);
+      expect(Number.isSafeInteger(v), `${v} 가 안전 정수 범위를 벗어났다`).toBe(true);
+    }
+    // 곱 자체(반올림 이전)도 정확 구간 안이어야 한다 — 위 유도식의 실제 검사.
+    expect(once * (10000 + DEFENSE_BONUS_BP_MAX)).toBeLessThan(Number.MAX_SAFE_INTEGER);
+  });
+
+  it('상한을 넘겨 넣으면 상한으로 접힌다', () => {
+    const atCap = applyDefenseBonus(100, DEFENSE_BONUS_BP_MAX);
+    expect(applyDefenseBonus(100, DEFENSE_BONUS_BP_MAX * 10)).toBe(atCap);
+  });
+
+  it('구 상한(1,000,000)보다 넉넉하다 — 사용자가 그 위를 쓰겠다고 했다', () => {
+    expect(DEFENSE_BONUS_BP_MAX).toBeGreaterThan(1_000_000);
   });
 });
